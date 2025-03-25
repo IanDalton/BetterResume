@@ -1,0 +1,9 @@
+langgraph 
+langsmith 
+langchain_openai
+langchain_community
+fastapi
+chromadb
+python-docx
+pandas
+comtypes

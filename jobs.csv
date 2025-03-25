@@ -1,0 +1,12 @@
+type,company,location,role,start_date,end_date,description
+info,name,,,,,Ian Dalton
+info,email,,,,,daltioan@gmail.com
+info,phone,,,,,+54 9 11 3465-2325
+info,website,,,,,https://www.linkedin.com/in/ian-dalton-id/
+info,address,,,,,"Buenos Aires City, Argentina"
+education,ITBA,Argentina,,01/01/2021,01/07/2025,Data Science
+job,Accenture,Argentina,Data Engineer,01/08/2024,,"Developed and integrated AI-driven solutions for a large bank, utilizing LangChain and RAGs to enhance LLM capabilities. Implemented voice message processing and structured data queries, improving system response accuracy. Collaborated in Agile sprints, contributing to increased system efficiency and performance."
+job,Turbodato,Argentina,Data Architect,01/01/2024,,"Designed and built the startup’s backend infrastructure with a focus on scalability and automation. Developed web scraping bots to collect competitive business intelligence for clients like Itaú Bank and Cebra Jugueterías. Created interactive dashboards using Power BI, enabling real-time decision-making."
+non-profit,CEITBA,Argentina,Lead Developer,01/03/2021,01/03/2025,"Led a team of five in developing a Flutter-based mobile application for CEITBA, utilizing Firebase and Google Cloud for scalability. Automated administrative tasks with AI-based tools, optimizing student registrations, withdrawals, and query responses."
+job,Mouse Soluciones,Argentina,Software Developer,01/02/2020,01/08/2024,"Designed and implemented custom software solutions using Python, SQL, and Firebase to address client-specific needs."
+job,Better Resume,Argentina,Software Developer,01/03/2025,,"Developed a web app that the user can use to create a resume using LLMs and RAGs to generate a resume tailored to the specific position description. It was built using ChromaDB for the vector database, a locally hosted model and fastapi with a basic javascript frontend. The data is currently stored in a csv so the user can load and modify the data on a familiar format."
