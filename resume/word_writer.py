@@ -11,12 +11,7 @@ class WordResumeWriter(BaseWriter):
     """
     Take structured resume JSON and produce .docx and optional PDF.
     """
-    def __init__(self, template: str = None,csv_location: str = "jobs.csv"):
-        data = pd.read_csv(csv_location)
-        data["start_date"] = pd.to_datetime(
-            data["start_date"], format="%d/%m/%Y")
-        data["end_date"] = pd.to_datetime(data["end_date"], format="%d/%m/%Y")
-        self.data = data
+    
 
     def write(self,response:dict, output: str = None, to_pdf:bool=False):
 

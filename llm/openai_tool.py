@@ -2,15 +2,18 @@ import json
 from langchain_core.messages import BaseMessage
 from langchain_openai.chat_models.base import ChatOpenAI
 from .base import BaseLLM
+from utils.file_io import load_prompt
 
 class OpenAITool(BaseLLM):
     def __init__(self, base_url: str, api_key: str, model: str, tools: list = None):
+        super().__init__()
         self.client = ChatOpenAI(
             base_url=base_url,
             api_key=api_key,
             model=model
         )
         self.tools = tools
+        
 
     def bind_tools(self):
         # your ChatOpenAI .bind_tools returns a new instance,

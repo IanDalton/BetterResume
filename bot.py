@@ -9,14 +9,13 @@ from langchain_community.document_loaders.csv_loader import CSVLoader
 from llm.openai_tool import OpenAITool
 from llm.chroma_db_tool import ChromaDBTool
 from llm.basic_tool_node import BasicToolNode
-from utils.file_io import load_prompt
+
 from resume.parser import JobParser
 from resume.writer import ResumeWriter
 import config
 from resume.base_writer import BaseWriter
 
-JOB_PROMPT = load_prompt("job_prompt")
-TRANSLATE_PROMPT = load_prompt("translation_prompt")
+
 
 class State(TypedDict): messages: Annotated[list, add_messages]
 
@@ -33,6 +32,7 @@ class Bot:
         self.llm_with_tools.bind_tools()
 
         self.graph = self._create_graph()
+        self.json_body = None
         self.writer = writer
 
     def _create_graph(self):
@@ -55,13 +55,14 @@ class Bot:
 
     def generate_resume(self, jd:str) -> Dict[str,Any]:
         #meta=JobParser.extract_language_and_title(jd)
-        res=self.graph.invoke({"messages":[SystemMessage(JOB_PROMPT),HumanMessage(jd)]})
+        res=self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
         res = ResumeWriter.to_json(res["messages"][-1].content)
+        self.json_body = res
         return self.writer.write(res,output="resume.docx",to_pdf=True)
 
     
     def translate_resume(self,r:dict)->dict:
-        res=self.graph.invoke({"messages":[SystemMessage(TRANSLATE_PROMPT),HumanMessage(json.dumps(r))]})
+        res=self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(r))]})
         return ResumeWriter.to_json(res["messages"][-1].content)
 
 if __name__=="__main__":
