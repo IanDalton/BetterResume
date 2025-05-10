@@ -53,7 +53,6 @@ class ChromaDBTool(BaseTool):
             return f"Error adding documents: {e}"
 
     def _run(self, query: str, **kwargs):
-        print("chromadb")
         """
         Synchronous method to query the ChromaDB collection.
         Expects a text query and returns the query results.

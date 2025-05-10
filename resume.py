@@ -106,6 +106,8 @@ class Resume():
             self.response = self.bot.generate_response(self.JOB_PROMPT)
             if self.response["language"].upper() != "EN":
                 self.response = self.bot.translate_response(self.response, self.JOB_PROMPT)
+        
+
         data = self.data
 
         # Create the Word document

@@ -8,18 +8,15 @@ class BasicToolNode:
         self.tools_by_name = {tool.name: tool for tool in tools}
 
     def __call__(self, inputs: dict):
-        print('tools message')
         if messages := inputs.get("messages", []):
             message = messages[-1]
         else:
             raise ValueError("No message found in input")
         outputs = []
         for tool_call in message.tool_calls:
-            print(tool_call["args"])
             tool_result = self.tools_by_name[tool_call["name"]].invoke(
                 tool_call["args"]
             )
-            print(tool_result)
             outputs.append(
                 ToolMessage(
                     content=json.dumps(tool_result),

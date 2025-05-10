@@ -24,7 +24,8 @@ The user has granted you access to their full job experience, which is stored in
 6. **Format the experience section concisely, listing each job with an impactful description that highlights achievements and results try to add measurable results whenever possible.** Keep it to 3-4 lines.
 7. **Format the skills section concisely, listing each key skill with a brief but impactful description that highlights practical applications and measurable results.**  
 8. **Avoid vague adjectives. Instead, show you’re results driven (or otherwise) with actual impressive results you achieved.**
-9. **Ensure the output follows this JSON format:**  
+9. **Generate the experience from current position to oldest experiences**
+10. **Ensure the output follows this JSON format:**  
 
 ```json
 {
@@ -176,7 +177,6 @@ class Bot:
 
     def create_graph(self):
         def chatbot(state: State):
-            print('chatbot message')
             return {"messages": [self.llm.invoke(state["messages"])]}
         
         
@@ -216,7 +216,6 @@ class Bot:
         messages = [SystemMessage(TRANSLATE_PROMPT), HumanMessage(content=f"JSON: {json.dumps(response)}\n\nJob description: {job_description}")]
 
         translated =  self.graph.invoke({"messages": messages})
-        print(translated)
 
         return json.loads(translated["messages"][-1].content.replace("```json","").replace("```",""))
     
