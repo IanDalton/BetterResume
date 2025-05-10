@@ -21,10 +21,10 @@ class ChromaDBTool(BaseTool):
     _client: Any = PrivateAttr()
     _collection: Any = PrivateAttr()
 
-    def __init__(self):
+    def __init__(self, persist_directory):
         super().__init__()
         self._client = chromadb.Client(
-            Settings(persist_directory=self.persist_directory))
+            Settings(persist_directory=persist_directory))
         try:
             self._collection = self._client.get_collection(
                 name=self.collection_name)
