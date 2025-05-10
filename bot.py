@@ -1,4 +1,5 @@
 import json
+import logging
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
@@ -20,6 +21,24 @@ from resume.base_writer import BaseWriter
 class State(TypedDict): messages: Annotated[list, add_messages]
 
 class Bot:
+    """
+    A class to handle resume generation and translation using a combination of 
+    language models, tools, and a state graph.
+    Attributes:
+        llm (OpenAITool): The primary language model tool for processing messages.
+        tool (ChromaDBTool): A tool for managing and querying a ChromaDB database.
+        llm_with_tools (OpenAITool): A language model tool bound with additional tools.
+        graph (StateGraph): A compiled state graph for managing the flow of operations.
+        json_body (dict): The JSON representation of the generated resume.
+        writer (BaseWriter): An instance of a writer class for outputting resumes.
+    Methods:
+        generate_resume(jd: str) -> Dict[str, Any]:
+            Generates a resume based on the provided job description (jd).
+            Returns the resume in a specified format (e.g., .docx, .pdf).
+        translate_resume(r: dict) -> dict:
+            Translates the given resume dictionary (r) into another language.
+            Returns the translated resume as a dictionary.
+    """
     def __init__(self,writer:BaseWriter):
         self.llm = OpenAITool(**config.CONFIG['llm'])
         
@@ -55,15 +74,27 @@ class Bot:
 
     def generate_resume(self, jd:str) -> Dict[str,Any]:
         #meta=JobParser.extract_language_and_title(jd)
+        logging.info(f"Job Description: {jd}")
         res=self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
+        logging.info(f"Resume: {res}")
         res = ResumeWriter.to_json(res["messages"][-1].content)
+        logging.info(f"Resume JSON: {res}")
+        if res["language"].lower() != "en":
+            #res = self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(res))]})
+            res = self.translate_resume(res)
+            logging.info(f"Translated Resume: {res}")
         self.json_body = res
-        return self.writer.write(res,output="resume.docx",to_pdf=True)
+        self.writer.write(res,output="resume"+self.writer.file_ending,to_pdf=True)
+        logging.info(f"Resume written to resume.{self.writer.file_ending}")
+        return res
 
     
     def translate_resume(self,r:dict)->dict:
-        res=self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(r))]})
-        return ResumeWriter.to_json(res["messages"][-1].content)
+        if isinstance(r, dict):
+            r = str(r)
+
+        res=self.llm.invoke([SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(r)])
+        return ResumeWriter.to_json(res.content)
 
 if __name__=="__main__":
     import argparse

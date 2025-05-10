@@ -6,8 +6,36 @@ import pdflatex
 
 class LatexResumeWriter(BaseWriter):
     """
-    Generate a resume in LaTeX format from structured resume JSON.
+    LatexResumeWriter is a class for generating resumes in LaTeX format from structured JSON data.
+    Methods:
+        write(response: dict, output: str = None, to_pdf: bool = False) -> str:
+            Generates a LaTeX file from the given response data. Optionally converts the LaTeX file to a PDF.
+            Args:
+                response (dict): The structured JSON data containing resume information.
+                output (str, optional): The output file path for the generated LaTeX or PDF file. Defaults to None.
+                to_pdf (bool, optional): Whether to convert the LaTeX file to a PDF. Defaults to False.
+            Returns:
+                str: The path to the generated LaTeX or PDF file.
+        generate_file(response: dict, output: str = None) -> str:
+            Creates a LaTeX file based on the provided resume data.
+            Args:
+                response (dict): The structured JSON data containing resume information.
+                output (str, optional): The output file path for the generated LaTeX file. Defaults to None.
+            Returns:
+                str: The LaTeX content as a string or the path to the generated LaTeX file.
+        to_pdf(output: str, src_path: str = None) -> str:
+            Converts a LaTeX file to a PDF using the pdflatex command.
+            Args:
+                output (str): The output file path for the generated PDF.
+                src_path (str, optional): The path to the source LaTeX file. Defaults to None.
+            Returns:
+                str: The path to the generated PDF file.
+            Raises:
+                RuntimeError: If the LaTeX to PDF conversion fails.
     """
+    def __init__(self, template: str = None, csv_location: str = "jobs.csv"):
+        super().__init__(template, csv_location, ".tex")
+
 
     def write(self, response: dict, output: str = None, to_pdf: bool = False):
         tex_file = self.generate_file(response, output.replace(".pdf", ".tex") if output else None)

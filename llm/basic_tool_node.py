@@ -2,7 +2,19 @@ from langchain_core.messages import ToolMessage
 import json
 
 class BasicToolNode:
-    """A node that runs the tools requested in the last AIMessage."""
+    """
+    A class representing a basic tool node that manages a collection of tools 
+    and processes tool calls based on input messages.
+    Attributes:
+        tools_by_name (dict): A dictionary mapping tool names to their respective tool objects.
+    Methods:
+        __init__(tools: list):
+            Initializes the BasicToolNode with a list of tools.
+        __call__(inputs: dict) -> dict:
+            Processes input messages, invokes the appropriate tools based on tool calls,
+            and returns the results as a dictionary of messages.
+    """
+    
 
     def __init__(self, tools: list) -> None:
         self.tools_by_name = {tool.name: tool for tool in tools}

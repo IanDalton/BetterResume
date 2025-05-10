@@ -9,6 +9,50 @@ from typing import Any
 
 
 class ChromaDBTool(BaseTool):
+    """ChromaDBTool is a tool that interfaces with a ChromaDB database to retrieve and manage information. 
+    It initializes a connection to a specified collection and provides methods to add documents and query the database.
+    Attributes:
+        name (str): The name of the tool, set to "ChromaDBTool".
+        description (str): A brief description of the tool's purpose and functionality.
+        collection_name (str): The name of the ChromaDB collection to interact with. Defaults to "default_collection".
+        persist_directory (str): The directory where the ChromaDB data is persisted. Defaults to "./chroma_db".
+    Private Attributes:
+        _client (Any): The ChromaDB client instance used to interact with the database.
+        _collection (Any): The specific collection within the ChromaDB database.
+    Methods:
+        __init__(persist_directory: str):
+            Initializes the ChromaDBTool instance, setting up the client and collection.
+        add_document(document: str, id: str) -> str:
+            Adds a single document to the ChromaDB collection.
+            Args:
+                document (str): The document content to add.
+                id (str): The unique identifier for the document.
+            Returns:
+                str: A success message or an error message if the operation fails.
+        add_documents(documents: list, ids: list) -> str:
+            Adds multiple documents to the ChromaDB collection.
+            Args:
+                documents (list): A list of document contents to add.
+                ids (list): A list of unique identifiers for the documents.
+            Returns:
+                str: A success message or an error message if the operation fails.
+        _run(query: str, **kwargs) -> list:
+            Executes a synchronous query against the ChromaDB collection.
+            Args:
+                query (str): The text query to execute.
+                **kwargs: Additional keyword arguments.
+            Returns:
+                list: A list of tuples containing document content and their respective distances, or an error message.
+        _arun(query: str, **kwargs) -> list:
+            Executes an asynchronous query against the ChromaDB collection.
+            Args:
+                query (str): The text query to execute.
+                **kwargs: Additional keyword arguments.
+            Returns:
+                list: A list of tuples containing document content and their respective distances, or an error message.
+    """
+
+
     name: str = "ChromaDBTool"
     description: str = (
         "A tool that interfaces with a ChromaDB database to retrieve information. "

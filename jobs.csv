@@ -2,7 +2,7 @@ type,company,location,role,start_date,end_date,description
 info,name,,,,,Ian Dalton
 info,email,,,,,daltioan@gmail.com
 info,phone,,,,,+54 9 11 3465-2325
-info,website,,LinkedIn,,,https://www.linkedin.com/in/ian-dalton-id/
+info,website,,LinkedIn,,,https://www.linkedin.com/in/ian-dalton-data/
 info,website,,Github,,,https://github.com/IanDalton
 info,address,,,,,"Buenos Aires City, Argentina"
 education,ITBA,Argentina,,01/01/2021,01/07/2025,Data Science

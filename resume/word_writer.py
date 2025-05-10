@@ -9,8 +9,19 @@ from utils.word_utils import set_paragraph_font, set_paragraph_format, set_headi
 
 class WordResumeWriter(BaseWriter):
     """
-    Take structured resume JSON and produce .docx and optional PDF.
-    """
+    A class for generating resumes in Word document format and optionally converting them to PDF.
+    Methods
+    -------
+    write(response: dict, output: str = None, to_pdf: bool = False) -> Union[str, Document]:
+        Generates a Word document based on the provided response data and optionally converts it to a PDF.
+    generate_file(response: dict, output: str = None) -> Union[str, Document]:
+        Creates a Word document with formatted resume content based on the provided response data.
+    to_pdf(output: str, src_path: str = None) -> str:
+        Converts a Word document to a PDF file using the comtypes library.
+    """ 
+    def __init__(self, template: str = None, csv_location: str = "jobs.csv"):
+        super().__init__(template, csv_location, ".docx")
+
     
 
     def write(self,response:dict, output: str = None, to_pdf:bool=False):
