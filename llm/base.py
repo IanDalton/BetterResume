@@ -18,10 +18,18 @@ class BaseLLM(ABC):
             Abstract method to send chat messages to the LLM and return its response. 
             This method must be implemented by subclasses.
     """
-   
-    def __init__(self,job_prompt: str ="job_prompt",translation_prompt: str ="translation_prompt"):
+
+    def __init__(self,tools: list,model=str,job_prompt: str ="job_prompt",translation_prompt: str ="translation_prompt"):
         self.JOB_PROMPT = load_prompt(job_prompt)
         self.TRANSLATE_PROMPT = load_prompt(translation_prompt)
+        self.tools = tools
+        self.model = model
+        
+
+    def copy(self,tools: list) -> 'BaseLLM':
+        """Create a copy of the current LLM instance."""
+        
+        return self.__class__(tools=tools, model=self.model)
 
     @abstractmethod
     def bind_tools(self) -> None:

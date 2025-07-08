@@ -4,16 +4,19 @@ from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 from typing import Annotated, Any, Dict
+from resume import WordResumeWriter
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_community.document_loaders.csv_loader import CSVLoader
 
 from llm.openai_tool import OpenAITool
+from llm.base import BaseLLM
+
+from llm.gemini_tool import GeminiTool
 from llm.chroma_db_tool import ChromaDBTool
 from llm.basic_tool_node import BasicToolNode
 
 from resume.parser import JobParser
 from resume.writer import ResumeWriter
-import config
 from resume.base_writer import BaseWriter
 
 
@@ -39,15 +42,15 @@ class Bot:
             Translates the given resume dictionary (r) into another language.
             Returns the translated resume as a dictionary.
     """
-    def __init__(self,writer:BaseWriter):
-        self.llm = OpenAITool(**config.CONFIG['llm'])
+    def __init__(self,writer:BaseWriter, llm:BaseLLM):
+        self.llm = llm
         
-        self.tool = ChromaDBTool(persist_directory=config.CONFIG['chroma']['persist_directory'])
+        self.tool = ChromaDBTool(persist_directory="./chroma_db")
         data = CSVLoader(file_path="jobs.csv").load()
         self.tool.add_documents([d.page_content for d in data],[str(i) for i,_ in enumerate(data)])
 
 
-        self.llm_with_tools = OpenAITool(**config.CONFIG['llm'],tools=[self.tool])
+        self.llm_with_tools = llm.copy(tools=[self.tool])
         self.llm_with_tools.bind_tools()
 
         self.graph = self._create_graph()
@@ -98,6 +101,7 @@ class Bot:
 
 if __name__=="__main__":
     import argparse
+
     p=argparse.ArgumentParser();p.add_argument("--job",required=True);p.add_argument("--translate",action="store_true");a=p.parse_args()
-    jd=open(a.job).read();b=Bot();out=b.generate_resume(jd);print(json.dumps(out,indent=2,ensure_ascii=False))
+    jd=open(a.job).read();b=Bot(writer=WordResumeWriter());out=b.generate_resume(jd);print(json.dumps(out,indent=2,ensure_ascii=False))
     if a.translate: print(json.dumps(b.translate_resume(out),indent=2,ensure_ascii=False))

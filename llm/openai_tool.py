@@ -3,6 +3,7 @@ from langchain_core.messages import BaseMessage
 from langchain_openai.chat_models.base import ChatOpenAI
 from .base import BaseLLM
 from utils.file_io import load_prompt
+import os
 
 class OpenAITool(BaseLLM):
     """
@@ -20,14 +21,20 @@ class OpenAITool(BaseLLM):
         invoke(messages: list[BaseMessage]) -> BaseMessage:
             Sends a list of messages to the ChatOpenAI client and returns the response.
     """
-    def __init__(self, base_url: str, api_key: str, model: str, tools: list = None):
-        super().__init__()
+    def __init__(self, base_url: str, model: str, api_key: str = None, tools: list = None):
+        super().__init__(tools=tools,model=model)
+
+        if not api_key:
+            api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("API key must be provided either as an argument or through the OPENAI_API_KEY environment variable.")
+
         self.client = ChatOpenAI(
             base_url=base_url,
             api_key=api_key,
             model=model
         )
-        self.tools = tools
+
         
 
     def bind_tools(self):
