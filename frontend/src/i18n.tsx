@@ -7,7 +7,7 @@ type Dict = Record<string, string>;
 const dictionaries: Record<Language, Dict> = {
   en: {
     'app.title': 'Better Resume',
-    'app.tagline': 'Create your resume easily and quickly.',
+    'app.tagline': 'Made for humans, optimized for machines.',
   'app.language': 'Language',
     'user.id': 'User ID',
     'format': 'Format',
@@ -135,7 +135,7 @@ const dictionaries: Record<Language, Dict> = {
   },
   es: {
     'app.title': 'Better Resume',
-    'app.tagline': 'Crea tu currículum de manera fácil y rápida.',
+    'app.tagline': 'Hecho para humanos, optimizado para máquinas.',
   'app.language': 'Idioma',
     'user.id': 'ID de Usuario',
     'format': 'Formato',

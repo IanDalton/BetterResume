@@ -198,12 +198,16 @@ export default function App() {
 
   return (
     <div className="max-w-5xl mx-auto p-4 font-sans relative">
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">{t('app.title')}</h1>
-          <p className="text-sm text-neutral-400">{t('app.tagline')}</p>
-        </div>
-        <div className="flex gap-4 items-center">
+      <header className="mb-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <img src="/logo2.png" alt={t('app.title')} className="h-16 sm:h-20 w-auto select-none" draggable={false} />
+            <div className="flex flex-col justify-center">
+              <p className="sr-only">{t('app.title')}</p>
+              <p className="text-sm text-neutral-400 leading-snug max-w-xs">{t('app.tagline')}</p>
+            </div>
+          </div>
+          <div className="flex gap-4 items-center flex-wrap justify-end">
           {user && <UserBar user={user} onLogout={async ()=>{
   await logout();
   setUser(null);
@@ -228,6 +232,7 @@ export default function App() {
               {availableLanguages.map(l => <option key={l.code} value={l.code}>{t(l.labelKey)}</option>)}
             </select>
           </label>
+          </div>
         </div>
       </header>
   {wizardNeeded ? (
