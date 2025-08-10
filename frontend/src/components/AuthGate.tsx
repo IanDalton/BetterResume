@@ -1,35 +1,51 @@
 import React, { useEffect, useState } from 'react';
-import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, logout } from '../services/firebase';
+import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, logout, loadUserData, UserDataDoc, googleSignIn } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 
 interface AuthGateProps {
-  onResolved: (user: { mode: 'auth' | 'guest'; uid: string; email?: string }) => void;
+  onResolved: (user: { mode: 'auth' | 'guest'; uid: string; email?: string }, data?: UserDataDoc | null) => void;
+  forceOpenSignal?: number; // changing value forces modal to open (guest -> sign in upgrade)
 }
 
 // Simple auth + guest selection UI shown on first visit or until resolved.
-export const AuthGate: React.FC<AuthGateProps> = ({ onResolved }) => {
+export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal }) => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [show, setShow] = useState(true);
+  // Start hidden; only show after we know we need user interaction
+  const [show, setShow] = useState(false);
 
   useEffect(() => {
     const unsub = authStateListener(user => {
       if (user) {
         setShow(false);
-        onResolved({ mode: 'auth', uid: user.uid, email: user.email || undefined });
+        loadUserData(user.uid).then(data => {
+          onResolved({ mode: 'auth', uid: user.uid, email: user.email || undefined }, data);
+        }).catch(()=>{
+          onResolved({ mode: 'auth', uid: user.uid, email: user.email || undefined });
+        });
+      } else {
+        // No authenticated user: ensure we have (or create) a guest and do NOT show modal automatically.
+        let gid = localStorage.getItem('br.guestId');
+        if (!gid) {
+          try { gid = uuidv4(); } catch { gid = 'guest-' + Date.now().toString(36); }
+          try { localStorage.setItem('br.guestId', gid); } catch {}
+        }
+        onResolved({ mode: 'guest', uid: gid! });
       }
     });
-    // If guest already chosen previously
-    const existingGuest = localStorage.getItem('br.guestId');
-    if (existingGuest) {
-      setShow(false);
-      onResolved({ mode: 'guest', uid: existingGuest });
-    }
     return () => unsub();
-  }, [onResolved]);
+  }, []);
+
+  // Force open when requested (e.g., guest wants to sign in). Remove guest id beforehand externally.
+  useEffect(() => {
+    if (forceOpenSignal) {
+      // Only open if not already authenticated (modal would auto-close on auth anyway)
+      setShow(prev => prev || true);
+    }
+  }, [forceOpenSignal]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,12 +58,28 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved }) => {
     } finally { setLoading(false); }
   };
 
+  const handleGoogle = async () => {
+    try {
+      setError(null); setLoading(true);
+      await googleSignIn(); // auth listener will resolve
+    } catch (e:any) {
+      setError(e.message || 'Google sign-in failed');
+    } finally { setLoading(false); }
+  };
+
   const continueGuest = () => {
-    if (!confirm('Continuing as guest means your data is only saved in this browser and may be lost. Continue?')) return;
-    const id = uuidv4();
-    localStorage.setItem('br.guestId', id);
-    setShow(false);
-    onResolved({ mode: 'guest', uid: id });
+    try {
+      // Generate ID with uuid; fallback to crypto.randomUUID or timestamp
+      let id: string;
+  try { id = uuidv4(); }
+  catch { id = (typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : 'guest-' + Date.now().toString(36)); }
+  console.log('[AuthGate] continueGuest clicked, generated id', id);
+  try { localStorage.setItem('br.guestId', id); } catch (e) { console.warn('[AuthGate] Failed to write guestId', e); }
+  setShow(false); // hide modal immediately for UX
+  onResolved({ mode: 'guest', uid: id });
+    } catch (e:any) {
+      setError('Guest sign-in failed');
+    }
   };
 
   if (!show) return null;
@@ -69,9 +101,20 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved }) => {
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex items-center justify-between text-xs text-neutral-400">
             <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')} className="text-indigo-400 hover:underline">{mode==='signin'?'Need an account? Sign up':'Have an account? Sign in'}</button>
-            <button type="button" onClick={continueGuest} className="text-neutral-400 hover:text-white">Continue as guest</button>
+            {/* Guest option hidden because user is already a guest by default */}
           </div>
           <button disabled={loading} className="w-full mt-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded py-2 text-sm font-medium">{mode==='signin'?'Sign In':'Create Account'}</button>
+          <div className="relative my-2">
+            <div className="flex items-center">
+              <div className="flex-grow h-px bg-neutral-700" />
+              <span className="mx-2 text-[10px] uppercase tracking-wide text-neutral-500">or</span>
+              <div className="flex-grow h-px bg-neutral-700" />
+            </div>
+          </div>
+          <button type="button" onClick={handleGoogle} disabled={loading} className="w-full bg-neutral-100 text-neutral-900 hover:bg-white disabled:opacity-50 rounded py-2 text-sm font-medium flex items-center justify-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512" className="w-4 h-4" fill="currentColor"><path d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/></svg>
+            <span>{loading ? 'Working...' : 'Continue with Google'}</span>
+          </button>
         </form>
         <p className="text-[11px] text-neutral-500 leading-relaxed">Guest sessions use a random ID stored only in this browser. Clearing site data or switching devices will lose your resumes.</p>
       </div>
@@ -79,7 +122,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved }) => {
   );
 };
 
-export const UserBar: React.FC<{user: {mode:'auth'|'guest'; uid:string; email?:string}; onLogout: ()=>void}> = ({ user, onLogout }) => {
+export const UserBar: React.FC<{user: {mode:'auth'|'guest'; uid:string; email?:string}; onLogout: ()=>void; onSignInRequest?: ()=>void}> = ({ user, onLogout, onSignInRequest }) => {
   return (
     <div className="flex items-center gap-3 text-xs bg-neutral-800 border border-neutral-700 rounded px-3 py-1">
       {user.mode === 'auth' ? (
@@ -91,7 +134,7 @@ export const UserBar: React.FC<{user: {mode:'auth'|'guest'; uid:string; email?:s
         <>
           <span className="text-neutral-400">Guest</span>
           <span className="font-mono text-[10px] text-neutral-500 truncate max-w-[120px]" title={user.uid}>{user.uid}</span>
-          <button onClick={onLogout} className="text-indigo-400 hover:text-indigo-300">Sign In</button>
+          <button onClick={onSignInRequest || onLogout} className="text-indigo-400 hover:text-indigo-300">Sign In</button>
         </>
       )}
     </div>

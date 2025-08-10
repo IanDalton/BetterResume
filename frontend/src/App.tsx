@@ -4,7 +4,7 @@ import { uploadJobsCsv, generateResumeStream, buildCsvFromEntries } from './serv
 import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
 import { AuthGate, UserBar } from './components/AuthGate';
-import { logout } from './services/firebase';
+import { logout, loadUserData, saveUserData } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
@@ -17,6 +17,7 @@ export default function App() {
     return [];
   });
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
+  const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
   const userId = user?.uid || 'guest';
   const [loading, setLoading] = useState(false);
   const [resumeJson, setResumeJson] = useState<any>(null);
@@ -33,6 +34,9 @@ export default function App() {
 
   // Persist state to localStorage (debounced minimal by relying on React batch)
   useEffect(() => { try { localStorage.setItem('br.entries', JSON.stringify(entries)); } catch {} }, [entries]);
+  // Hydrate from Firestore via AuthGate callback (legacy effect removed)
+
+  // Removed continuous auto-save; persistence now triggered only on explicit upload.
   // no longer store userId directly; guests stored inside AuthGate logic
   useEffect(() => { try { localStorage.setItem('br.jobDescription', jobDescription); } catch {} }, [jobDescription]);
   useEffect(() => { try { localStorage.setItem('br.format', format); } catch {} }, [format]);
@@ -49,6 +53,10 @@ export default function App() {
       const blob = new Blob([csv], { type: 'text/csv' });
       const file = new File([blob], 'jobs.csv', { type: 'text/csv' });
       await uploadJobsCsv(userId, file);
+      if (user?.mode === 'auth') {
+        // Persist current state to Firestore after successful upload
+        saveUserData(user.uid, { entries, jobDescription, format }).catch(()=>{});
+      }
       alert('Jobs uploaded');
     } catch (e: any) {
       setError(e.message || 'Upload failed');
@@ -102,7 +110,19 @@ export default function App() {
           <p className="text-sm text-neutral-400">{t('app.tagline')}</p>
         </div>
         <div className="flex gap-4 items-center">
-          {user && <UserBar user={user} onLogout={async ()=>{ await logout(); setUser(null); }} />}
+          {user && <UserBar user={user} onLogout={async ()=>{
+  await logout();
+  setUser(null);
+  setEntries([]);
+  setJobDescription('');
+  setFormat('latex');
+}} onSignInRequest={() => {
+  // Guest wants to upgrade to account: keep cache, remove guest id and open auth modal
+  if (user.mode === 'guest') {
+    try { localStorage.removeItem('br.guestId'); } catch {}
+    setAuthGateOpenSignal(s=>s+1);
+  }
+}} />}
           <label className="text-sm flex flex-col">{t('format')}
             <select className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm" value={format} onChange={e => setFormat(e.target.value as any)}>
               <option value='latex'>LaTeX</option>
@@ -146,7 +166,14 @@ export default function App() {
           </div>
         )}
     </section>
-    <AuthGate onResolved={setUser} />
+  <AuthGate forceOpenSignal={authGateOpenSignal} onResolved={useCallback((u, data) => {
+      setUser(u);
+      if (data) {
+        if (Array.isArray(data.entries)) setEntries(data.entries as any);
+        if (data.jobDescription) setJobDescription(data.jobDescription);
+        if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
+      }
+    }, [])} />
   </div>
   );
 }

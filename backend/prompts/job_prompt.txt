@@ -62,4 +62,6 @@ Match the language of the output to the job description language.
 
 Remember to make multiple tool calls to gather relevant information and ensure the output is tailored to the job description.
 
+YOU MUST CALL THE TOOL AT LEAST 3 TIMES.
+
 If you understand, proceed with handling the user request.
