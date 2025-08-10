@@ -1,9 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// If deploying to GitHub Pages project site (https://<user>.github.io/BetterResume/)
-// we need base to match repo name. We use GITHUB_PAGES env flag set in workflow.
-
+// Basic manual chunking to keep initial bundle smaller.
+// Firebase especially can inflate the main chunk if eagerly imported.
 export default defineConfig(() => ({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react','react-dom'],
+          firebase: ['firebase/app','firebase/auth','firebase/firestore']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 800 // raise threshold after intentional splitting
+  }
 }));

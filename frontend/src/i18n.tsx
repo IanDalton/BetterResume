@@ -8,6 +8,7 @@ const dictionaries: Record<Language, Dict> = {
   en: {
     'app.title': 'Better Resume',
     'app.tagline': 'Made for humans, optimized for machines.',
+  'app.meta.description': 'Better Resume – Made for humans, optimized for machines.',
   'app.language': 'Language',
     'user.id': 'User ID',
     'format': 'Format',
@@ -136,6 +137,7 @@ const dictionaries: Record<Language, Dict> = {
   es: {
     'app.title': 'Better Resume',
     'app.tagline': 'Hecho para humanos, optimizado para máquinas.',
+  'app.meta.description': 'Better Resume – Hecho para humanos, optimizado para máquinas.',
   'app.language': 'Idioma',
     'user.id': 'ID de Usuario',
     'format': 'Formato',
@@ -274,20 +276,22 @@ const I18nContext = createContext<I18nContextValue | undefined>(undefined);
 function detectInitialLang(): Language {
   try {
     const stored = localStorage.getItem('lang') as Language | null;
-    if (stored && ['en','es'].includes(stored)) return stored;
+    if (stored && (stored in dictionaries)) return stored;
+    const supported = Object.keys(dictionaries);
     if (typeof navigator !== 'undefined') {
+      const nav: any = navigator;
       const candidates: string[] = [];
-      if ((navigator as any).languages) candidates.push(...(navigator as any).languages);
+      if (nav.languages) candidates.push(...nav.languages);
       if (navigator.language) candidates.push(navigator.language);
       for (const raw of candidates) {
         if (!raw) continue;
-        const code = raw.toLowerCase();
-        if (code.startsWith('es')) return 'es';
-        if (code.startsWith('en')) return 'en';
+        const base = raw.toLowerCase().split('-')[0];
+        const match = supported.find(s => s === base);
+        if (match) return match as Language;
       }
     }
   } catch {/* ignore */}
-  return 'en';
+  return 'en'; // default fallback
 }
 
 export const I18nProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
@@ -306,6 +310,17 @@ export const I18nProvider: React.FC<{children: React.ReactNode}> = ({ children }
   useEffect(() => {
     try { document.documentElement.lang = lang; } catch {/* ignore */}
   }, [lang]);
+
+  // If user hasn't explicitly chosen (no stored lang), respond to system/browser language changes.
+  useEffect(() => {
+    if (localStorage.getItem('lang')) return; // respect explicit choice
+    const handler = () => {
+      const detected = detectInitialLang();
+      setLangState(detected);
+    };
+    window.addEventListener('languagechange', handler);
+    return () => window.removeEventListener('languagechange', handler);
+  }, []);
 
   const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

@@ -61,6 +61,33 @@ export default function App() {
     }
   }, [showGenModal, ADS_CLIENT]);
 
+  // Update meta description (and social tags) when language changes
+  useEffect(()=>{
+    const content = t('app.meta.description');
+    function setTag(selector: string, attr: string = 'content') {
+      let el = document.querySelector(selector) as HTMLMetaElement | null;
+      if (!el) {
+        if (selector.startsWith('meta[name="description"')) {
+          el = document.createElement('meta');
+          el.name = 'description';
+          document.head.appendChild(el);
+        } else if (selector.includes('property="og:description"')) {
+          el = document.createElement('meta');
+          el.setAttribute('property','og:description');
+          document.head.appendChild(el);
+        } else if (selector.includes('name="twitter:description"')) {
+          el = document.createElement('meta');
+          el.name = 'twitter:description';
+          document.head.appendChild(el);
+        }
+      }
+      if (el) el.setAttribute(attr, content);
+    }
+    setTag('meta[name="description" ]');
+    setTag('meta[property="og:description"]');
+    setTag('meta[name="twitter:description"]');
+  }, [lang, t]);
+
   // Persist state to localStorage (debounced minimal by relying on React batch)
   useEffect(() => { try { localStorage.setItem('br.entries', JSON.stringify(entries)); } catch {} }, [entries]);
   // Hydrate from Firestore via AuthGate callback (legacy effect removed)
