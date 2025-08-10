@@ -100,10 +100,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex items-center justify-between text-xs text-neutral-400">
-            <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')} className="text-indigo-400 hover:underline">{mode==='signin'?'Need an account? Sign up':'Have an account? Sign in'}</button>
+            <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')} className="btn-link-primary">{mode==='signin'?'Need an account? Sign up':'Have an account? Sign in'}</button>
             {/* Guest option hidden because user is already a guest by default */}
           </div>
-          <button disabled={loading} className="w-full mt-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded py-2 text-sm font-medium">{mode==='signin'?'Sign In':'Create Account'}</button>
+          <button disabled={loading} className="w-full mt-2 btn-primary disabled:opacity-50">{mode==='signin'?'Sign In':'Create Account'}</button>
           <div className="relative my-2">
             <div className="flex items-center">
               <div className="flex-grow h-px bg-neutral-700" />
@@ -134,7 +134,7 @@ export const UserBar: React.FC<{user: {mode:'auth'|'guest'; uid:string; email?:s
         <>
           <span className="text-neutral-400">Guest</span>
           <span className="font-mono text-[10px] text-neutral-500 truncate max-w-[120px]" title={user.uid}>{user.uid}</span>
-          <button onClick={onSignInRequest || onLogout} className="text-indigo-400 hover:text-indigo-300">Sign In</button>
+          <button onClick={onSignInRequest || onLogout} className="btn-link-primary">Sign In</button>
         </>
       )}
     </div>

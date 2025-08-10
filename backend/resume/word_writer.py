@@ -126,17 +126,34 @@ class WordResumeWriter(BaseWriter):
         
         return document
     def to_pdf(self, output: str, src_path: str= None):
+        if not output.endswith(".pdf"):
+            return output
+        # Prefer LibreOffice (Linux container)
         try:
-
-            if not output.endswith(".pdf"):
-                raise ValueError("Output file must have a .pdf extension")
-            import comtypes.client
+            import subprocess, shutil, sys
+            if shutil.which("soffice") and src_path:
+                out_dir = os.path.dirname(os.path.abspath(output))
+                subprocess.run([
+                    "soffice", "--headless", "--convert-to", "pdf", "--outdir", out_dir, os.path.abspath(src_path)
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # LibreOffice names file with .pdf in same dir; ensure expected name exists
+                generated = os.path.join(out_dir, os.path.splitext(os.path.basename(src_path))[0] + ".pdf")
+                if os.path.isfile(generated) and generated != os.path.abspath(output):
+                    try:
+                        os.replace(generated, output)
+                    except Exception:
+                        pass
+                return output
+        except Exception:
+            pass
+        # Fallback to Windows comtypes if available
+        try:
+            import comtypes.client  # type: ignore
             word = comtypes.client.CreateObject('Word.Application')
             word.Visible = False
             d = word.Documents.Open(os.path.abspath(src_path))
             d.SaveAs(os.path.abspath(output), FileFormat=17)
             d.Close(); word.Quit()
-
             return output
-        except ImportError:
-            raise RuntimeError("comtypes required for PDF conversion")
+        except Exception:
+            return output

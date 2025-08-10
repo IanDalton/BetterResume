@@ -10,7 +10,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # System deps (for pdflatex etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-latex-base texlive-latex-recommended texlive-latex-extra \
-    build-essential && \
+    build-essential \
+    libreoffice-writer libreoffice-core libreoffice-common \
+    fonts-dejavu fonts-liberation \
+    && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

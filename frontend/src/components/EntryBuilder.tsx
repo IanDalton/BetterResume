@@ -68,8 +68,8 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
   <TextareaField label={t('field.description')} value={form.description||''} onChange={v=>setField('description',v)} placeholder={t('placeholder.description')} className="md:col-span-2 lg:col-span-3" />
         {showRoleDesc && <TextareaField label={t('field.extraDetails')} value={form.role_description||''} onChange={v=>setField('role_description',v)} placeholder={t('placeholder.extraDetails')} className="md:col-span-2 lg:col-span-3" />}
         <div className="md:col-span-2 lg:col-span-3 flex justify-end gap-3 pt-2">
-          {editing != null && <button type="button" onClick={reset} className="px-4 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-sm">{t('button.cancel')}</button>}
-          <button type="submit" className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-sm font-medium">{editing == null ? t('button.addEntry') : t('button.updateEntry')}</button>
+          {editing != null && <button type="button" onClick={reset} className="btn-secondary">{t('button.cancel')}</button>}
+          <button type="submit" className="btn-primary">{editing == null ? t('button.addEntry') : t('button.updateEntry')}</button>
         </div>
       </form>
       <EntriesList entries={entries} onEdit={startEdit} onRemove={onRemove} />
@@ -86,12 +86,12 @@ export const EntriesList: React.FC<EntriesListProps> = ({ entries, onEdit, onRem
       {entries.map((e,i) => {
         const isInfo = e.type === 'info';
         return (
-          <div key={i} className={(isInfo? 'bg-blue-600/20 border-blue-600/40':'bg-neutral-800/70 border-neutral-700') + ' border rounded-xl p-4 flex flex-col gap-2 relative'}>
+          <div key={i} className={(isInfo? 'bg-red-700/20 border-red-600/40':'bg-neutral-800/70 border-neutral-700') + ' border rounded-xl p-4 flex flex-col gap-2 relative'}>
             <div className="text-xs uppercase tracking-wide text-neutral-400 flex justify-between items-center">
               <span>{e.type}</span>
               <div className="flex gap-2">
-                <button onClick={()=>onEdit(i)} className="text-indigo-400 hover:text-indigo-300 text-xs">{t('entry.edit')}</button>
-                <button onClick={()=>onRemove(i)} className="text-red-400 hover:text-red-300 text-xs">{t('entry.delete')}</button>
+                <button onClick={()=>onEdit(i)} className="btn-link-primary text-xs">{t('entry.edit')}</button>
+                <button onClick={()=>onRemove(i)} className="btn-danger text-xs">{t('entry.delete')}</button>
               </div>
             </div>
             <div className="space-y-1 text-sm">
@@ -109,7 +109,7 @@ export const EntriesList: React.FC<EntriesListProps> = ({ entries, onEdit, onRem
 };
 
 // Reusable field components
-const baseInput = 'bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm focus:outline-none focus:ring focus:ring-indigo-500';
+const baseInput = 'bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm focus:outline-none focus:ring focus:ring-red-500';
 const labelCls = 'text-xs uppercase tracking-wide text-neutral-400';
 
 const InputField: React.FC<{label:string; value:string; onChange:(v:string)=>void; placeholder?:string;}> = ({label,value,onChange,placeholder}) => (

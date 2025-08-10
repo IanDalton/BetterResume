@@ -24,7 +24,19 @@ export async function generateResume(userId: string, payload: ResumeRequestPaylo
     body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
-  return res.json() as Promise<{result:any; files:{pdf:string; source:string}}>;
+  const data = await res.json() as {result:any; files:{pdf:string; source:string}};
+  if (data.files) {
+    const fix = (p:string) => {
+      if (!p) return p;
+      if (p.startsWith('http')) return p;
+      // If already has /download/ assume correct relative path
+      if (p.includes('/download/')) return API_BASE.replace(/\/$/, '') + p;
+      // Bare filename -> construct
+      return API_BASE.replace(/\/$/, '') + `/download/${encodeURIComponent(userId)}/${p}`;
+    };
+    data.files = { pdf: fix(data.files.pdf), source: fix(data.files.source) };
+  }
+  return data;
 }
 
 export function generateResumeStream(userId: string, payload: ResumeRequestPayload, onEvent: (evt: any)=>void): Promise<{result:any; files?:{pdf:string; source:string}}> {
@@ -53,7 +65,19 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
                   const json = JSON.parse(line.slice(5).trim());
                   onEvent(json);
                   if (json.stage === 'done') {
-                    resolve({result: json.result, files: json.files});
+                    // Normalize relative file links to absolute
+                    let files = json.files;
+                    if (files) {
+                      const toAbs = (p: string) => {
+                        if (!p) return p;
+                        if (p.startsWith('http')) return p;
+                        if (p.includes('/download/')) return API_BASE.replace(/\/$/, '') + p; // relative download path
+                        // bare filename
+                        return API_BASE.replace(/\/$/, '') + `/download/${encodeURIComponent(userId)}/${p}`;
+                      };
+                      files = { pdf: toAbs(files.pdf), source: toAbs(files.source) };
+                    }
+                    resolve({result: json.result, files});
                   } else if (json.stage === 'error') {
                     reject(new Error(json.message||'Error'));
                   }

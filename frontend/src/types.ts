@@ -1,4 +1,4 @@
-export type EntryType = 'info' | 'education' | 'job' | 'non-profit' | 'project' | 'contract' | 'part-time';
+export type EntryType = 'info' | 'education' | 'certification' | 'job' | 'non-profit' | 'project' | 'contract' | 'part-time';
 
 export interface ResumeEntry {
   type: EntryType;
@@ -11,4 +11,4 @@ export interface ResumeEntry {
   role_description?: string;
 }
 
-export const isWorkLike = (t: EntryType) => ['job','contract','part-time','project','non-profit','education'].includes(t);
+export const isWorkLike = (t: EntryType) => ['job','contract','part-time','project','non-profit','education','certification'].includes(t);

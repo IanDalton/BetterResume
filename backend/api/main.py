@@ -10,6 +10,14 @@ from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
 from typing import Dict
 
+DATA_DIR = os.getenv("DATA_DIR", "/app/data")  # default to mounted volume path
+os.makedirs(DATA_DIR, exist_ok=True)
+PERSIST_CHROMA = os.path.join(DATA_DIR, "chroma_db")
+OUTPUTS_BASE = os.path.join(DATA_DIR, "outputs")
+UPLOADS_BASE = os.path.join(DATA_DIR, "uploads")
+for _d in (PERSIST_CHROMA, OUTPUTS_BASE, UPLOADS_BASE):
+    os.makedirs(_d, exist_ok=True)
+
 app = FastAPI(title="BetterResume API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +31,7 @@ USER_TOOLS: Dict[str, ChromaDBTool] = {}
 
 def get_user_tool(user_id: str) -> ChromaDBTool:
     if user_id not in USER_TOOLS:
-        USER_TOOLS[user_id] = ChromaDBTool(persist_directory="./chroma_db", collection_name=f"user_{user_id}")
+        USER_TOOLS[user_id] = ChromaDBTool(persist_directory=PERSIST_CHROMA, collection_name=f"user_{user_id}")
     return USER_TOOLS[user_id]
 
 class ResumeRequest(BaseModel):
@@ -40,7 +48,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a .csv")
     contents = await file.read()
-    tmp_path = os.path.join("/tmp" if os.name != "nt" else ".", f"uploaded_jobs_{user_id}.csv")
+    tmp_path = os.path.join(UPLOADS_BASE, f"uploaded_jobs_{user_id}.csv")
     with open(tmp_path, "wb") as f:
         f.write(contents)
     tool = get_user_tool(user_id)
@@ -69,8 +77,8 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
 async def generate_resume(user_id: str, req: ResumeRequest):
     writer = LatexResumeWriter() if req.format.lower() == "latex" else WordResumeWriter()
     tool = get_user_tool(user_id)
-    # Ensure per-user output directory
-    out_dir = os.path.join("./outputs", user_id)
+    # Ensure per-user output directory (persistent)
+    out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cwd = os.getcwd()
     os.chdir(out_dir)
@@ -79,7 +87,12 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         result = bot.generate_resume(req.job_description, output_basename="resume")
     finally:
         os.chdir(cwd)
-    result_meta = {"result": result, "files": {"pdf": f"/download/{user_id}/resume.pdf", "source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}}
+    files = {"source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}
+    # Only attach PDF link if it exists (graceful fallback for word w/out PDF conversion)
+    pdf_path = os.path.join(out_dir, "resume.pdf")
+    if os.path.isfile(pdf_path):
+        files["pdf"] = f"/download/{user_id}/resume.pdf"
+    result_meta = {"result": result, "files": files}
     return JSONResponse(content=result_meta)
 
 def sse_event(data: dict) -> bytes:
@@ -91,7 +104,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     writer = LatexResumeWriter() if req.format.lower() == "latex" else WordResumeWriter()
     tool = get_user_tool(user_id)
-    out_dir = os.path.join("./outputs", user_id)
+    out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
 
@@ -100,6 +113,14 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
             # Run inside output dir so writer outputs land there
             cwd = os.getcwd(); os.chdir(out_dir)
             for event in bot.generate_resume_progress(req.job_description, output_basename="resume"):
+                # Normalize final file paths for client (match non-stream endpoint style)
+                if event.get("stage") == "done":
+                    source_name = f"resume{writer.file_ending}"
+                    # Build file list dynamically to avoid broken pdf links
+                    files = {"source": f"/download/{user_id}/{source_name}"}
+                    if os.path.isfile(os.path.join(out_dir, "resume.pdf")):
+                        files["pdf"] = f"/download/{user_id}/resume.pdf"
+                    event["files"] = files
                 yield sse_event(event)
             os.chdir(cwd)
         except Exception as e:
@@ -112,7 +133,7 @@ async def download_file(user_id: str, filename: str):
     # Security: basic path traversal guard
     if ".." in filename or filename.startswith('/'):
         raise HTTPException(status_code=400, detail="Invalid filename")
-    path = os.path.join("./outputs", user_id, filename)
+    path = os.path.join(OUTPUTS_BASE, user_id, filename)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path)

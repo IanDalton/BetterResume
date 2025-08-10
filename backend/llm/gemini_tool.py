@@ -1,6 +1,6 @@
 import json
 from langchain_core.messages import BaseMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chat_models import init_chat_model
 from .base import BaseLLM
 from utils.file_io import load_prompt
 import os
@@ -28,9 +28,7 @@ class GeminiTool(BaseLLM):
             raise ValueError("API key must be provided or set in environment variable GOOGLE_API_KEY")
         os.environ["GOOGLE_API_KEY"] = api_key
         
-        self.client = ChatGoogleGenerativeAI(
-            model=model
-        )
+        self.client = init_chat_model("google_genai:gemini-2.5-flash")
      
 
     def bind_tools(self):
@@ -42,7 +40,7 @@ class GeminiTool(BaseLLM):
         and let the model decide when (if) to call them.
         """
         if self.tools:
-            self.client = self.client.bind_tools(self.tools)
+            self.client = self.client.bind_tools(self.tools, tool_choice="any")
 
     def invoke(self, messages: list[BaseMessage]) -> BaseMessage:
         # directly call the LLM
