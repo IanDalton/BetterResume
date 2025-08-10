@@ -109,16 +109,28 @@ class WordResumeWriter(BaseWriter):
         education_heading = document.add_heading('EDUCATION AND CERTIFICATIONS', level=0)
         set_heading_font(education_heading, font_name="Times New Roman", font_size=11)
 
-        for education in data[data["type"] == "education"].iterrows():
+        for _, edu in data[data["type"] == "education"].iterrows():
             p = document.add_paragraph(
-                f"{education[1]['company']}, {education[1]['location']} • {education[1]['description']}")
+                f"{edu['company']}, {edu.get('location','')} • {edu['description']}")
             set_paragraph_font(p)
             set_paragraph_format(p)
-            tab_stop = p.paragraph_format.tab_stops.add_tab_stop(
-                Inches(6.5))  # Adjust width as needed
+            tab_stop = p.paragraph_format.tab_stops.add_tab_stop(Inches(6.5))
             tab_stop.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            p.add_run(
-                f"\t{education[1]['start_date'].strftime('%m/%Y')} - {education[1]['end_date'].strftime('%m/%Y') if education[1]['end_date'] else 'Present'}")
+            def fmt(dt):
+                try:
+                    if pd.isna(dt):
+                        return ''
+                    if hasattr(dt, 'strftime'):
+                        return dt.strftime('%m/%Y')
+                    return str(dt)
+                except Exception:
+                    return ''
+            start_txt = fmt(edu.get('start_date'))
+            end_raw = edu.get('end_date')
+            end_txt = fmt(end_raw) if end_raw is not None else ''
+            if not end_txt:
+                end_txt = 'Present'
+            p.add_run(f"\t{start_txt} - {end_txt}")
         if output:
             # Save the Word document
             document.save(output)
