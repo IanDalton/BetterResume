@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Better Resume Icon">
+  <rect width="64" height="64" rx="12" fill="#dc2626"/>
+  <rect x="16" y="18" width="32" height="6" rx="3" fill="#fff"/>
+  <rect x="16" y="30" width="36" height="6" rx="3" fill="#fff" opacity="0.85"/>
+  <rect x="16" y="42" width="26" height="6" rx="3" fill="#fff" opacity="0.7"/>
+</svg>

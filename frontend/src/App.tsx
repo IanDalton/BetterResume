@@ -20,7 +20,22 @@ export default function App() {
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
   // Use actual guest ID from localStorage (assigned in AuthGate) rather than placeholder
-  const userId = user?.uid || (()=>{ try { return localStorage.getItem('br.guestId') || 'guest'; } catch { return 'guest'; } })();
+  // Ensure a guest id exists immediately (prevents early calls using plain 'guest')
+  const [guestId] = useState(()=>{
+    try {
+      let existing = localStorage.getItem('br.guestId');
+      if (!existing) {
+        const gen: string = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : 'guest-' + Date.now().toString(36);
+        try { localStorage.setItem('br.guestId', gen); } catch {}
+        return gen;
+      }
+      return existing;
+    } catch (error) {
+      console.error('Error getting guest ID:', error);
+      return 'guest-' + Date.now().toString(36);
+    }
+  });
+  const userId = user?.uid || guestId;
   const [loading, setLoading] = useState(false);
   const [resumeJson, setResumeJson] = useState<any>(null);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
