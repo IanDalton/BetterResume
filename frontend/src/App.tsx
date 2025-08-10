@@ -43,6 +43,23 @@ export default function App() {
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
     try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
   });
+  const ADS_CLIENT = import.meta.env.VITE_ADSENSE_CLIENT;
+  const ADS_SLOT = import.meta.env.VITE_ADSENSE_SLOT_GENERATE;
+
+  // Load AdSense script on demand when generation modal opens
+  useEffect(()=>{
+    if (!showGenModal || !ADS_CLIENT) return;
+    if (!(window as any)._adsenseLoaded) {
+      const s = document.createElement('script');
+      s.async = true;
+      s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(ADS_CLIENT)}`;
+      s.crossOrigin = 'anonymous';
+      s.onload = () => { (window as any)._adsenseLoaded = true; try { (window as any).adsbygoogle = (window as any).adsbygoogle || []; (window as any).adsbygoogle.push({}); } catch(_){} };
+      document.head.appendChild(s);
+    } else {
+      try { (window as any).adsbygoogle = (window as any).adsbygoogle || []; (window as any).adsbygoogle.push({}); } catch(_){}
+    }
+  }, [showGenModal, ADS_CLIENT]);
 
   // Persist state to localStorage (debounced minimal by relying on React batch)
   useEffect(() => { try { localStorage.setItem('br.entries', JSON.stringify(entries)); } catch {} }, [entries]);
@@ -88,6 +105,9 @@ export default function App() {
       setError(null);
       setLoading(true);
       setProgress([]);
+  // Clear previous outputs so UI doesn't show outdated preview while regenerating
+  setDownloadLinks(null);
+  setResumeJson(null);
   setShowGenModal(true);
       // First upload latest entries as jobs.csv (silent: no alert)
       await performUpload();
@@ -105,7 +125,7 @@ export default function App() {
         const next = c + 1;
         try { localStorage.setItem('br.resumeCount', String(next)); } catch {}
         // Show donation modal exactly once when reaching 3 (unless previously dismissed)
-  try { const prompted = localStorage.getItem('br.donatePrompted'); if (next >= 1 && !prompted) { setShowDonate(true); localStorage.setItem('br.donatePrompted','1'); } } catch {}
+  try { const prompted = localStorage.getItem('br.donatePrompted'); if (next >= 5 && !prompted) { setShowDonate(true); localStorage.setItem('br.donatePrompted','1'); } } catch {}
         return next;
       });
     } catch (e: any) {
@@ -285,7 +305,12 @@ export default function App() {
           <div className="flex gap-2 flex-wrap text-[10px] text-neutral-400 max-h-24 overflow-auto">
             {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-800 rounded">{p.stage}</span>))}
           </div>
-          <button onClick={()=> setShowGenModal(false)} className="w-full text-xs text-neutral-400 hover:text-neutral-200">{t('modal.building.hide')}</button>
+          {ADS_CLIENT && ADS_SLOT && (
+            <div className="mt-2">
+              <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
+              <ins className="adsbygoogle block" style={{display:'block'}} data-ad-client={ADS_CLIENT} data-ad-slot={ADS_SLOT} data-ad-format="auto" data-full-width-responsive="true"></ins>
+            </div>
+          )}
         </div>
       </div>
     )}

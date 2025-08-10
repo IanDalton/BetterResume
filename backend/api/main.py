@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from llm.chroma_db_tool import ChromaDBTool
+import shutil
 from bot import Bot
 from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
@@ -38,6 +39,28 @@ class ResumeRequest(BaseModel):
     job_description: str
     format: str = "latex"  # or "word"
     model: str = "gemini-2.5-flash"
+
+def clean_output_dir(path: str):
+    """Remove all existing files in the user's output directory so only the newly generated resume remains.
+    Keeps the directory itself (so any open file handles won't break directory existence).
+    """
+    try:
+        if not os.path.isdir(path):
+            os.makedirs(path, exist_ok=True)
+            return
+        for name in os.listdir(path):
+            full = os.path.join(path, name)
+            try:
+                if os.path.isfile(full) or os.path.islink(full):
+                    os.remove(full)
+                elif os.path.isdir(full):
+                    shutil.rmtree(full, ignore_errors=True)
+            except Exception:
+                # Best-effort; continue cleaning others
+                pass
+    except Exception:
+        # Silently ignore; generation will overwrite needed files anyway
+        pass
 
 @app.get("/health")
 def health():
@@ -80,6 +103,8 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     # Ensure per-user output directory (persistent)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
+    # Clean previous outputs so only latest resume is retained
+    clean_output_dir(out_dir)
     cwd = os.getcwd()
     os.chdir(out_dir)
     try:
@@ -106,6 +131,8 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
+    # Clean previous outputs before streaming a new generation
+    clean_output_dir(out_dir)
     bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
 
     def event_generator():

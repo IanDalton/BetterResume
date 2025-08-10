@@ -61,7 +61,7 @@ Return only this JSON (no extra text):
 ```
 json
 {
-  "language": "ES/EN/FR/DE/IT/PT",
+  "language": "ES/EN/FR/DE/IT/PT" -> language of the job description,
   "resume_section": {
     "title": "Target Job Title from job description",
     "professional_summary": "Brief summary (3–4 lines) highlighting relevant skills, achievements, and domain expertise.",
