@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { uploadJobsCsv, generateResume } from './services/api';
-import { buildCsvFromEntries } from 'services';
+import { uploadJobsCsv,generateResume, buildCsvFromEntries } from 'services';
 import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
 
