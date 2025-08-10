@@ -3,7 +3,7 @@ import docx
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.shared import Inches, Pt, Cm  # Add this import for font size and setting margins
 from docx import Document
-from bot import Bot
+from backend.bot import Bot
 import pandas as pd
 from docx.enum.text import WD_ALIGN_PARAGRAPH  # Add this import for justification
 
