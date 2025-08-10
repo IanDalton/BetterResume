@@ -1,20 +1,22 @@
 import React from 'react';
 import type { JobRecord } from '../App';
+import { useI18n } from '../i18n';
 
 interface Props { jobs: JobRecord[]; onRemove: (index: number) => void }
 
 export const JobsTable: React.FC<Props> = ({ jobs, onRemove }) => {
-  if (!jobs.length) return <p>No jobs added yet.</p>;
+  const { t } = useI18n();
+  if (!jobs.length) return <p>{t('jobs.none')}</p>;
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
       <thead>
         <tr>
-          <th style={th}>Title</th>
-          <th style={th}>Company</th>
-          <th style={th}>Start</th>
-          <th style={th}>End</th>
-          <th style={th}>Description</th>
-          <th style={th}>Actions</th>
+          <th style={th}>{t('jobs.title')}</th>
+          <th style={th}>{t('jobs.company')}</th>
+          <th style={th}>{t('jobs.start')}</th>
+          <th style={th}>{t('jobs.end')}</th>
+          <th style={th}>{t('jobs.description')}</th>
+          <th style={th}>{t('jobs.actions')}</th>
         </tr>
       </thead>
       <tbody>
@@ -23,9 +25,9 @@ export const JobsTable: React.FC<Props> = ({ jobs, onRemove }) => {
             <td style={td}>{j.title}</td>
             <td style={td}>{j.company}</td>
             <td style={td}>{j.startDate}</td>
-            <td style={td}>{j.endDate || 'Present'}</td>
+            <td style={td}>{j.endDate || t('present')}</td>
             <td style={td}>{j.description.slice(0, 80)}{j.description.length > 80 ? '…' : ''}</td>
-            <td style={td}><button onClick={() => onRemove(i)}>Remove</button></td>
+            <td style={td}><button onClick={() => onRemove(i)}>{t('jobs.remove')}</button></td>
           </tr>
         ))}
       </tbody>
