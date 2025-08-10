@@ -19,7 +19,8 @@ export default function App() {
   });
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
-  const userId = user?.uid || 'guest';
+  // Use actual guest ID from localStorage (assigned in AuthGate) rather than placeholder
+  const userId = user?.uid || (()=>{ try { return localStorage.getItem('br.guestId') || 'guest'; } catch { return 'guest'; } })();
   const [loading, setLoading] = useState(false);
   const [resumeJson, setResumeJson] = useState<any>(null);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);

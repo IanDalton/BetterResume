@@ -20,7 +20,10 @@ class BaseWriter(ABC):
     """
     
     def __init__(self, template: str = None,csv_location: str = "jobs.csv",file_ending: str = None):
-        data = pd.read_csv(csv_location)
+        try:
+            data = pd.read_csv(csv_location)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Jobs CSV not found at '{csv_location}'. Ensure you POST /upload-jobs/{{user_id}} before generating a resume.")
         data["start_date"] = pd.to_datetime(
             data["start_date"], format="%d/%m/%Y")
         data["end_date"] = pd.to_datetime(data["end_date"], format="%d/%m/%Y")
