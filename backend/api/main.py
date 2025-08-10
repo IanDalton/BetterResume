@@ -104,10 +104,26 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
             df = pd.read_csv(tmp_path)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {e}")
-        required_cols = {"company","description","type","start_date","end_date"}
-        missing = sorted(list(required_cols - set(df.columns)))
+        # Minimum set: company, description, type (dates optional but normalize if present)
+        required_min = {"company","description","type"}
+        missing = sorted(list(required_min - set(df.columns)))
         if missing:
             raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
+        # If date columns exist, attempt parsing; ignore if absent
+        import warnings
+        for col in ["start_date","end_date"]:
+            if col in df.columns:
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore')
+                        df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
+                except Exception:
+                    pass
+        # Persist normalized dates back to file for downstream readers
+        try:
+            df.to_csv(tmp_path, index=False)
+        except Exception:
+            pass
         rows = len(df)
         from langchain_community.document_loaders.csv_loader import CSVLoader
         data = CSVLoader(file_path=tmp_path).load()

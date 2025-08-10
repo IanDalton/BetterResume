@@ -24,9 +24,16 @@ class BaseWriter(ABC):
             data = pd.read_csv(csv_location)
         except FileNotFoundError:
             raise FileNotFoundError(f"Jobs CSV not found at '{csv_location}'. Ensure you POST /upload-jobs/{{user_id}} before generating a resume.")
-        data["start_date"] = pd.to_datetime(
-            data["start_date"], format="%d/%m/%Y")
-        data["end_date"] = pd.to_datetime(data["end_date"], format="%d/%m/%Y")
+        # Ensure expected columns exist; create empty if missing
+        for col in ["start_date","end_date"]:
+            if col not in data.columns:
+                data[col] = None
+        # Parse dates if present; tolerate parse errors
+        for col in ["start_date","end_date"]:
+            try:
+                data[col] = pd.to_datetime(data[col], format="%d/%m/%Y", errors='coerce')
+            except Exception:
+                pass
         self.data = data
         self.file_ending = template.split(".")[-1] if template else file_ending
 
