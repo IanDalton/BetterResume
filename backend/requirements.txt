@@ -1,0 +1,13 @@
+langgraph 
+langsmith 
+langchain_openai
+langchain-google-genai
+langchain_community
+fastapi
+chromadb
+python-docx
+pandas
+comtypes
+pdflatex
+uvicorn
+python-multipart

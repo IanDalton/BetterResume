@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.git/
+.gitignore
+.env
+*.pdf
+resume*.docx
+chroma_db/
