@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 // Use explicit relative path so Vite resolves without custom alias
-import { uploadJobsCsv, generateResume, buildCsvFromEntries } from './services';
+import { uploadJobsCsv, generateResumeStream, buildCsvFromEntries } from './services';
 import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
+import { AuthGate, UserBar } from './components/AuthGate';
+import { logout } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
@@ -10,13 +12,30 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export default function App() {
   const { t, lang, setLang } = useI18n();
-  const [entries, setEntries] = useState<ResumeEntry[]>([]);
-  const [userId, setUserId] = useState<string>('user1');
+  const [entries, setEntries] = useState<ResumeEntry[]>(() => {
+    try { const raw = localStorage.getItem('br.entries'); if (raw) return JSON.parse(raw); } catch {}
+    return [];
+  });
+  const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
+  const userId = user?.uid || 'guest';
   const [loading, setLoading] = useState(false);
   const [resumeJson, setResumeJson] = useState<any>(null);
-  const [jobDescription, setJobDescription] = useState('');
-  const [format, setFormat] = useState<'latex' | 'word'>('latex');
+  const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
+  const [jobDescription, setJobDescription] = useState(() => {
+    try { return localStorage.getItem('br.jobDescription') || ''; } catch { return ''; }
+  });
+  const [format, setFormat] = useState<'latex' | 'word'>(() => {
+    try { const f = localStorage.getItem('br.format'); if (f === 'word' || f === 'latex') return f; } catch {}
+    return 'latex';
+  });
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{stage:string; message?:string}[]>([]);
+
+  // Persist state to localStorage (debounced minimal by relying on React batch)
+  useEffect(() => { try { localStorage.setItem('br.entries', JSON.stringify(entries)); } catch {} }, [entries]);
+  // no longer store userId directly; guests stored inside AuthGate logic
+  useEffect(() => { try { localStorage.setItem('br.jobDescription', jobDescription); } catch {} }, [jobDescription]);
+  useEffect(() => { try { localStorage.setItem('br.format', format); } catch {} }, [format]);
 
   const addEntry = (entry: ResumeEntry) => setEntries(p => [...p, entry]);
   const updateEntry = (index: number, entry: ResumeEntry) => setEntries(p => p.map((e,i)=> i===index? entry : e));
@@ -42,12 +61,16 @@ export default function App() {
     try {
       setError(null);
       setLoading(true);
-      const res = await generateResume(userId, {
+      setProgress([]);
+  const res = await generateResumeStream(userId, {
         job_description: jobDescription,
         format,
         model: DEFAULT_MODEL
+      }, evt => {
+        setProgress(p => [...p, {stage: evt.stage, message: evt.message}]);
       });
-      setResumeJson(res);
+  setResumeJson(res.result);
+  if (res.files) setDownloadLinks(res.files);
     } catch (e: any) {
       setError(e.message || 'Generation failed');
     } finally {
@@ -55,17 +78,31 @@ export default function App() {
     }
   };
 
+  const clearAll = () => {
+    if (!confirm(t('confirm.clear'))) return;
+    try {
+      localStorage.removeItem('br.entries');
+    localStorage.removeItem('br.guestId');
+      localStorage.removeItem('br.jobDescription');
+      localStorage.removeItem('br.format');
+    } catch {}
+    setEntries([]);
+  setUser(null);
+    setJobDescription('');
+    setFormat('latex');
+    setResumeJson(null);
+    setError(null);
+  };
+
   return (
-    <div className="max-w-5xl mx-auto p-4 font-sans">
+    <div className="max-w-5xl mx-auto p-4 font-sans relative">
       <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">{t('app.title')}</h1>
           <p className="text-sm text-neutral-400">{t('app.tagline')}</p>
         </div>
         <div className="flex gap-4 items-center">
-          <label className="text-sm flex flex-col">{t('user.id')}
-            <input className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm focus:outline-none focus:ring focus:ring-indigo-500" value={userId} onChange={e => setUserId(e.target.value)} />
-          </label>
+          {user && <UserBar user={user} onLogout={async ()=>{ await logout(); setUser(null); }} />}
           <label className="text-sm flex flex-col">{t('format')}
             <select className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm" value={format} onChange={e => setFormat(e.target.value as any)}>
               <option value='latex'>LaTeX</option>
@@ -87,11 +124,30 @@ export default function App() {
         <div className="flex flex-wrap gap-2">
           <button className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-sm" disabled={!entries.some(e=>e.type!== 'info') || loading} onClick={handleUpload}>{t('upload.jobs')}</button>
           <button className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-sm" disabled={loading || !jobDescription} onClick={handleGenerate}>{t('generate.resume')}</button>
+          <button type="button" className="px-3 py-2 rounded bg-neutral-700 hover:bg-neutral-600 text-sm" onClick={clearAll}>{t('button.clear')}</button>
         </div>
         {loading && <p className="text-sm text-neutral-400">{t('working')}</p>}
+        {progress.length>0 && (
+          <ul className="text-xs text-neutral-400 space-y-1 bg-neutral-900 border border-neutral-800 rounded p-2 max-h-48 overflow-auto">
+            {progress.map((p,i)=>(<li key={i}><span className="font-mono text-neutral-500">{i+1}.</span> {p.stage}{p.message?`: ${p.message}`:''}</li>))}
+          </ul>
+        )}
         {error && <p className="text-sm text-red-400">{error}</p>}
-      </section>
-    </div>
+        {resumeJson && (
+          <div className="mt-6 space-y-3 bg-neutral-900 border border-neutral-800 rounded p-4">
+            <h3 className="text-lg font-semibold">Generated Resume JSON</h3>
+            <pre className="text-xs overflow-auto max-h-96 bg-neutral-950 p-3 rounded border border-neutral-800">{JSON.stringify(resumeJson, null, 2)}</pre>
+            {downloadLinks && (
+              <div className="flex gap-4 flex-wrap text-sm">
+                <a className="text-indigo-400 hover:underline" href={downloadLinks.pdf} target="_blank" rel="noreferrer">Download PDF</a>
+                <a className="text-indigo-400 hover:underline" href={downloadLinks.source} target="_blank" rel="noreferrer">Download Source</a>
+              </div>
+            )}
+          </div>
+        )}
+    </section>
+    <AuthGate onResolved={setUser} />
+  </div>
   );
 }
 

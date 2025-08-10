@@ -34,10 +34,15 @@ class GeminiTool(BaseLLM):
      
 
     def bind_tools(self):
-        # your ChatGemini.bind_tools returns a new instance,
-        # so reassign to self.client
-        # force bind_tools to use any tool
-        self.client = self.client.bind_tools(self.tools, tool_choice="required") 
+        """Bind provided tools to the Gemini chat client.
+
+        Gemini's LangChain wrapper does not accept the OpenAI-style string value
+        "required" for tool_choice. Passing that caused the earlier runtime error:
+        `allowed_function_names` ... Found invalid: required. We simply bind the tools
+        and let the model decide when (if) to call them.
+        """
+        if self.tools:
+            self.client = self.client.bind_tools(self.tools)
 
     def invoke(self, messages: list[BaseMessage]) -> BaseMessage:
         # directly call the LLM

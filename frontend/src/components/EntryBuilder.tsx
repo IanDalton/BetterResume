@@ -32,7 +32,7 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     // Require role only for non-info entries (info role auto-populated)
-    if (form.type !== 'info' && !form.role) return;
+    if (form.type !== 'info' && form.type !== 'education' && !form.role) return;
     editing == null ? onAdd(form) : onUpdate(editing, form);
     reset();
   };
@@ -51,16 +51,18 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
         ]} />
         {showJobFields && <InputField label={t('field.company')} value={form.company||''} onChange={v=>setField('company',v)} placeholder={t('placeholder.company')} />}
         {showJobFields && <InputField label={t('field.location')} value={form.location||''} onChange={v=>setField('location',v)} placeholder={t('placeholder.location')} />}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs uppercase tracking-wide text-neutral-400">{t('field.role')}</label>
-          {form.type === 'info' ? (
-            <select className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)}>
-              {['name','email','phone','website','address'].map(r => <option key={r} value={r}>{t('field.personal.'+r)}</option>)}
-            </select>
-          ) : (
-            <input className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={t('placeholder.role')} />
-          )}
-        </div>
+        {form.type !== 'education' && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs uppercase tracking-wide text-neutral-400">{t('field.role')}</label>
+            {form.type === 'info' ? (
+              <select className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)}>
+                {['name','email','phone','website','address'].map(r => <option key={r} value={r}>{t('field.personal.'+r)}</option>)}
+              </select>
+            ) : (
+              <input className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={t('placeholder.role')} />
+            )}
+          </div>
+        )}
         {showJobFields && <InputField label={t('field.start')} value={form.start||''} onChange={v=>setField('start',v)} placeholder={t('placeholder.start')} />}
         {showJobFields && <InputField label={t('field.end')} value={form.end||''} onChange={v=>setField('end',v)} placeholder={t('placeholder.end')} />}
   <TextareaField label={t('field.description')} value={form.description||''} onChange={v=>setField('description',v)} placeholder={t('placeholder.description')} className="md:col-span-2 lg:col-span-3" />

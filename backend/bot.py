@@ -88,24 +88,23 @@ class Bot:
         self.writer = writer
 
     def _create_graph(self):
-        def tools(state): return {"messages": [self.llm_with_tools.invoke(state["messages"]) ]}
-        def chatbot(state): return {"messages": [self.llm.invoke(state["messages"]) ]}
-        
-        g=StateGraph(State)
+        def tools(state):
+            return {"messages": [self.llm_with_tools.invoke(state["messages"]) ]}
 
-        g.add_node("toolsBot",tools)
-        g.add_edge(START,"toolsBot")
-        g.add_node("tools",BasicToolNode(tools=[self.tool]))
-        g.add_edge("toolsBot","tools")
+        def chatbot(state):
+            return {"messages": [self.llm.invoke(state["messages"]) ]}
 
-        g.add_node("chatbot",chatbot)
-        g.add_edge("tools","chatbot")
-        g.add_edge("chatbot",END)
-
-        
+        g = StateGraph(State)
+        g.add_node("toolsBot", tools)
+        g.add_edge(START, "toolsBot")
+        g.add_node("tools", BasicToolNode(tools=[self.tool], require_tool=True))
+        g.add_edge("toolsBot", "tools")
+        g.add_node("chatbot", chatbot)
+        g.add_edge("tools", "chatbot")
+        g.add_edge("chatbot", END)
         return g.compile()
 
-    def generate_resume(self, jd:str) -> Dict[str,Any]:
+    def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
         #meta=JobParser.extract_language_and_title(jd)
         logging.info(f"Job Description: {jd}")
         res=self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
@@ -117,9 +116,33 @@ class Bot:
             res = self.translate_resume(res)
             logging.info(f"Translated Resume: {res}")
         self.json_body = res
-        self.writer.write(res,output="resume"+self.writer.file_ending,to_pdf=True)
-        logging.info(f"Resume written to resume.{self.writer.file_ending}")
+        try:
+            output_name = f"{output_basename}{self.writer.file_ending}"
+            self.writer.write(res, output=output_name, to_pdf=True)
+            logging.info(f"Resume written to {output_name} (and PDF)")
+        except Exception as e:
+            logging.error(f"Failed to write resume files: {e}")
         return res
+
+    def generate_resume_progress(self, jd: str, output_basename: str = "resume"):
+        """Generator yielding progress events (stage, optional payload)."""
+        yield {"stage": "invoking_graph", "message": "Invoking LLM graph"}
+        res = self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
+        yield {"stage": "graph_complete", "message": "Graph completed"}
+        parsed = ResumeWriter.to_json(res["messages"][-1].content)
+        yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": parsed.get("language")}}
+        if parsed.get("language", "").lower() != "en":
+            yield {"stage": "translating", "message": "Translating resume"}
+            parsed = self.translate_resume(parsed)
+            yield {"stage": "translated", "message": "Translation complete", "data": {"language": parsed.get("language")}}
+        self.json_body = parsed
+        yield {"stage": "writing_file", "message": "Writing resume file"}
+        out_name = f"{output_basename}{self.writer.file_ending}"
+        try:
+            self.writer.write(parsed, output=out_name, to_pdf=True)
+            yield {"stage": "done", "message": "Resume generation complete", "result": parsed, "files": {"source": out_name, "pdf": f"{output_basename}.pdf"}}
+        except Exception as e:
+            yield {"stage": "error", "message": f"Failed writing resume: {e}"}
 
     
     def translate_resume(self,r:dict)->dict:

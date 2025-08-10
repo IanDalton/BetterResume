@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -69,9 +69,53 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
 async def generate_resume(user_id: str, req: ResumeRequest):
     writer = LatexResumeWriter() if req.format.lower() == "latex" else WordResumeWriter()
     tool = get_user_tool(user_id)
+    # Ensure per-user output directory
+    out_dir = os.path.join("./outputs", user_id)
+    os.makedirs(out_dir, exist_ok=True)
+    cwd = os.getcwd()
+    os.chdir(out_dir)
+    try:
+        bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
+        result = bot.generate_resume(req.job_description, output_basename="resume")
+    finally:
+        os.chdir(cwd)
+    result_meta = {"result": result, "files": {"pdf": f"/download/{user_id}/resume.pdf", "source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}}
+    return JSONResponse(content=result_meta)
+
+def sse_event(data: dict) -> bytes:
+    import json as _json
+    return f"data: {_json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
+
+@app.post("/generate-resume-stream/{user_id}")
+async def generate_resume_stream(user_id: str, req: ResumeRequest):
+    """Stream progress events for resume generation via Server-Sent Events (SSE)."""
+    writer = LatexResumeWriter() if req.format.lower() == "latex" else WordResumeWriter()
+    tool = get_user_tool(user_id)
+    out_dir = os.path.join("./outputs", user_id)
+    os.makedirs(out_dir, exist_ok=True)
     bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
-    result = bot.generate_resume(req.job_description)
-    return JSONResponse(content=result)
+
+    def event_generator():
+        try:
+            # Run inside output dir so writer outputs land there
+            cwd = os.getcwd(); os.chdir(out_dir)
+            for event in bot.generate_resume_progress(req.job_description, output_basename="resume"):
+                yield sse_event(event)
+            os.chdir(cwd)
+        except Exception as e:
+            yield sse_event({"stage": "error", "message": str(e)})
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/download/{user_id}/{filename}")
+async def download_file(user_id: str, filename: str):
+    # Security: basic path traversal guard
+    if ".." in filename or filename.startswith('/'):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join("./outputs", user_id, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path)
 
 @app.get("/users")
 async def list_users():

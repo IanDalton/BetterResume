@@ -4,6 +4,32 @@ import pandas as pd
 from .base_writer import BaseWriter
 import pdflatex
 
+def _latex_escape(text: str) -> str:
+    """Escape LaTeX special characters in arbitrary text.
+
+    Characters:  & % $ # _ { } ~ ^ \
+    ~ and ^ have no simple single-char escapes; use \textasciitilde{} and \textasciicircum{}
+    Backslashes are doubled.
+    """
+    if text is None:
+        return ""
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    out = []
+    for ch in str(text):
+        out.append(replacements.get(ch, ch))
+    return "".join(out)
+
 class LatexResumeWriter(BaseWriter):
     """
     LatexResumeWriter is a class for generating resumes in LaTeX format from structured JSON data.
@@ -46,15 +72,14 @@ class LatexResumeWriter(BaseWriter):
     def generate_file(self, response: dict, output: str = None):
         self.response = response
         data = self.data
-
-        name = data[data['company'] == 'name']['description'].values[0]
-        title = response['resume_section']['title']
-        address = data[data['company'] == 'address']['description'].values[0]
-        phone = data[data['company'] == 'phone']['description'].values[0]
-        email = data[data['company'] == 'email']['description'].values[0]
+        name = _latex_escape(data[data['company'] == 'name']['description'].values[0])
+        title = _latex_escape(response['resume_section']['title'])
+        address = _latex_escape(data[data['company'] == 'address']['description'].values[0])
+        phone = _latex_escape(data[data['company'] == 'phone']['description'].values[0])
+        email = _latex_escape(data[data['company'] == 'email']['description'].values[0])
         websites = data[data['company'] == 'website']['description'].tolist()
         websites_names= data[data['company'] == 'website']['role'].tolist()
-        websites = dict(zip(websites, websites_names))
+        websites = {w: _latex_escape(n) for w, n in zip(websites, websites_names)}
 
         tex = []
         tex.append(r"\documentclass[11pt]{article}")
@@ -78,34 +103,38 @@ class LatexResumeWriter(BaseWriter):
 
         # Summary
         tex.append(r"\section*{Professional Summary}")
-        tex.append(response["resume_section"]["professional_summary"])
+        tex.append(_latex_escape(response["resume_section"]["professional_summary"]))
 
         # Skills
         tex.append(r"\section*{Skills}")
         tex.append(r"\begin{itemize}[leftmargin=*]")
         for skill in response["resume_section"].get("skills", []):
-            tex.append(r"\item \textbf{" + skill["name"] + r"} -- " + skill["description"])
+            tex.append(r"\item \textbf{" + _latex_escape(skill["name"]) + r"} -- " + _latex_escape(skill["description"]))
         tex.append(r"\end{itemize}")
 
         # Experience
         tex.append(r"\section*{Experience}")
         for exp in response["resume_section"].get("experience", []):
-            tex.append(r"\textbf{" + exp["position"] + r"} \hfill " + exp["start_date"] + " -- " + exp["end_date"])
-            tex.append(r"\\" + exp["company"] + ", " + exp["location"])
+            tex.append(r"\textbf{" + _latex_escape(exp["position"]) + r"} \hfill " + _latex_escape(exp["start_date"]) + " -- " + _latex_escape(exp["end_date"]))
+            tex.append(r"\\" + _latex_escape(exp["company"]) + ", " + _latex_escape(exp["location"]))
             tex.append(r"\begin{itemize}[leftmargin=*]")
-            tex.append(r"\item " + exp["description"])
+            tex.append(r"\item " + _latex_escape(exp["description"]))
             tex.append(r"\end{itemize}")
 
         # Education
         tex.append(r"\section*{Education and Certifications}")
         for _, edu in data[data["type"] == "education"].iterrows():
             dates = edu["start_date"].strftime('%m/%Y') + " -- " + (edu["end_date"].strftime('%m/%Y') if pd.notnull(edu["end_date"]) else "Present")
-            tex.append(r"\textbf{" + edu["company"] + r"} \hfill " + dates)
-            tex.append(r"\\" + edu["location"] + r" -- " + edu["description"])
+            tex.append(r"\textbf{" + _latex_escape(edu["company"]) + r"} \hfill " + _latex_escape(dates))
+            tex.append(r"\\" + _latex_escape(edu["location"]) + r" -- " + _latex_escape(edu["description"]))
 
         tex.append(r"\end{document}")
 
         tex_content = "\n".join(tex)
+        # Safety net: in case any raw '&' slipped through (e.g., model output concatenated without escaping)
+        # escape ampersands not already escaped. Avoid touching '\\&'.
+        import re
+        tex_content = re.sub(r'(?<!\\)&', r'\\&', tex_content)
 
         if output:
             with open(output, "w", encoding="utf-8") as f:
