@@ -72,3 +72,50 @@ export async function saveUserData(uid: string, data: Partial<UserDataDoc>) {
   const ref = doc(getDb(), 'users', uid);
   await setDoc(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
 }
+
+// Extract only "experience" style entries (exclude purely personal info & optionally education/certification)
+function extractExperience(entries: any[] | undefined) {
+  if (!Array.isArray(entries)) return [] as any[];
+  return entries.filter(e => e && typeof e === 'object' && !['info'].includes(e.type));
+}
+
+function normalizeExperience(entries: any[]) {
+  // Create a stable representation ignoring ordering differences by sorting
+  const key = (e: any) => [e.type||'', e.role||'', e.company||'', e.start||'', e.end||'', e.location||''].join('|').toLowerCase();
+  return [...entries]
+    .map(e => ({
+      type: e.type,
+      role: e.role,
+      company: e.company,
+      location: e.location,
+      start: e.start,
+      end: e.end,
+      description: e.description,
+      role_description: e.role_description
+    }))
+    .sort((a,b)=> key(a).localeCompare(key(b)));
+}
+
+export async function saveUserDataIfExperienceChanged(uid: string, data: Partial<UserDataDoc>): Promise<{updated:boolean; reason:string}> {
+  try {
+    const ref = doc(getDb(), 'users', uid);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      await setDoc(ref, { ...data, updatedAt: serverTimestamp() });
+      return { updated: true, reason: 'no-existing-doc' };
+    }
+    const prev = snap.data() as UserDataDoc;
+    const prevNorm = normalizeExperience(extractExperience(prev.entries));
+    const nextNorm = normalizeExperience(extractExperience(data.entries));
+    const same = JSON.stringify(prevNorm) === JSON.stringify(nextNorm);
+    if (same) {
+      return { updated: false, reason: 'experience-unchanged' };
+    }
+    await setDoc(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    return { updated: true, reason: 'experience-changed' };
+  } catch (e:any) {
+    // Fallback: attempt normal save to avoid data loss if comparison failed
+    try { await saveUserData(uid, data); return { updated: true, reason: 'fallback-error-compare' }; } catch {}
+    return { updated: false, reason: 'error:'+ (e?.message||'unknown') };
+  }
+}

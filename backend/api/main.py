@@ -126,7 +126,15 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         except Exception as e:
             yield sse_event({"stage": "error", "message": str(e)})
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    # Explicit headers added because some environments / proxies may strip CORS headers on streaming responses
+    sse_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "*",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)
 
 @app.get("/download/{user_id}/{filename}")
 async def download_file(user_id: str, filename: str):

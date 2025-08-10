@@ -5,7 +5,7 @@ import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
-import { logout, loadUserData, saveUserData } from './services/firebase';
+import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
@@ -35,6 +35,10 @@ export default function App() {
   const [downloading, setDownloading] = useState<null | 'pdf' | 'source'>(null);
   const [showGenModal, setShowGenModal] = useState(false);
   const [showJson, setShowJson] = useState(false);
+  const [resumeCount, setResumeCount] = useState<number>(()=>{
+    try { const v = localStorage.getItem('br.resumeCount'); return v? parseInt(v)||0 : 0; } catch { return 0; }
+  });
+  const [showDonate, setShowDonate] = useState(false);
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
     try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
@@ -61,8 +65,8 @@ export default function App() {
     const file = new File([blob], 'jobs.csv', { type: 'text/csv' });
     await uploadJobsCsv(userId, file);
     if (user?.mode === 'auth') {
-      // Persist current state to Firestore after successful upload
-      saveUserData(user.uid, { entries, jobDescription, format }).catch(()=>{});
+      // Persist only if experience entries changed
+      saveUserDataIfExperienceChanged(user.uid, { entries, jobDescription, format }).catch(()=>{});
     }
   };
 
@@ -96,6 +100,14 @@ export default function App() {
       });
       setResumeJson(res.result);
       if (res.files) setDownloadLinks(res.files);
+      // Increment successful generation count
+      setResumeCount(c => {
+        const next = c + 1;
+        try { localStorage.setItem('br.resumeCount', String(next)); } catch {}
+        // Show donation modal exactly once when reaching 3 (unless previously dismissed)
+  try { const prompted = localStorage.getItem('br.donatePrompted'); if (next >= 1 && !prompted) { setShowDonate(true); localStorage.setItem('br.donatePrompted','1'); } } catch {}
+        return next;
+      });
     } catch (e: any) {
       setError(e.message || 'Generation failed');
     } finally {
@@ -187,11 +199,11 @@ export default function App() {
 }} />}
           <label className="text-sm flex flex-col">{t('format')}
             <select className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm" value={format} onChange={e => setFormat(e.target.value as any)}>
-              <option value='latex'>LaTeX</option>
-              <option value='word'>Word</option>
+        <option value='latex'>{t('format.latex')}</option>
+        <option value='word'>{t('format.word')}</option>
             </select>
           </label>
-          <label className="text-sm flex flex-col">Lang
+      <label className="text-sm flex flex-col">{t('app.language')}
             <select className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm" value={lang} onChange={e => setLang(e.target.value as any)}>
               {availableLanguages.map(l => <option key={l.code} value={l.code}>{t(l.labelKey)}</option>)}
             </select>
@@ -227,11 +239,11 @@ export default function App() {
         {resumeJson && (
           <div className="mt-6 space-y-2 bg-neutral-900/40 rounded">
             <button type="button" onClick={()=>setShowJson(s=>!s)} className="btn-link-primary text-xs px-3 py-2">
-              {showJson ? 'Hide JSON output' : 'Show JSON output'}
+              {showJson ? t('json.hide') : t('json.show')}
             </button>
             {showJson && (
               <div className="space-y-3 border-t border-neutral-800 pt-3 px-4 pb-4">
-                <h3 className="text-sm font-semibold">Resume JSON</h3>
+                <h3 className="text-sm font-semibold">{t('json.title')}</h3>
                 <pre className="text-xs overflow-auto max-h-96 bg-neutral-950 p-3 rounded border border-neutral-800">{JSON.stringify(resumeJson, null, 2)}</pre>
               </div>
             )}
@@ -240,14 +252,14 @@ export default function App() {
     </section>
     {downloadLinks?.pdf && (
       <section ref={pdfSectionRef} className="mb-24 space-y-4">
-        <h2 className="text-xl font-semibold">Preview</h2>
+        <h2 className="text-xl font-semibold">{t('preview.title')}</h2>
         <div className="w-full border border-neutral-800 rounded bg-neutral-900 aspect-[8.5/11] relative overflow-hidden">
           <iframe title="Resume PDF" src={downloadLinks.pdf} className="w-full h-full" />
-          {!downloadLinks.pdf && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">PDF not available</div>}
+          {!downloadLinks.pdf && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('preview.pdf.unavailable')}</div>}
         </div>
         <div className="flex gap-4 flex-wrap">
-          <button disabled={downloading==='pdf'} onClick={()=>handleDownload('pdf')} className="btn-primary disabled:opacity-50">{downloading==='pdf' ? 'Downloading…' : 'Download PDF'}</button>
-          <button disabled={downloading==='source'} onClick={()=>handleDownload('source')} className="btn-secondary disabled:opacity-50">{downloading==='source' ? 'Preparing…' : 'Edit (Download Source)'}</button>
+          <button disabled={downloading==='pdf'} onClick={()=>handleDownload('pdf')} className="btn-primary disabled:opacity-50">{downloading==='pdf' ? t('download.downloading') : t('download.pdf')}</button>
+          <button disabled={downloading==='source'} onClick={()=>handleDownload('source')} className="btn-secondary disabled:opacity-50">{downloading==='source' ? t('download.preparing') : t('download.source')}</button>
         </div>
       </section>
     )}
@@ -260,20 +272,34 @@ export default function App() {
               <div className="absolute inset-1 rounded-sm bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</div>
             </div>
             <div>
-              <h3 className="font-semibold">Building your resume…</h3>
-              <p className="text-xs text-neutral-400">AI is assembling sections and formatting</p>
+              <h3 className="font-semibold">{t('modal.building.title')}</h3>
+              <p className="text-xs text-neutral-400">{t('modal.building.subtitle')}</p>
             </div>
           </div>
           <div>
             <div className="h-2 w-full rounded bg-neutral-800 overflow-hidden">
               <div className="h-full bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-[progressMove_2s_linear_infinite]" style={{width: percent+"%"}} />
             </div>
-            <div className="flex justify-between mt-1 text-[11px] text-neutral-500"><span>{percent}%</span><span>{latestStage || 'starting'}</span></div>
+            <div className="flex justify-between mt-1 text-[11px] text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
           </div>
           <div className="flex gap-2 flex-wrap text-[10px] text-neutral-400 max-h-24 overflow-auto">
             {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-800 rounded">{p.stage}</span>))}
           </div>
-          <button onClick={()=> setShowGenModal(false)} className="w-full text-xs text-neutral-400 hover:text-neutral-200">Hide (continues in background)</button>
+          <button onClick={()=> setShowGenModal(false)} className="w-full text-xs text-neutral-400 hover:text-neutral-200">{t('modal.building.hide')}</button>
+        </div>
+      </div>
+    )}
+    {showDonate && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">
+          <button onClick={()=>setShowDonate(false)} className="absolute top-2 right-2 text-neutral-500 hover:text-neutral-300 text-xs">✕</button>
+          <h3 className="text-xl font-semibold tracking-tight">{t('donate.title')}</h3>
+          <p className="text-sm text-neutral-400 leading-relaxed">{t('donate.body')}</p>
+          <div className="flex gap-3 flex-wrap">
+            <a href="https://buymeacoffee.com/" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
+            <button onClick={()=>setShowDonate(false)} className="btn-secondary">{t('donate.later')}</button>
+          </div>
+          <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
         </div>
       </div>
     )}

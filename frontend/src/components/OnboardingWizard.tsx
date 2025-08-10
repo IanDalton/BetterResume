@@ -45,16 +45,17 @@ export const OnboardingWizard: React.FC<WizardProps> = ({ entries, addEntry, upd
       {step === 2 && <ExperienceStep addEntry={addEntry} existing={experienceEntries} updateEntry={updateEntry} />}
       {step === 3 && <ReviewStep all={entries} onFinish={onFinish} />}
 
-      <div className="flex justify-between items-center pt-4 border-t border-neutral-800">
-  {step>0 ? <button onClick={goBack} className="btn-secondary">Back</button> : <span />}
-  {step<3 && <button disabled={!nextAllowed()} onClick={goNext} className="btn-primary disabled:opacity-40">Next</button>}
+    <div className="flex justify-between items-center pt-4 border-t border-neutral-800">
+  {step>0 ? <button onClick={goBack} className="btn-secondary">{t('wizard.back')}</button> : <span />}
+  {step<3 && <button disabled={!nextAllowed()} onClick={goNext} className="btn-primary disabled:opacity-40">{t('wizard.next')}</button>}
       </div>
     </div>
   );
 };
 
 const WizardProgress: React.FC<{step:number}> = ({ step }) => {
-  const stages = ['Personal','Education','Experience','Review'];
+  const { t } = useI18n();
+  const stages = [t('wizard.stage.personal'),t('wizard.stage.education'),t('wizard.stage.experience'),t('wizard.stage.review')];
   return (
     <ol className="flex gap-4 text-xs uppercase tracking-wide text-neutral-500">
       {stages.map((s,i)=> (
@@ -66,11 +67,12 @@ const WizardProgress: React.FC<{step:number}> = ({ step }) => {
 
 // Reusable small add form components per category to keep simpler than full EntryBuilder
 const PersonalStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEntry[]; updateEntry:(i:number,e:ResumeEntry)=>void; removeEntry:(i:number)=>void; entries:ResumeEntry[] }> = ({ addEntry, existing, updateEntry, removeEntry, entries }) => {
+  const { t } = useI18n();
   const personalSingles: Array<{role:string; label:string}> = [
-    {role:'name',label:'Full Name'},
-    {role:'email',label:'Email'},
-    {role:'phone',label:'Phone'},
-    {role:'address',label:'Location'}
+    {role:'name',label:t('wizard.personal.fullName')},
+    {role:'email',label:t('wizard.personal.email')},
+    {role:'phone',label:t('wizard.personal.phone')},
+    {role:'address',label:t('wizard.personal.address')}
   ];
   const websites = existing.filter(e=>e.role==='website');
   const siteKinds = ['portfolio','github','linkedin','twitter','blog','other'] as const;
@@ -122,16 +124,16 @@ const PersonalStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEn
         })}
       </div>
       <div className="space-y-3">
-        <label className="text-xs uppercase tracking-wide text-neutral-400 block">Websites / Profiles</label>
+  <label className="text-xs uppercase tracking-wide text-neutral-400 block">{t('wizard.personal.websites')}</label>
         <div className="flex flex-col md:flex-row gap-2">
           <div className="flex gap-2 flex-1">
             <select className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={newKind} onChange={e=>{ setNewKind(e.target.value); if (e.target.value!=='other') setNewCustom(''); }}>
               {siteKinds.map(k=> <option key={k} value={k}>{k}</option>)}
             </select>
-            {newKind==='other' && <input className="w-32 bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" placeholder="Label" value={newCustom} onChange={e=>setNewCustom(e.target.value)} />}
+            {newKind==='other' && <input className="w-32 bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" placeholder={t('wizard.personal.label')} value={newCustom} onChange={e=>setNewCustom(e.target.value)} />}
             <input className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" placeholder="https://..." value={newSite} onChange={e=>setNewSite(e.target.value)} onKeyDown={e=>{ if (e.key==='Enter'){ e.preventDefault(); addWebsite(newSite, newKind, newCustom); setNewSite(''); } }} />
           </div>
-          <button type="button" onClick={()=>{ addWebsite(newSite, newKind, newCustom); setNewSite(''); }} className="btn-primary btn-sm self-start">Add</button>
+          <button type="button" onClick={()=>{ addWebsite(newSite, newKind, newCustom); setNewSite(''); }} className="btn-primary btn-sm self-start">{t('wizard.personal.add')}</button>
         </div>
         {websites.length>0 && (
           <ul className="space-y-2 text-sm">
@@ -142,16 +144,16 @@ const PersonalStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEn
                     {siteKinds.map(k=> <option key={k} value={k}>{k}</option>)}
                   </select>
                   {deriveKindValue(w.role_description)==='other' && (
-                    <input className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs" placeholder="Label" value={w.role_description||''} onChange={e=>updateWebsiteCustomLabel(i,e.target.value)} />
+                    <input className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs" placeholder={t('wizard.personal.label')} value={w.role_description||''} onChange={e=>updateWebsiteCustomLabel(i,e.target.value)} />
                   )}
                   <input className="flex-1 bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs" value={w.description||''} onChange={e=>updateWebsiteUrl(i,e.target.value)} />
-                  <button type="button" onClick={()=>removeWebsite(i)} className="text-red-400 hover:text-red-300 text-[11px]">Remove</button>
+                  <button type="button" onClick={()=>removeWebsite(i)} className="text-red-400 hover:text-red-300 text-[11px]">{t('wizard.personal.remove')}</button>
                 </div>
               </li>
             ))}
           </ul>
         )}
-        <p className="text-[11px] text-neutral-500">Add as many personal / professional links as you like (portfolio, GitHub, LinkedIn, etc.). Each link can have its own label.</p>
+        <p className="text-[11px] text-neutral-500">{t('wizard.personal.help')}</p>
       </div>
     </div>
   );
@@ -166,21 +168,22 @@ function deriveKindValue(label?: string) {
 }
 
 const EducationStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEntry[]; updateEntry:(i:number,e:ResumeEntry)=>void }> = ({ addEntry, existing, updateEntry }) => {
+  const { t } = useI18n();
   const [form, setForm] = useState<ResumeEntry>({ type:'education', role:'', company:'', location:'', start:'', end:'', description:'' });
   const submit = (e:React.FormEvent) => { e.preventDefault(); addEntry(form); setForm({ ...form, role:'', company:'', location:'', start:'', end:'', description:'' }); };
   return (
     <div className="space-y-6">
       <form onSubmit={submit} className="grid gap-3 md:grid-cols-2 bg-neutral-900/60 border border-neutral-800 rounded p-4">
-        <input required placeholder="Degree / Program" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.role} onChange={e=>setForm(f=>({...f, role:e.target.value}))} />
-        <input required placeholder="Institution" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.company} onChange={e=>setForm(f=>({...f, company:e.target.value}))} />
-        <input placeholder="Location" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.location} onChange={e=>setForm(f=>({...f, location:e.target.value}))} />
+        <input required placeholder={t('education.degree.placeholder')} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.role} onChange={e=>setForm(f=>({...f, role:e.target.value}))} />
+        <input required placeholder={t('education.institution.placeholder')} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.company} onChange={e=>setForm(f=>({...f, company:e.target.value}))} />
+        <input placeholder={t('education.location.placeholder')} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.location} onChange={e=>setForm(f=>({...f, location:e.target.value}))} />
         <div className="flex gap-2">
-          <input placeholder="Start" className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.start} onChange={e=>setForm(f=>({...f, start:e.target.value}))} />
-          <input placeholder="End / Present" className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.end} onChange={e=>setForm(f=>({...f, end:e.target.value}))} />
+          <input placeholder={t('education.start.placeholder')} className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.start} onChange={e=>setForm(f=>({...f, start:e.target.value}))} />
+          <input placeholder={t('education.end.placeholder')} className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.end} onChange={e=>setForm(f=>({...f, end:e.target.value}))} />
         </div>
-        <textarea placeholder="Description / Achievements" className="md:col-span-2 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm min-h-[80px]" value={form.description} onChange={e=>setForm(f=>({...f, description:e.target.value}))} />
+        <textarea placeholder={t('education.description.placeholder')} className="md:col-span-2 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm min-h-[80px]" value={form.description} onChange={e=>setForm(f=>({...f, description:e.target.value}))} />
         <div className="md:col-span-2 flex justify-end">
-          <button className="btn-primary">Add Education</button>
+          <button className="btn-primary">{t('education.add')}</button>
         </div>
       </form>
       <ul className="space-y-2">
@@ -195,6 +198,7 @@ const EducationStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeE
 };
 
 const ExperienceStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEntry[]; updateEntry:(i:number,e:ResumeEntry)=>void }> = ({ addEntry, existing, updateEntry }) => {
+  const { t } = useI18n();
   const [form, setForm] = useState<ResumeEntry>({ type:'job', role:'', company:'', location:'', start:'', end:'', description:'' });
   const submit = (e:React.FormEvent) => { e.preventDefault(); addEntry(form); setForm({ ...form, role:'', company:'', location:'', start:'', end:'', description:'' }); };
   return (
@@ -203,16 +207,16 @@ const ExperienceStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:Resume
         <select className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.type} onChange={e=>setForm(f=>({...f, type: e.target.value as EntryType}))}>
           {['job','project','contract','part-time','non-profit'].map(t=> <option key={t} value={t}>{t}</option>)}
         </select>
-        <input required placeholder="Role / Title" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.role} onChange={e=>setForm(f=>({...f, role:e.target.value}))} />
-        <input placeholder="Company / Org" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.company} onChange={e=>setForm(f=>({...f, company:e.target.value}))} />
-        <input placeholder="Location" className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.location} onChange={e=>setForm(f=>({...f, location:e.target.value}))} />
+        <input required placeholder={t('experience.role.placeholder')} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.role} onChange={e=>setForm(f=>({...f, role:e.target.value}))} />
+        <input placeholder={t('experience.company.placeholder')} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.company} onChange={e=>setForm(f=>({...f, company:e.target.value}))} />
+        <input placeholder={t('experience.location.placeholder')} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.location} onChange={e=>setForm(f=>({...f, location:e.target.value}))} />
         <div className="flex gap-2">
-          <input placeholder="Start" className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.start} onChange={e=>setForm(f=>({...f, start:e.target.value}))} />
-          <input placeholder="End / Present" className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.end} onChange={e=>setForm(f=>({...f, end:e.target.value}))} />
+          <input placeholder={t('experience.start.placeholder')} className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.start} onChange={e=>setForm(f=>({...f, start:e.target.value}))} />
+          <input placeholder={t('experience.end.placeholder')} className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" value={form.end} onChange={e=>setForm(f=>({...f, end:e.target.value}))} />
         </div>
-        <textarea placeholder="Description / Impact" className="md:col-span-2 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm min-h-[80px]" value={form.description} onChange={e=>setForm(f=>({...f, description:e.target.value}))} />
+        <textarea placeholder={t('experience.description.placeholder')} className="md:col-span-2 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm min-h-[80px]" value={form.description} onChange={e=>setForm(f=>({...f, description:e.target.value}))} />
         <div className="md:col-span-2 flex justify-end">
-          <button className="btn-primary">Add Experience</button>
+          <button className="btn-primary">{t('experience.add')}</button>
         </div>
       </form>
       <ul className="space-y-2">
@@ -227,10 +231,11 @@ const ExperienceStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:Resume
 };
 
 const ReviewStep: React.FC<{ all:ResumeEntry[]; onFinish:()=>void }> = ({ all, onFinish }) => {
+  const { t } = useI18n();
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold">Review</h3>
-      <p className="text-sm text-neutral-400">Quick summary of what you've added. You can finish to access full dashboard and make further edits.</p>
+      <h3 className="text-lg font-semibold">{t('review.title')}</h3>
+      <p className="text-sm text-neutral-400">{t('review.body')}</p>
       <div className="bg-neutral-900 border border-neutral-800 rounded p-4 max-h-80 overflow-auto text-xs space-y-2">
         {all.map((e,i)=>(
           <div key={i} className="border-b border-neutral-800 pb-2 last:border-b-0">
@@ -239,7 +244,7 @@ const ReviewStep: React.FC<{ all:ResumeEntry[]; onFinish:()=>void }> = ({ all, o
           </div>
         ))}
       </div>
-  <button onClick={onFinish} className="btn-primary">Finish Onboarding</button>
+  <button onClick={onFinish} className="btn-primary">{t('wizard.finish')}</button>
     </div>
   );
 };
