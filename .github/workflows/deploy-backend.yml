@@ -22,12 +22,27 @@ jobs:
           script: |
             set -euo pipefail
 
+            # --- Ensure Homebrew paths (macOS arm64) are in PATH for non-login, non-interactive shells ---
+            if [ -d /opt/homebrew/bin ]; then
+              export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+            fi
+            if [ -d /usr/local/bin ]; then
+              case ":$PATH:" in
+                *":/usr/local/bin:"*) :;;
+                *) export PATH="/usr/local/bin:$PATH";;
+              esac
+            fi
+            echo "PATH used by deploy script: $PATH"
+
             REPO_DIR="$HOME/repos/BetterResume"
-            GIT_REPO="https://ibalton:${{ secrets.GITHUB_TOKEN }}@github.com/IanDalton/BetterResume.git"
+            # Use the GitHub-provided token (scoped) for pulling the private repo if needed.
+            GIT_REPO="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/IanDalton/BetterResume.git"
             APP_NAME="better-resume-backend"
             CONTAINER_NAME="better-resume"
             DATA_VOLUME="better_resume_data"
             BACKEND_DIR="$REPO_DIR/backend"
+            COMMIT_SHA="${{ github.sha }}"
+            IMAGE_TAG="${APP_NAME}:${COMMIT_SHA:0:12}"
 
             echo "== Ensure repo present =="
             if [ ! -d "$REPO_DIR/.git" ]; then
@@ -46,17 +61,29 @@ jobs:
             echo "DATA_DIR=/app/data" >> "$ENV_FILE"
             # Append secrets here manually on server or enhance workflow to inject them.
 
+            echo "== Preflight: Docker availability =="
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "ERROR: Docker is not installed on the target host. Install Docker (Engine) first and re-run." >&2
+              echo "See: https://docs.docker.com/engine/install/" >&2
+              exit 1
+            fi
+
             echo "== Docker login (optional) =="
             # Docker Hub login (optional): add credentials via secrets + envs if needed.
 
-            echo "== Build image =="
-            docker build -t "$APP_NAME" "$BACKEND_DIR"
+            echo "== Build image (tagged) =="
+            docker build -t "$IMAGE_TAG" -t "$APP_NAME:latest" "$BACKEND_DIR"
 
             echo "== Create data volume if missing =="
             docker volume inspect "$DATA_VOLUME" >/dev/null 2>&1 || docker volume create "$DATA_VOLUME"
 
             echo "== Stop & remove old container =="
-            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+            OLD_IMAGE_ID=""
+            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+              # Capture current image id for potential rollback
+              OLD_IMAGE_ID=$(docker inspect --format='{{.Image}}' "$CONTAINER_NAME" || true)
+              docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+            fi
 
             echo "== Run new container =="
             docker run -d \
@@ -65,7 +92,38 @@ jobs:
               -p 8000:8000 \
               --env-file "$ENV_FILE" \
               -v "$DATA_VOLUME":/app/data \
-              "$APP_NAME"
+              "$IMAGE_TAG"
+
+            echo "== Health check (/health) =="
+            set +e
+            for i in $(seq 1 15); do
+              sleep 2
+              STATUS=$(curl -fsS http://localhost:8000/health 2>/dev/null | grep -o 'healthy' || true)
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Container healthy (attempt $i)."
+                HEALTH_OK=1
+                break
+              fi
+              echo "Waiting for health... ($i)"
+            done
+            if [ "${HEALTH_OK:-0}" != "1" ]; then
+              echo "Health check FAILED. Showing logs:" >&2
+              docker logs --tail 200 "$CONTAINER_NAME" || true
+              if [ -n "$OLD_IMAGE_ID" ]; then
+                echo "Attempting rollback to previous image $OLD_IMAGE_ID" >&2
+                docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+                docker run -d \
+                  --name "$CONTAINER_NAME" \
+                  --restart unless-stopped \
+                  -p 8000:8000 \
+                  --env-file "$ENV_FILE" \
+                  -v "$DATA_VOLUME":/app/data \
+                  "$OLD_IMAGE_ID" || true
+              fi
+              set -e
+              exit 1
+            fi
+            set -e
 
             echo "== Prune dangling images (safe) =="
             docker image prune -f >/dev/null 2>&1 || true
