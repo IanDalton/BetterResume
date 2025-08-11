@@ -72,11 +72,17 @@ class LatexResumeWriter(BaseWriter):
     def generate_file(self, response: dict, output: str = None):
         self.response = response
         data = self.data
-        name = _latex_escape(data[data['company'] == 'name']['description'].values[0])
+        # Safe accessors for optional info rows
+        def _safe_first(df, default=""):
+            try:
+                return df.values[0]
+            except Exception:
+                return default
+        name = _latex_escape(_safe_first(data[data['company'] == 'name']['description'], ""))
         title = _latex_escape(response['resume_section']['title'])
-        address = _latex_escape(data[data['company'] == 'address']['description'].values[0])
-        phone = _latex_escape(data[data['company'] == 'phone']['description'].values[0])
-        email = _latex_escape(data[data['company'] == 'email']['description'].values[0])
+        address = _latex_escape(_safe_first(data[data['company'] == 'address']['description'], ""))
+        phone = _latex_escape(_safe_first(data[data['company'] == 'phone']['description'], ""))
+        email = _latex_escape(_safe_first(data[data['company'] == 'email']['description'], ""))
         websites = data[data['company'] == 'website']['description'].tolist()
         websites_names= data[data['company'] == 'website']['role'].tolist()
         websites = {w: _latex_escape(n) for w, n in zip(websites, websites_names)}
@@ -123,8 +129,26 @@ class LatexResumeWriter(BaseWriter):
 
         # Education
         tex.append(r"\section*{Education and Certifications}")
+        def _fmt(dt):
+            try:
+                if pd.isna(dt):
+                    return None
+                return dt.strftime('%m/%Y')
+            except Exception:
+                # If strings snuck through, return as-is
+                try:
+                    return str(dt)
+                except Exception:
+                    return None
         for _, edu in data[data["type"] == "education"].iterrows():
-            dates = edu["start_date"].strftime('%m/%Y') + " -- " + (edu["end_date"].strftime('%m/%Y') if pd.notnull(edu["end_date"]) else "Present")
+            s = _fmt(edu.get("start_date"))
+            e = _fmt(edu.get("end_date"))
+            if s and e:
+                dates = f"{s} -- {e}"
+            elif s and not e:
+                dates = f"{s} -- Present"
+            else:
+                dates = ""
             tex.append(r"\textbf{" + _latex_escape(edu["company"]) + r"} \hfill " + _latex_escape(dates))
             tex.append(r"\\" + _latex_escape(edu["location"]) + r" -- " + _latex_escape(edu["description"]))
 

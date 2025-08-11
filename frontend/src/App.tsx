@@ -119,14 +119,22 @@ export default function App() {
   const removeEntry = (index: number) => setEntries(p => p.filter((_,i)=> i!==index));
 
   // Internal upload helper used by both explicit upload and generation. Does not manage loading state.
+  const [uploading, setUploading] = useState(false);
   const performUpload = async () => {
-    const csv = buildCsvFromEntries(entries);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const file = new File([blob], 'jobs.csv', { type: 'text/csv' });
-    await uploadJobsCsv(userId, file);
-    if (user?.mode === 'auth') {
-      // Persist only if experience entries changed
-      saveUserDataIfExperienceChanged(user.uid, { entries, jobDescription, format }).catch(()=>{});
+    if (uploading) return; // guard
+    setUploading(true);
+    try {
+      const csv = buildCsvFromEntries(entries);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const file = new File([blob], 'jobs.csv', { type: 'text/csv' });
+      const result = await uploadJobsCsv(userId, file);
+      if (user?.mode === 'auth') {
+        // Persist only if experience entries changed
+        saveUserDataIfExperienceChanged(user.uid, { entries, jobDescription, format }).catch(()=>{});
+      }
+      return result;
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -134,8 +142,14 @@ export default function App() {
     try {
       setError(null);
       setLoading(true);
-      await performUpload();
-      alert('Jobs uploaded');
+      const res: any = await performUpload();
+      if (res?.status === 'unchanged') {
+        alert('Jobs unchanged; ingestion skipped');
+      } else if (res?.rows_ingested != null) {
+        alert(`Jobs uploaded (${res.rows_ingested} rows)`);
+      } else {
+        alert('Jobs uploaded');
+      }
     } catch (e: any) {
       setError(e.message || 'Upload failed');
     } finally {
@@ -159,7 +173,8 @@ export default function App() {
         format,
         model: DEFAULT_MODEL
       }, evt => {
-        setProgress(p => [...p, {stage: evt.stage, message: evt.message}]);
+        const msg = evt.stage === 'csv_info' && (evt.rows != null) ? `rows: ${evt.rows}` : evt.message;
+        setProgress(p => [...p, {stage: evt.stage, message: msg}]);
       });
       setResumeJson(res.result);
       if (res.files) setDownloadLinks(res.files);
@@ -228,9 +243,10 @@ export default function App() {
   const wizardNeeded = !onboardingComplete || !hasPersonalBasics || !hasEducationOrCert;
 
   // Compute progress percent from stages
-  const stageOrder = ['invoking_graph','graph_complete','parsed','translating','translated','writing_file','done'];
+  const stageOrder = ['csv_info','invoking_graph','graph_complete','parsed','translating','translated','writing_file','done'];
   const latestStage = progress.length ? progress[progress.length-1].stage : null;
-  const percent = latestStage ? Math.min(100, Math.round(((stageOrder.indexOf(latestStage) + 1) / stageOrder.length) * 100)) : (showGenModal ? 5 : 0);
+  const idx = latestStage ? stageOrder.indexOf(latestStage) : -1;
+  const percent = idx >= 0 ? Math.min(100, Math.round(((idx + 1) / stageOrder.length) * 100)) : (showGenModal ? 5 : 0);
 
   useEffect(()=>{
     if (downloadLinks?.pdf && pdfSectionRef.current) {

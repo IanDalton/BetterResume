@@ -1,5 +1,9 @@
 import os
 import hashlib
+# Disable telemetry noise from dependencies (e.g., ChromaDB / posthog)
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
+os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "false")
+os.environ.setdefault("POSTHOG_DISABLED", "1")
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
