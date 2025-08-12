@@ -398,8 +398,7 @@ async def download_file(user_id: str, filename: str, request: Request):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")
     logger.info("Downloading file %s", filename)
-    # Explicitly set filename to ensure clean Content-Disposition header
-    return FileResponse(path, filename=filename)
+    return FileResponse(path)
 
 @app.get("/users")
 async def list_users():

@@ -278,29 +278,7 @@ export default function App() {
         throw new Error(`File not ready (${res.status})`);
       }
       const blob = await res.blob();
-      // Prefer server-provided filename from Content-Disposition if present
-      let fname = '';
-      try {
-        const cd = res.headers.get('content-disposition') || '';
-        let m = cd.match(/filename\*=UTF-8''([^;]+)$/i);
-        if (m && m[1]) {
-          fname = decodeURIComponent(m[1]);
-        } else {
-          m = cd.match(/filename="?([^";]+)"?/i);
-          if (m && m[1]) fname = m[1];
-        }
-      } catch {}
-      if (!fname) {
-        // Fallback to URL path (strip query params)
-        try {
-          const u = new URL(url, window.location.href);
-          fname = u.pathname.split('/').pop() || '';
-        } catch {
-          // Last-resort string ops
-          fname = (url.split('?')[0].split('/').pop()) || '';
-        }
-      }
-      if (!fname) fname = (kind === 'pdf' ? 'resume.pdf' : 'resume');
+      const fname = url.split('/').pop() || (kind === 'pdf' ? 'resume.pdf' : 'resume');
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
       link.download = fname;

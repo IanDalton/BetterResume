@@ -27,7 +27,7 @@ class WordResumeWriter(BaseWriter):
     
 
     def write(self,response:dict, output: str = None, to_pdf:bool=False):
-        file = self.generate_file(response, self.sanitize_filename(output.replace(".pdf", ".docx")) if output else None)
+        file = self.generate_file(response, output.replace(".pdf", ".docx") if output else None)
         self._logger.info("DOCX generated: %s", file if isinstance(file, str) else output)
         if not to_pdf:
             return file
@@ -264,7 +264,6 @@ class WordResumeWriter(BaseWriter):
         
         return document
     def to_pdf(self, output: str, src_path: str= None):
-        output = self.sanitize_filename(output)
         if not output.endswith(".pdf"):
             return output
         # Prefer LibreOffice (Linux container)
@@ -298,10 +297,3 @@ class WordResumeWriter(BaseWriter):
             return output
         except Exception:
             return output
-    
-    def sanitize_filename(self, filename: str) -> str:
-        import re
-        # Remove query strings and unexpected extensions
-        sanitized = re.sub(r'[?&].*$', '', filename)
-        sanitized = re.sub(r'[^a-zA-Z0-9_.-]', '_', sanitized)
-        return sanitized
