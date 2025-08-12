@@ -267,21 +267,19 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     clean_output_dir(out_dir)
-    cwd = os.getcwd(); os.chdir(out_dir)
-    try:
-        logger.info("Starting Bot generation; out_dir=%s", out_dir)
-        bot = Bot(
-            writer=writer,
-            llm=GeminiTool(model=req.model),
-            tool=tool,
-            user_id=user_id,
-            auto_ingest=True,
-            jobs_csv=csv_path,
-        )
-        result = bot.generate_resume(req.job_description, output_basename="resume")
-        logger.info("Bot generation complete; language=%s skills=%d exp=%d", result.get("language"), len(result.get("resume_section",{}).get("skills",[])), len(result.get("resume_section",{}).get("experience",[])))
-    finally:
-        os.chdir(cwd)
+    logger.info("Starting Bot generation; out_dir=%s", out_dir)
+    bot = Bot(
+        writer=writer,
+        llm=GeminiTool(model=req.model),
+        tool=tool,
+        user_id=user_id,
+        auto_ingest=True,
+        jobs_csv=csv_path,
+    )
+    # Important: use absolute output base to avoid races due to process cwd changes
+    abs_base = os.path.join(out_dir, "resume")
+    result = bot.generate_resume(req.job_description, output_basename=abs_base)
+    logger.info("Bot generation complete; language=%s skills=%d exp=%d", result.get("language"), len(result.get("resume_section",{}).get("skills",[])), len(result.get("resume_section",{}).get("experience",[])))
     files = {"source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}
     pdf_path = os.path.join(out_dir, "resume.pdf")
     if os.path.isfile(pdf_path):
@@ -345,11 +343,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 
     def event_generator():
         try:
-            # Run inside output dir so writer outputs land there
-            cwd = os.getcwd(); os.chdir(out_dir)
             # Send initial CSV info event
             yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
-            for event in bot.generate_resume_progress(req.job_description, output_basename="resume"):
+            abs_base = os.path.join(out_dir, "resume")
+            for event in bot.generate_resume_progress(req.job_description, output_basename=abs_base):
                 # Normalize final file paths for client (match non-stream endpoint style)
                 if event.get("stage") == "done":
                     source_name = f"resume{writer.file_ending}"
@@ -359,7 +356,6 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                         files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
                     event["files"] = files
                 yield sse_event(event)
-            os.chdir(cwd)
         except Exception as e:
             logger.exception("Streaming generation failed")
             yield sse_event({"stage": "error", "message": str(e)})

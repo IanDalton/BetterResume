@@ -173,12 +173,20 @@ class LatexResumeWriter(BaseWriter):
         return tex_content
 
     def to_pdf(self, output: str, src_path: str = None):
-
         try:
-            import subprocess
-            subprocess.run(["pdflatex", src_path], check=True)
-
+            import subprocess, os
+            # Use pdflatex with explicit output directory to avoid cwd dependence
+            out_dir = os.path.dirname(os.path.abspath(output))
+            src_abs = os.path.abspath(src_path) if src_path else None
+            # pdflatex will write PDF next to the .tex when using -output-directory
+            subprocess.run(["pdflatex", "-interaction=nonstopmode", f"-output-directory={out_dir}", src_abs], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Ensure expected name exists; move if needed
+            generated = os.path.join(out_dir, os.path.splitext(os.path.basename(src_abs))[0] + ".pdf")
+            if os.path.isfile(generated) and os.path.abspath(output) != generated:
+                try:
+                    os.replace(generated, output)
+                except Exception:
+                    pass
             return output
-
         except Exception as e:
             raise RuntimeError("LaTeX to PDF conversion failed") from e
