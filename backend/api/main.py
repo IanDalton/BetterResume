@@ -40,7 +40,10 @@ USER_TOOLS: Dict[str, ChromaDBTool] = {}
 
 def get_user_tool(user_id: str) -> ChromaDBTool:
     if user_id not in USER_TOOLS:
-        USER_TOOLS[user_id] = ChromaDBTool(persist_directory=PERSIST_CHROMA, collection_name=f"user_{user_id}")
+        # Use per-user Chroma persist directory for hard isolation
+        user_dir = os.path.join(PERSIST_CHROMA, f"user_{user_id}")
+        os.makedirs(user_dir, exist_ok=True)
+        USER_TOOLS[user_id] = ChromaDBTool(persist_directory=user_dir, collection_name="docs")
     return USER_TOOLS[user_id]
 
 def _validate_user_id(user_id: str):
@@ -220,9 +223,16 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     clean_output_dir(out_dir)
     # Pre-calc row count for early event
     row_count = None
+    collection = None
+    col_docs = None
     try:
         import pandas as pd
         row_count = len(pd.read_csv(csv_path))
+    except Exception:
+        pass
+    try:
+        collection = tool.collection_name
+        col_docs = tool._collection.count()
     except Exception:
         pass
     bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
@@ -232,7 +242,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
             # Run inside output dir so writer outputs land there
             cwd = os.getcwd(); os.chdir(out_dir)
             # Send initial CSV info event
-            yield sse_event({"stage": "csv_info", "rows": row_count})
+            yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
             for event in bot.generate_resume_progress(req.job_description, output_basename="resume"):
                 # Normalize final file paths for client (match non-stream endpoint style)
                 if event.get("stage") == "done":
