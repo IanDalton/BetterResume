@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 
 interface ResumeRequestPayload {
   job_description: string;
@@ -44,7 +45,7 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
   return new Promise((resolve, reject) => {
     // We POST first to initiate SSE because EventSource only supports GET natively; we fallback to fetch+ReadableStream poly.
     // Simpler approach: create a fetch POST to the stream endpoint and manually parse SSE lines.
-    fetch(`${API_BASE}/generate-resume-stream/${encodeURIComponent(userId)}`, {
+  fetch(`${API_BASE}/generate-resume-stream/${encodeURIComponent(userId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)

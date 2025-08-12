@@ -96,7 +96,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
     tmp_path = os.path.join(UPLOADS_BASE, f"uploaded_jobs_{user_id}.csv")
     hash_path = tmp_path + ".sha256"
     # If hash matches existing, skip re-ingestion
-    if os.path.isfile(tmp_path) and os.path.isfile(hash_path):
+    """ if os.path.isfile(tmp_path) and os.path.isfile(hash_path):
         try:
             with open(hash_path, 'r', encoding='utf-8') as hf:
                 old_hash = hf.read().strip()
@@ -111,7 +111,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
                     pass
                 return {"status": "unchanged", "rows_ingested": 0, "rows": rows, "hash": new_hash, "message": "CSV identical; ingestion skipped"}
         except Exception:
-            pass
+            pass """
     # Write new file
     with open(tmp_path, "wb") as f:
         f.write(contents)
