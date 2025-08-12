@@ -1,5 +1,4 @@
 import chromadb
-from chromadb.config import Settings
 from langchain.tools import BaseTool
 from pydantic import Field, PrivateAttr
 
@@ -75,11 +74,22 @@ class ChromaDBTool(BaseTool):
         super().__init__()
         if collection_name:
             self.collection_name = collection_name  # override default
-        self._client = chromadb.Client(Settings(persist_directory=persist_directory))
+        # Use a per-path PersistentClient to avoid SharedSystem settings conflicts
         try:
-            self._collection = self._client.get_collection(name=self.collection_name)
+            self._client = chromadb.PersistentClient(path=persist_directory)  # type: ignore[attr-defined]
         except Exception:
-            self._collection = self._client.create_collection(name=self.collection_name)
+            # Fallback for older chromadb versions
+            from chromadb.config import Settings  # type: ignore
+            self._client = chromadb.Client(Settings(persist_directory=persist_directory))
+        # Ensure collection exists
+        try:
+            self._collection = self._client.get_or_create_collection(name=self.collection_name)
+        except Exception:
+            # Fallback to get/create if API differs
+            try:
+                self._collection = self._client.get_collection(name=self.collection_name)
+            except Exception:
+                self._collection = self._client.create_collection(name=self.collection_name)
 
     def add_document(self, document: str, id: str):
         """
