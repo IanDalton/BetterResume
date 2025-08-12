@@ -147,6 +147,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
         rows = len(df)
         from langchain_community.document_loaders.csv_loader import CSVLoader
         # Replace existing vectors for this user to avoid mixing across uploads
+        print(tool.collection_name)
         try:
             tool._client.delete_collection(tool.collection_name)  # drop existing
             tool._collection = tool._client.get_or_create_collection(tool.collection_name)
@@ -182,7 +183,9 @@ def _resolve_user_jobs_csv(user_id: str) -> str:
 @app.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
+    print("######",user_id)
     csv_path = _resolve_user_jobs_csv(user_id)
+    print(csv_path)
     # Row count for response metadata
     row_count = None
     try:
