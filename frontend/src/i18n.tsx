@@ -133,6 +133,19 @@ const dictionaries: Record<Language, Dict> = {
     'field.personal.phone': 'phone',
     'field.personal.website': 'website',
     'field.personal.address': 'address'
+  ,
+  // Guide modal
+  'guide.title': 'Welcome to Better resume',
+  'guide.intro': 'Quick guide to tailor your resume for a specific role:',
+  'guide.step1': 'Paste the target job description into the Job Description box (you can copy it directly from a LinkedIn job post).',
+  'guide.step2': 'Add your details and experience in the entry section above. Keep bullets action‑oriented and measurable.',
+  'guide.step3': 'Choose your preferred format (Word or LaTeX), then click Generate Resume.',
+  'guide.step4': 'Review the preview, then download the PDF and/or source.',
+  'guide.tip': 'Tip: For best results, match keywords from the job post (skills, tools, responsibilities) in your entries.',
+  'guide.gotIt': 'Got it',
+  'guide.button.title': 'Quick guide',
+  // Footer
+  'footer.brandline': 'Better resume — a tool made by Ian Dalton'
   },
   es: {
     'app.title': 'Better Resume',
@@ -262,6 +275,19 @@ const dictionaries: Record<Language, Dict> = {
     'field.personal.phone': 'teléfono',
     'field.personal.website': 'sitio web',
     'field.personal.address': 'dirección'
+  ,
+  // Guide modal
+  'guide.title': 'Bienvenido a Better resume',
+  'guide.intro': 'Guía rápida para adaptar tu currículum a un puesto específico:',
+  'guide.step1': 'Pega la descripción del puesto objetivo en el cuadro de Descripción del Puesto (puedes copiarla directamente de una oferta en LinkedIn).',
+  'guide.step2': 'Añade tus datos y experiencia en la sección de entradas de arriba. Mantén los puntos orientados a la acción y medibles.',
+  'guide.step3': 'Elige tu formato preferido (Word o LaTeX) y haz clic en Generar Currículum.',
+  'guide.step4': 'Revisa la vista previa y luego descarga el PDF y/o la fuente.',
+  'guide.tip': 'Consejo: Para mejores resultados, incluye palabras clave de la oferta (habilidades, herramientas, responsabilidades) en tus entradas.',
+  'guide.gotIt': 'Entendido',
+  'guide.button.title': 'Guía rápida',
+  // Footer
+  'footer.brandline': 'Better resume — una herramienta creada por Ian Dalton'
   }
 };
 

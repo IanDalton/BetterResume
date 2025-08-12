@@ -6,6 +6,7 @@ import { EntryBuilder } from './components/EntryBuilder';
 import { Footer } from './components/Footer';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
+import { FirstLoadGuide } from './components/FirstLoadGuide';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from './services/analytics';
@@ -56,6 +57,9 @@ export default function App() {
     try { const v = localStorage.getItem('br.resumeCount'); return v? parseInt(v)||0 : 0; } catch { return 0; }
   });
   const [showDonate, setShowDonate] = useState(false);
+  const [showGuide, setShowGuide] = useState<boolean>(() => {
+    try { return localStorage.getItem('br.guideSeen') !== '1'; } catch { return true; }
+  });
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
     try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
@@ -124,6 +128,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('br.jobDescription', jobDescription); } catch {} }, [jobDescription]);
   useEffect(() => { try { localStorage.setItem('br.format', format); } catch {} }, [format]);
   useEffect(() => { try { localStorage.setItem('br.onboardingComplete', onboardingComplete? '1':'0'); } catch {} }, [onboardingComplete]);
+  useEffect(() => { if (!showGuide) { try { localStorage.setItem('br.guideSeen','1'); } catch {} } }, [showGuide]);
 
   const addEntry = (entry: ResumeEntry) => setEntries(p => [...p, entry]);
   const updateEntry = (index: number, entry: ResumeEntry) => setEntries(p => p.map((e,i)=> i===index? entry : e));
@@ -294,7 +299,10 @@ export default function App() {
               <p className="text-sm text-neutral-400 leading-snug max-w-xs">{t('app.tagline')}</p>
             </div>
           </div>
-          <div className="flex gap-4 items-center flex-wrap justify-end">
+          <div className="flex gap-3 items-center flex-wrap justify-end">
+          <button type="button" title={t('guide.button.title')} onClick={()=>setShowGuide(true)} className="btn-secondary btn-sm px-2 py-1">
+            <span aria-hidden>❓</span>
+          </button>
           {user && <UserBar user={user} onLogout={async ()=>{
   await logout();
   setUser(null);
@@ -413,6 +421,7 @@ export default function App() {
         </div>
       </div>
     )}
+  <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
     {showDonate && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">
