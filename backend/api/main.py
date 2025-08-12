@@ -15,6 +15,7 @@ from bot import Bot
 from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
 from typing import Dict
+import re
 
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")  # default to mounted volume path
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -25,11 +26,13 @@ for _d in (PERSIST_CHROMA, OUTPUTS_BASE, UPLOADS_BASE):
     os.makedirs(_d, exist_ok=True)
 
 app = FastAPI(title="BetterResume API", version="0.1.0")
+# Firebase auth disabled for now
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://iandalton.dev", "http://localhost", "http://127.0.0.1"],
+    allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 # Maintain a cache of user_id -> ChromaDBTool (separate collections)
@@ -39,6 +42,15 @@ def get_user_tool(user_id: str) -> ChromaDBTool:
     if user_id not in USER_TOOLS:
         USER_TOOLS[user_id] = ChromaDBTool(persist_directory=PERSIST_CHROMA, collection_name=f"user_{user_id}")
     return USER_TOOLS[user_id]
+
+def _validate_user_id(user_id: str):
+    """Basic server-side guard to avoid shared/guessable collections.
+    Allows only [A-Za-z0-9_-], length 8..128, and disallows literal 'guest'.
+    """
+    if user_id == "guest":
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", user_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid user id format")
 
 class ResumeRequest(BaseModel):
     job_description: str
@@ -73,6 +85,7 @@ def health():
 
 @app.post("/upload-jobs/{user_id}")
 async def upload_jobs(user_id: str, file: UploadFile = File(...)):
+    _validate_user_id(user_id)
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a .csv")
     contents = await file.read()
@@ -130,6 +143,16 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
             pass
         rows = len(df)
         from langchain_community.document_loaders.csv_loader import CSVLoader
+        # Replace existing vectors for this user to avoid mixing across uploads
+        try:
+            tool._client.delete_collection(tool.collection_name)  # drop existing
+            tool._collection = tool._client.get_or_create_collection(tool.collection_name)
+        except Exception:
+            # Fallback: if get_or_create is unavailable
+            try:
+                tool._collection = tool._client.get_collection(name=tool.collection_name)
+            except Exception:
+                tool._collection = tool._client.create_collection(name=tool.collection_name)
         data = CSVLoader(file_path=tmp_path).load()
         try:
             current = tool._collection.count()
@@ -147,6 +170,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
 
 def _resolve_user_jobs_csv(user_id: str) -> str:
     """Return absolute path to the uploaded jobs CSV for a user or raise HTTP 400 if missing."""
+    _validate_user_id(user_id)
     csv_path = os.path.join(UPLOADS_BASE, f"uploaded_jobs_{user_id}.csv")
     if not os.path.isfile(csv_path):
         raise HTTPException(status_code=400, detail="Jobs CSV not uploaded. Upload via /upload-jobs/{user_id} first.")
@@ -154,6 +178,7 @@ def _resolve_user_jobs_csv(user_id: str) -> str:
 
 @app.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
+    _validate_user_id(user_id)
     csv_path = _resolve_user_jobs_csv(user_id)
     # Row count for response metadata
     row_count = None
@@ -185,6 +210,7 @@ def sse_event(data: dict) -> bytes:
 
 @app.post("/generate-resume-stream/{user_id}")
 async def generate_resume_stream(user_id: str, req: ResumeRequest):
+    _validate_user_id(user_id)
     """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     csv_path = _resolve_user_jobs_csv(user_id)
     writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
@@ -233,6 +259,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 
 @app.get("/download/{user_id}/{filename}")
 async def download_file(user_id: str, filename: str):
+    _validate_user_id(user_id)
     # Security: basic path traversal guard
     if ".." in filename or filename.startswith('/'):
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -247,6 +274,7 @@ async def list_users():
 
 @app.delete("/users/{user_id}")
 async def clear_user(user_id: str):
+    _validate_user_id(user_id)
     # Drop the user's collection and remove cache entry
     if user_id not in USER_TOOLS:
         raise HTTPException(status_code=404, detail="User not found")

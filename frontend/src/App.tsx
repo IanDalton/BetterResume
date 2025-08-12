@@ -7,6 +7,7 @@ import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
+import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from './services/analytics';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -19,19 +20,16 @@ export default function App() {
   });
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
-  // Use actual guest ID from localStorage (assigned in AuthGate) rather than placeholder
-  // Ensure a guest id exists immediately (prevents early calls using plain 'guest')
+  // Always generate a fresh guest UUID on each reload to avoid cross-session mixing
   const [guestId] = useState(()=>{
     try {
-      let existing = localStorage.getItem('br.guestId');
-      if (!existing) {
-        const gen: string = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? (crypto as any).randomUUID() : 'guest-' + Date.now().toString(36);
-        try { localStorage.setItem('br.guestId', gen); } catch {}
-        return gen;
-      }
-      return existing;
+      const gen: string = (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
+        ? (crypto as any).randomUUID()
+        : 'guest-' + Date.now().toString(36);
+      try { localStorage.setItem('br.guestId', gen); } catch {}
+      return gen;
     } catch (error) {
-      console.error('Error getting guest ID:', error);
+      console.error('Error generating guest ID:', error);
       return 'guest-' + Date.now().toString(36);
     }
   });
@@ -51,6 +49,8 @@ export default function App() {
   const [downloading, setDownloading] = useState<null | 'pdf' | 'source'>(null);
   const [showGenModal, setShowGenModal] = useState(false);
   const [showJson, setShowJson] = useState(false);
+  const [genStartAt, setGenStartAt] = useState<number | null>(null);
+  const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
   const [resumeCount, setResumeCount] = useState<number>(()=>{
     try { const v = localStorage.getItem('br.resumeCount'); return v? parseInt(v)||0 : 0; } catch { return 0; }
   });
@@ -61,6 +61,16 @@ export default function App() {
   });
   const ADS_CLIENT = import.meta.env.VITE_ADSENSE_CLIENT;
   const ADS_SLOT = import.meta.env.VITE_ADSENSE_SLOT_GENERATE;
+  const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
+
+  useEffect(()=>{
+    if (GA_MEASUREMENT_ID) {
+      initAnalytics(GA_MEASUREMENT_ID);
+      setupErrorTracking();
+      trackConsole();
+      pageView(window.location.pathname, document.title);
+    }
+  }, [GA_MEASUREMENT_ID]);
 
   // Load AdSense script on demand when generation modal opens
   useEffect(()=>{
@@ -161,6 +171,9 @@ export default function App() {
     try {
       setError(null);
       setLoading(true);
+      setGenStartAt(Date.now());
+      setFirstEventAt(null);
+      try { trackEvent('resume_generate_start', { format, entries: entries.length, has_job: !!jobDescription, auth: user?.mode==='auth' }); } catch {}
       setProgress([]);
   // Clear previous outputs so UI doesn't show outdated preview while regenerating
   setDownloadLinks(null);
@@ -173,11 +186,25 @@ export default function App() {
         format,
         model: DEFAULT_MODEL
       }, evt => {
+        if (!firstEventAt) {
+          setFirstEventAt(Date.now());
+          if (genStartAt) {
+            try { trackEvent('resume_stream_first_event', { ms: Date.now() - genStartAt, stage: evt.stage }); } catch {}
+          }
+        }
         const msg = evt.stage === 'csv_info' && (evt.rows != null) ? `rows: ${evt.rows}` : evt.message;
         setProgress(p => [...p, {stage: evt.stage, message: msg}]);
+        if (evt.stage === 'error') {
+          try { trackEvent('resume_generate_error', { message: evt.message||'error' }); } catch {}
+        }
       });
       setResumeJson(res.result);
       if (res.files) setDownloadLinks(res.files);
+      try {
+        const dur = genStartAt ? (Date.now() - genStartAt) : undefined;
+        const first = genStartAt && firstEventAt ? (firstEventAt - genStartAt) : undefined;
+        trackEvent('resume_generate_success', { format, duration_ms: dur, first_event_ms: first });
+      } catch {}
       // Increment successful generation count
       setResumeCount(c => {
         const next = c + 1;
@@ -311,7 +338,7 @@ export default function App() {
   <textarea className="w-full min-h-[200px] bg-neutral-900 border border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
         <div className="flex flex-wrap gap-2">
           <button className="btn-primary btn-sm" disabled={loading || !jobDescription} onClick={handleGenerate}>{t('generate.resume')}</button>
-          <button type="button" className="btn-secondary btn-sm" onClick={clearAll}>{t('button.clear')}</button>
+          <button type="button" className="btn-secondary btn-sm" onClick={()=>{ trackEvent('clear_click'); clearAll(); }}>{t('button.clear')}</button>
         </div>
         {loading && <p className="text-sm text-neutral-400">{t('working')}</p>}
         {progress.length>0 && (
@@ -334,16 +361,23 @@ export default function App() {
           </div>
         )}
     </section>
-    {downloadLinks?.pdf && (
+    {downloadLinks && (
       <section ref={pdfSectionRef} className="mb-24 space-y-4">
         <h2 className="text-xl font-semibold">{t('preview.title')}</h2>
         <div className="w-full border border-neutral-800 rounded bg-neutral-900 aspect-[8.5/11] relative overflow-hidden">
-          <iframe title="Resume PDF" src={downloadLinks.pdf} className="w-full h-full" />
-          {!downloadLinks.pdf && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('preview.pdf.unavailable')}</div>}
+          {downloadLinks.pdf ? (
+            <iframe title="Resume PDF" src={downloadLinks.pdf} className="w-full h-full" />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('preview.pdf.unavailable')}</div>
+          )}
         </div>
         <div className="flex gap-4 flex-wrap">
-          <button disabled={downloading==='pdf'} onClick={()=>handleDownload('pdf')} className="btn-primary disabled:opacity-50">{downloading==='pdf' ? t('download.downloading') : t('download.pdf')}</button>
-          <button disabled={downloading==='source'} onClick={()=>handleDownload('source')} className="btn-secondary disabled:opacity-50">{downloading==='source' ? t('download.preparing') : t('download.source')}</button>
+          {downloadLinks.pdf && (
+            <button disabled={downloading==='pdf'} onClick={()=>handleDownload('pdf')} className="btn-primary disabled:opacity-50">{downloading==='pdf' ? t('download.downloading') : t('download.pdf')}</button>
+          )}
+          {downloadLinks.source && (
+            <button disabled={downloading==='source'} onClick={()=>handleDownload('source')} className="btn-secondary disabled:opacity-50">{downloading==='source' ? t('download.preparing') : t('download.source')}</button>
+          )}
         </div>
       </section>
     )}

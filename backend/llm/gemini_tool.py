@@ -1,9 +1,14 @@
 import json
+import os
+import time
+import threading
+import random
+from typing import Callable, Any
+
 from langchain_core.messages import BaseMessage
 from langchain.chat_models import init_chat_model
 from .base import BaseLLM
 from utils.file_io import load_prompt
-import os
 
 class GeminiTool(BaseLLM):
     """
@@ -43,5 +48,57 @@ class GeminiTool(BaseLLM):
             self.client = self.client.bind_tools(self.tools, tool_choice="any")
 
     def invoke(self, messages: list[BaseMessage]) -> BaseMessage:
-        # directly call the LLM
-        return self.client.invoke(messages)
+        # Rate limited + retrying call
+        return _rate_limited_invoke(lambda: self.client.invoke(messages))
+
+
+# ---- Concurrency and rate limiting with retries ----
+_RPM = int(os.getenv("GEMINI_RPM", "60"))
+_MAX_CONCURRENCY = int(os.getenv("GEMINI_MAX_CONCURRENCY", "4"))
+_TPS = max(1, _RPM) / 60.0  # tokens (requests) per second
+
+
+class _RateLimiter:
+    def __init__(self, tps: float, max_concurrency: int):
+        self.min_interval = 1.0 / float(tps)
+        self._last = 0.0
+        self._lock = threading.Lock()
+        self._sema = threading.Semaphore(max_concurrency)
+
+    def acquire(self):
+        self._sema.acquire()
+        with self._lock:
+            now = time.time()
+            wait = max(0.0, self._last + self.min_interval - now)
+            if wait:
+                time.sleep(wait)
+            self._last = time.time()
+
+    def release(self):
+        self._sema.release()
+
+
+_LIMITER = _RateLimiter(_TPS, _MAX_CONCURRENCY)
+
+
+def _with_retries(call: Callable[[], Any], *, max_tries: int = 5, base_delay: float = 0.5):
+    tries = 0
+    while True:
+        tries += 1
+        try:
+            return call()
+        except Exception as e:
+            # Retry on rate/quota/timeouts/transient 5xx
+            msg = str(e).lower()
+            retriable = any(x in msg for x in ("rate", "quota", "429", "busy", "timeout", "temporar", "deadline", "503", "unavailable"))
+            if not retriable or tries >= max_tries:
+                raise
+            time.sleep(base_delay * (2 ** (tries - 1)) + random.uniform(0, 0.25))
+
+
+def _rate_limited_invoke(call: Callable[[], Any]):
+    _LIMITER.acquire()
+    try:
+        return _with_retries(call)
+    finally:
+        _LIMITER.release()
