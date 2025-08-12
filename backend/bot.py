@@ -19,7 +19,7 @@ from llm.basic_tool_node import BasicToolNode
 from resume.parser import JobParser
 from resume.writer import ResumeWriter
 from resume.base_writer import BaseWriter
-from utils.logging_utils import request_id_var, user_id_var
+from utils.logging_utils import request_id_var, user_id_var, set_user_context
 
 
 
@@ -125,6 +125,8 @@ class Bot:
 
     def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
         #meta=JobParser.extract_language_and_title(jd)
+        if self.user_id:
+            set_user_context(self.user_id)
         self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
         res=self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
         self.logger.info("Graph returned; messages=%d", len(res.get("messages", [])))
@@ -145,6 +147,8 @@ class Bot:
 
     def generate_resume_progress(self, jd: str, output_basename: str = "resume"):
         """Generator yielding progress events (stage, optional payload)."""
+        if self.user_id:
+            set_user_context(self.user_id)
         self.logger.info("Streaming: invoking graph")
         yield {"stage": "invoking_graph", "message": "Invoking LLM graph"}
         res = self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})

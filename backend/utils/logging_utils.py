@@ -67,6 +67,9 @@ def set_user_context(user_id: Optional[str]) -> None:
     user_id_var.set(user_id)
 
 
-def clear_context() -> None:
+def clear_request_id() -> None:
     request_id_var.set(None)
+
+
+def clear_user_context() -> None:
     user_id_var.set(None)

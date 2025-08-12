@@ -19,7 +19,7 @@ from typing import Dict
 import re
 import time
 
-from utils.logging_utils import setup_logging, new_request_id, set_user_context, clear_context
+from utils.logging_utils import setup_logging, new_request_id, set_user_context, clear_request_id
 
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")  # default to mounted volume path
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -77,8 +77,8 @@ async def add_request_context(request: Request, call_next):
         logger.info("Completed %s %s -> %s in %dms", method, path, getattr(response, 'status_code', '?'), duration_ms)
         return response
     finally:
-        # Clear only request id; user context cleared by endpoints
-        clear_context()
+        # Clear only the request id; user id is tied to the endpoint handling
+        clear_request_id()
 
 class ResumeRequest(BaseModel):
     job_description: str
