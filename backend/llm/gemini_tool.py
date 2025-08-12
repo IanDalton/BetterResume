@@ -34,7 +34,7 @@ class GeminiTool(BaseLLM):
             raise ValueError("API key must be provided or set in environment variable GOOGLE_API_KEY")
         os.environ["GOOGLE_API_KEY"] = api_key
         
-        self.client = init_chat_model("google_genai:gemini-2.5-flash")
+        self.client = init_chat_model("google_genai:gemini-2.5-flash-lite")
         self._logger = logging.getLogger("betterresume.llm")
      
 
