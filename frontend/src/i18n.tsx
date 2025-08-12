@@ -146,6 +146,12 @@ const dictionaries: Record<Language, Dict> = {
   'guide.button.title': 'Quick guide',
   // Footer
   'footer.brandline': 'Better resume — a tool made by Ian Dalton'
+  ,
+  // Donation toast
+  'donate.toast.title': 'Help keep it free',
+  'donate.toast.body': 'Traffic grew a lot. A small donation (~$5,000 ARS, less than a hamburger) helps keep the servers running and this tool free.',
+  'donate.toast.cta': 'Donate',
+  'donate.toast.dismiss': 'Not now'
   },
   es: {
     'app.title': 'Better Resume',
@@ -288,6 +294,12 @@ const dictionaries: Record<Language, Dict> = {
   'guide.button.title': 'Guía rápida',
   // Footer
   'footer.brandline': 'Better resume — una herramienta creada por Ian Dalton'
+  ,
+  // Donation toast
+  'donate.toast.title': 'Ayúdanos a mantenerlo gratis',
+  'donate.toast.body': 'El tráfico creció mucho. Una pequeña donación (~$5.000 ARS, menos que una hamburguesa) ayuda a mantener el servidor y esta herramienta gratis.',
+  'donate.toast.cta': 'Donar',
+  'donate.toast.dismiss': 'Ahora no'
   }
 };
 

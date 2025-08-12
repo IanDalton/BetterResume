@@ -7,6 +7,7 @@ import { Footer } from './components/Footer';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
 import { FirstLoadGuide } from './components/FirstLoadGuide';
+import { DonateToast } from './components/DonateToast';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from './services/analytics';
@@ -60,6 +61,10 @@ export default function App() {
   const [showGuide, setShowGuide] = useState<boolean>(() => {
     try { return localStorage.getItem('br.guideSeen') !== '1'; } catch { return true; }
   });
+  const [donateToastSeen] = useState<boolean>(() => {
+    try { return localStorage.getItem('br.toastDonateSeen') === '1'; } catch { return false; }
+  });
+  const [showDonateToast, setShowDonateToast] = useState(false);
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
     try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
@@ -129,6 +134,15 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('br.format', format); } catch {} }, [format]);
   useEffect(() => { try { localStorage.setItem('br.onboardingComplete', onboardingComplete? '1':'0'); } catch {} }, [onboardingComplete]);
   useEffect(() => { if (!showGuide) { try { localStorage.setItem('br.guideSeen','1'); } catch {} } }, [showGuide]);
+  useEffect(() => {
+    // Show donation toast once after a short delay if not seen before and no blocking modals are up
+    if (!donateToastSeen) {
+      const id = setTimeout(() => {
+        if (!showGenModal && !showGuide) setShowDonateToast(true);
+      }, 1500);
+      return () => clearTimeout(id);
+    }
+  }, [donateToastSeen, showGenModal, showGuide]);
 
   const addEntry = (entry: ResumeEntry) => setEntries(p => [...p, entry]);
   const updateEntry = (index: number, entry: ResumeEntry) => setEntries(p => p.map((e,i)=> i===index? entry : e));
@@ -422,6 +436,7 @@ export default function App() {
       </div>
     )}
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
+  <DonateToast open={showDonateToast} onClose={()=>setShowDonateToast(false)} />
     {showDonate && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">
@@ -429,7 +444,7 @@ export default function App() {
           <h3 className="text-xl font-semibold tracking-tight">{t('donate.title')}</h3>
           <p className="text-sm text-neutral-400 leading-relaxed">{t('donate.body')}</p>
           <div className="flex gap-3 flex-wrap">
-            <a href="https://buymeacoffee.com/" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
+            <a href="link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
             <button onClick={()=>setShowDonate(false)} className="btn-secondary">{t('donate.later')}</button>
           </div>
           <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
