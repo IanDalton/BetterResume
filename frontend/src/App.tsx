@@ -200,6 +200,9 @@ export default function App() {
   const handleGenerate = async () => {
     try {
       setError(null);
+      // Frontend guard: block calls if requirements not met
+      if (!hasPersonalBasics) { setError('Please complete your personal info (name and email) before generating.'); return; }
+      if (!hasExperience) { setError('Please add at least one experience entry before generating.'); return; }
       setLoading(true);
       setGenStartAt(Date.now());
       setFirstEventAt(null);
@@ -278,7 +281,26 @@ export default function App() {
         throw new Error(`File not ready (${res.status})`);
       }
       const blob = await res.blob();
-      const fname = url.split('/').pop() || (kind === 'pdf' ? 'resume.pdf' : 'resume');
+      // Prefer filename from Content-Disposition when available
+      let fname = '';
+      const cd = res.headers.get('Content-Disposition') || res.headers.get('content-disposition');
+      if (cd) {
+        // naive parse: filename="resume.pdf" or filename=resume.pdf
+        const m = cd.match(/filename\*=UTF-8''([^;]+)|filename\s*=\s*"?([^";]+)"?/i);
+        const raw = (m && (m[1] || m[2])) || '';
+        try { fname = decodeURIComponent(raw); } catch { fname = raw; }
+      }
+      if (!fname) {
+        try {
+          const u = new URL(url);
+          const parts = u.pathname.split('/');
+          fname = parts[parts.length - 1] || (kind === 'pdf' ? 'resume.pdf' : 'resume');
+        } catch {
+          // Fallback: strip query if present
+          const last = url.split('/').pop() || '';
+          fname = last.split('?')[0] || (kind === 'pdf' ? 'resume.pdf' : 'resume');
+        }
+      }
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
       link.download = fname;
@@ -310,10 +332,11 @@ export default function App() {
   };
 
   // Determine if onboarding needed: require at least basic personal info (name, email, phone, address/website optional) then education/certification, then any experience.
-  const hasPersonalBasics = entries.filter(e=>e.type==='info').map(e=>e.role).includes('name') && entries.filter(e=>e.type==='info').map(e=>e.role).includes('email');
-  // We allow finishing onboarding even without phone but you can adjust.
-  const hasEducationOrCert = entries.some(e=> e.type==='education' || e.type==='certification');
-  const wizardNeeded = !onboardingComplete || !hasPersonalBasics || !hasEducationOrCert;
+  const infoRoles = entries.filter(e=>e.type==='info').map(e=>e.role);
+  const hasPersonalBasics = infoRoles.includes('name') && infoRoles.includes('email');
+  const hasExperience = entries.some(e => !['info','education','certification'].includes(e.type));
+  // Keep wizard visible until basics + at least one experience entry are present (or previously completed)
+  const wizardNeeded = !onboardingComplete || !hasPersonalBasics || !hasExperience;
 
   // Compute progress percent from stages
   const stageOrder = ['csv_info','invoking_graph','graph_complete','parsed','translating','translated','writing_file','done'];
@@ -387,9 +410,14 @@ export default function App() {
         <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
   <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
         <div className="flex flex-wrap gap-2">
-          <button className="btn-primary btn-sm" disabled={loading || !jobDescription} onClick={handleGenerate}>{t('generate.resume')}</button>
+          <button className="btn-primary btn-sm" disabled={loading || !jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</button>
           <button type="button" className="btn-secondary btn-sm" onClick={()=>{ trackEvent('clear_click'); clearAll(); }}>{t('button.clear')}</button>
         </div>
+        {(!hasPersonalBasics || !hasExperience) && (
+          <p className="text-xs text-red-500">
+            {!hasPersonalBasics ? 'Please complete your personal info (name and email).' : 'Please add at least one experience entry.'}
+          </p>
+        )}
   {loading && <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('working')}</p>}
         {progress.length>0 && (
           <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded p-2 max-h-48 overflow-auto">
