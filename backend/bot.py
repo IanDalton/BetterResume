@@ -67,19 +67,19 @@ class Bot:
             persist_directory: Directory for Chroma persistence when creating new tool.
         """
         self.llm = llm
-        if user_id:
-            persist_directory+=f"/{user_id}"
+        # Always respect injected tool (API supplies per-user tool with isolated persist+collection)
+        # Only create a new one if not provided.
         self.tool = tool or ChromaDBTool(persist_directory=persist_directory)
         self.user_id = user_id
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
-            "Bot init model=%s has_tool=%s auto_ingest=%s jobs_csv=%s user=%s",
-            getattr(llm, "model", None), bool(tool), auto_ingest, jobs_csv, user_id,
+            "Bot init model=%s has_tool=%s auto_ingest=%s jobs_csv=%s user=%s collection=%s",
+            getattr(llm, "model", None), bool(self.tool), auto_ingest, jobs_csv, user_id, getattr(self.tool, "collection_name", "?"),
         )
 
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             try:
-                # Clear any existing collection docs to avoid cross-run mixing
+                # Clear any existing collection docs to avoid cross-run mixing (per-user collection)
                 try:
                     self.logger.info("Resetting Chroma collection for fresh ingest")
                     self.tool._client.delete_collection(self.tool.collection_name)  # type: ignore[attr-defined]
@@ -91,11 +91,16 @@ class Bot:
                         self.tool._collection = self.tool._client.create_collection(name=self.tool.collection_name)
 
                 data = CSVLoader(file_path=jobs_csv).load()
-                self.logger.info("Auto-ingesting %d rows from %s", len(data), jobs_csv)
+                self.logger.info("Auto-ingesting %d rows from %s into collection=%s", len(data), jobs_csv, self.tool.collection_name)
                 self.tool.add_documents(
                     [d.page_content for d in data],
                     [str(i) for i, _ in enumerate(data)],
                 )
+                try:
+                    cnt = self.tool._collection.count()
+                    self.logger.info("Post-ingest collection count=%s", cnt)
+                except Exception:
+                    pass
             except Exception as e:
                 self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 

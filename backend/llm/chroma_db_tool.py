@@ -92,6 +92,7 @@ class ChromaDBTool(BaseTool):
                 self._collection = self._client.get_collection(name=self.collection_name)
             except Exception:
                 self._collection = self._client.create_collection(name=self.collection_name)
+        self._persist_directory = persist_directory
         self._logger.info("Chroma initialized dir=%s collection=%s", persist_directory, self.collection_name)
 
     def add_document(self, document: str, id: str):
@@ -125,8 +126,13 @@ class ChromaDBTool(BaseTool):
         """
         try:
             results = self._collection.query(query_texts=[query], n_results=2)
-            self._logger.info("Query executed n_results=%d", len(results.get("documents", [[ ]])[0]))
-            return list(zip(results["documents"][0], results["distances"][0]))
+            docs = results.get("documents") or [[]]
+            dists = results.get("distances") or [[]]
+            n = len(docs[0]) if docs and isinstance(docs, list) else 0
+            self._logger.info("Query executed dir=%s collection=%s n_results=%d", getattr(self, "_persist_directory", "?"), self.collection_name, n)
+            if n == 0:
+                return []
+            return list(zip(docs[0], dists[0]))
         except Exception as e:
             self._logger.exception("Error querying the database: %s", e)
             return f"Error querying the database: {e}"

@@ -18,6 +18,8 @@ from llm.gemini_tool import GeminiTool
 from typing import Dict
 import re
 import time
+import hmac
+from hashlib import sha256
 
 from utils.logging_utils import setup_logging, new_request_id, set_user_context, clear_request_id
 
@@ -45,13 +47,42 @@ app.add_middleware(
 # Maintain a cache of user_id -> ChromaDBTool (separate collections)
 USER_TOOLS: Dict[str, ChromaDBTool] = {}
 
+# Signing secret for secure download links
+DOWNLOAD_SIGNING_SECRET = os.getenv("DOWNLOAD_SIGNING_SECRET") or os.getenv("SECRET_KEY") or "dev-secret-change-me"
+
+def _hmac_sign(user_id: str, filename: str, exp: int) -> str:
+    """Create an HMAC signature for a given user/file/expiry tuple."""
+    message = f"{user_id}:{filename}:{exp}".encode("utf-8")
+    return hmac.new(DOWNLOAD_SIGNING_SECRET.encode("utf-8"), message, sha256).hexdigest()
+
+def make_signed_download_path(user_id: str, filename: str, ttl_seconds: int = 900) -> str:
+    """Return a relative signed URL for downloading a file valid for ttl_seconds (default 15 minutes)."""
+    exp = int(time.time()) + max(60, int(ttl_seconds))  # minimum 60s
+    sig = _hmac_sign(user_id, filename, exp)
+    # Keep relative path so the frontend can prefix with API base; include query string
+    return f"/download/{user_id}/{filename}?exp={exp}&sig={sig}"
+
 def get_user_tool(user_id: str) -> ChromaDBTool:
-    if user_id not in USER_TOOLS:
+    tool = USER_TOOLS.get(user_id)
+    if tool is None:
         # Use per-user Chroma persist directory for hard isolation
         user_dir = os.path.join(PERSIST_CHROMA, f"user_{user_id}")
         os.makedirs(user_dir, exist_ok=True)
-        USER_TOOLS[user_id] = ChromaDBTool(persist_directory=user_dir, collection_name="docs")
-    return USER_TOOLS[user_id]
+        # Also isolate by collection name per user to avoid any cross-collection leakage
+        tool = ChromaDBTool(persist_directory=user_dir, collection_name=f"docs_{user_id}")
+        USER_TOOLS[user_id] = tool
+    else:
+        # Migrate any pre-existing tool to per-user collection naming if it isn't already
+        expected = f"docs_{user_id}"
+        try:
+            if getattr(tool, "collection_name", None) != expected:
+                logger.info("Migrating collection for user=%s from %s to %s", user_id, tool.collection_name, expected)
+                tool._client.delete_collection(tool.collection_name)  # type: ignore[attr-defined]
+                tool.collection_name = expected
+                tool._collection = tool._client.get_or_create_collection(name=expected)
+        except Exception:
+            pass
+    return tool
 
 def _validate_user_id(user_id: str):
     """Basic server-side guard to avoid shared/guessable collections.
@@ -187,6 +218,9 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
             except Exception:
                 tool._collection = tool._client.create_collection(name=tool.collection_name)
         data = CSVLoader(file_path=tmp_path).load()
+        if not data:
+            logger.info("CSV parsed but contains 0 rows; skipping Chroma ingest")
+            return {"status": "ok", "rows_ingested": 0, "hash": new_hash}
         try:
             current = tool._collection.count()
         except Exception:
@@ -226,6 +260,8 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         row_count = len(pd.read_csv(csv_path))
     except Exception:
         pass
+    if not row_count:
+        raise HTTPException(status_code=400, detail="No jobs found. Please upload your entries before generating.")
     writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
@@ -250,7 +286,9 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     pdf_path = os.path.join(out_dir, "resume.pdf")
     if os.path.isfile(pdf_path):
         files["pdf"] = f"/download/{user_id}/resume.pdf"
-    return JSONResponse(content={"result": result, "files": files, "rows": row_count})
+    # Replace raw paths with signed links
+    signed_files = {k: make_signed_download_path(user_id, v.split('/')[-1]) for k, v in files.items() if v}
+    return JSONResponse(content={"result": result, "files": signed_files, "rows": row_count})
 
 def sse_event(data: dict) -> bytes:
     import json as _json
@@ -276,6 +314,20 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         row_count = len(pd.read_csv(csv_path))
     except Exception:
         pass
+    if not row_count:
+        # early SSE error with headers
+        early_headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Methods": "*",
+        }
+        return StreamingResponse(
+            iter([sse_event({"stage":"error","message":"No jobs found. Please upload your entries before generating."})]),
+            media_type="text/event-stream",
+            headers=early_headers,
+        )
     try:
         collection = tool.collection_name
         col_docs = tool._collection.count()
@@ -301,10 +353,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 # Normalize final file paths for client (match non-stream endpoint style)
                 if event.get("stage") == "done":
                     source_name = f"resume{writer.file_ending}"
-                    # Build file list dynamically to avoid broken pdf links
-                    files = {"source": f"/download/{user_id}/{source_name}"}
+                    # Build file list dynamically to avoid broken pdf links and sign them
+                    files: Dict[str, str] = {"source": make_signed_download_path(user_id, source_name)}
                     if os.path.isfile(os.path.join(out_dir, "resume.pdf")):
-                        files["pdf"] = f"/download/{user_id}/resume.pdf"
+                        files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
                     event["files"] = files
                 yield sse_event(event)
             os.chdir(cwd)
@@ -323,12 +375,29 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)
 
 @app.get("/download/{user_id}/{filename}")
-async def download_file(user_id: str, filename: str):
+async def download_file(user_id: str, filename: str, request: Request):
     _validate_user_id(user_id)
     set_user_context(user_id)
     # Security: basic path traversal guard
     if ".." in filename or filename.startswith('/'):
         raise HTTPException(status_code=400, detail="Invalid filename")
+    # Require signed URL parameters
+    try:
+        exp_q = request.query_params.get("exp")
+        sig_q = request.query_params.get("sig")
+        if not exp_q or not sig_q:
+            raise HTTPException(status_code=403, detail="Missing signature")
+        exp = int(exp_q)
+        if exp < int(time.time()):
+            raise HTTPException(status_code=410, detail="Link expired")
+        expected = _hmac_sign(user_id, filename, exp)
+        # Constant-time comparison
+        if not hmac.compare_digest(expected, sig_q):
+            raise HTTPException(status_code=403, detail="Invalid signature")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid signature")
     path = os.path.join(OUTPUTS_BASE, user_id, filename)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")

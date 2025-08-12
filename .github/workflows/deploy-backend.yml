@@ -73,6 +73,17 @@ jobs:
             else
               echo "WARNING: GOOGLE_API_KEY not set; Gemini calls may fail." >&2
             fi
+            # Signed download link secret (rotate per deploy)
+            if command -v openssl >/dev/null 2>&1; then
+              DS_SECRET=$(openssl rand -hex 32)
+            else
+              DS_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            fi
+            if [ -z "$DS_SECRET" ]; then
+              # Fallback: derive from commit sha and time (less secure, but avoids empty)
+              DS_SECRET="fallback-${COMMIT_SHA:0:12}-$(date +%s)"
+            fi
+            echo "DOWNLOAD_SIGNING_SECRET=$DS_SECRET" >> "$ENV_FILE"
             # Agregá otras variables acá si corresponde (OPENAI_API_KEY, etc)
 
             echo "== Build image (tagged) =="
