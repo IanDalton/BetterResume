@@ -28,7 +28,6 @@ export function DonateToast({ open, onClose, href }: Props) {
                 rel="noreferrer"
                 className="btn-primary btn-sm"
                 onClick={() => {
-                  try { localStorage.setItem('br.toastDonateSeen','1'); } catch {}
                   onClose();
                 }}
               >
@@ -37,7 +36,6 @@ export function DonateToast({ open, onClose, href }: Props) {
               <button
                 className="btn-secondary btn-sm"
                 onClick={() => {
-                  try { localStorage.setItem('br.toastDonateSeen','1'); } catch {}
                   onClose();
                 }}
               >
@@ -49,7 +47,6 @@ export function DonateToast({ open, onClose, href }: Props) {
             className="text-neutral-500 hover:text-neutral-300 text-xs"
             aria-label="Close"
             onClick={() => {
-              try { localStorage.setItem('br.toastDonateSeen','1'); } catch {}
               onClose();
             }}
           >
