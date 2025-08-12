@@ -87,18 +87,18 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="w-full max-w-md bg-neutral-900 border border-neutral-700 rounded-xl p-6 shadow-xl space-y-5">
+    <div className="fixed inset-0 bg-black/40 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-6 shadow-xl space-y-5">
         <h2 className="text-xl font-semibold tracking-tight">{t('auth.welcome')}</h2>
-        <p className="text-sm text-neutral-400">{t('auth.tagline')}</p>
+  <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('auth.tagline')}</p>
         <form onSubmit={submit} className="space-y-4">
           <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wide text-neutral-400">{t('auth.email')}</label>
-            <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" />
+            <label className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">{t('auth.email')}</label>
+            <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wide text-neutral-400">{t('auth.password')}</label>
-            <input type="password" required value={password} onChange={e=>setPassword(e.target.value)} className="bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-sm" />
+            <label className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">{t('auth.password')}</label>
+            <input type="password" required value={password} onChange={e=>setPassword(e.target.value)} className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" />
           </div>
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex items-center justify-between text-xs text-neutral-400">
@@ -106,11 +106,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
             {/* Guest option hidden because user is already a guest by default */}
           </div>
           <button disabled={loading} className="w-full mt-2 btn-primary disabled:opacity-50">{mode==='signin'? t('auth.signIn'): t('auth.createAccount')}</button>
-          <div className="relative my-2">
+      <div className="relative my-2">
             <div className="flex items-center">
-              <div className="flex-grow h-px bg-neutral-700" />
-              <span className="mx-2 text-[10px] uppercase tracking-wide text-neutral-500">{t('auth.or')}</span>
-              <div className="flex-grow h-px bg-neutral-700" />
+        <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
+        <span className="mx-2 text-[10px] uppercase tracking-wide text-neutral-500">{t('auth.or')}</span>
+        <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
             </div>
           </div>
           <button type="button" onClick={handleGoogle} disabled={loading} className="w-full bg-neutral-100 text-neutral-900 hover:bg-white disabled:opacity-50 rounded py-2 text-sm font-medium flex items-center justify-center gap-2">
@@ -118,7 +118,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
             <span>{loading ? t('auth.working') : t('auth.continueGoogle')}</span>
           </button>
         </form>
-        <p className="text-[11px] text-neutral-500 leading-relaxed">{t('auth.guest.notice')}</p>
+  <p className="text-[11px] text-neutral-600 dark:text-neutral-500 leading-relaxed">{t('auth.guest.notice')}</p>
       </div>
     </div>
   );
@@ -127,16 +127,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
 export const UserBar: React.FC<{user: {mode:'auth'|'guest'; uid:string; email?:string}; onLogout: ()=>void; onSignInRequest?: ()=>void}> = ({ user, onLogout, onSignInRequest }) => {
   const { t } = useI18n();
   return (
-    <div className="flex items-center gap-3 text-xs bg-neutral-800 border border-neutral-700 rounded px-3 py-1">
+  <div className="flex items-center gap-3 text-xs bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-1">
       {user.mode === 'auth' ? (
         <>
-          <span className="text-neutral-300">{user.email}</span>
+      <span className="text-neutral-700 dark:text-neutral-300">{user.email}</span>
           <button onClick={onLogout} className="text-red-400 hover:text-red-300">{t('auth.logout')}</button>
         </>
       ) : (
         <>
-          <span className="text-neutral-400">{t('auth.guest')}</span>
-          <span className="font-mono text-[10px] text-neutral-500 truncate max-w-[120px]" title={user.uid}>{user.uid}</span>
+      <span className="text-neutral-600 dark:text-neutral-400">{t('auth.guest')}</span>
+      <span className="font-mono text-[10px] text-neutral-500 truncate max-w-[120px]" title={user.uid}>{user.uid}</span>
           <button onClick={onSignInRequest || onLogout} className="btn-link-primary">{t('auth.signIn')}</button>
         </>
       )}

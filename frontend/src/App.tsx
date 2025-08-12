@@ -8,6 +8,8 @@ import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
 import { FirstLoadGuide } from './components/FirstLoadGuide';
 import { DonateToast } from './components/DonateToast';
+import { AdBanner } from './components/AdBanner';
+import { ThemeToggle } from './components/ThemeToggle';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from './services/analytics';
@@ -334,7 +336,7 @@ export default function App() {
             <img src="/logo2.png" alt={t('app.title')} className="h-16 sm:h-20 w-auto select-none" draggable={false} />
             <div className="flex flex-col justify-center">
               <p className="sr-only">{t('app.title')}</p>
-              <p className="text-sm text-neutral-400 leading-snug max-w-xs">{t('app.tagline')}</p>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-snug max-w-xs">{t('app.tagline')}</p>
             </div>
           </div>
           <div className="flex gap-3 items-center flex-wrap justify-end">
@@ -355,16 +357,17 @@ export default function App() {
   }
 }} />}
           <label className="text-sm flex flex-col">{t('format')}
-            <select className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm" value={format} onChange={e => setFormat(e.target.value as any)}>
+            <select className="mt-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-sm" value={format} onChange={e => setFormat(e.target.value as any)}>
         <option value='latex'>{t('format.latex')}</option>
         <option value='word'>{t('format.word')}</option>
             </select>
           </label>
-      <label className="text-sm flex flex-col">{t('app.language')}
-            <select className="mt-1 bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-sm" value={lang} onChange={e => setLang(e.target.value as any)}>
+          <label className="text-sm flex flex-col">{t('app.language')}
+            <select className="mt-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-sm" value={lang} onChange={e => setLang(e.target.value as any)}>
               {availableLanguages.map(l => <option key={l.code} value={l.code}>{t(l.labelKey)}</option>)}
             </select>
           </label>
+          {/* <ThemeToggle /> */}
           </div>
         </div>
       </header>
@@ -380,29 +383,29 @@ export default function App() {
     <EntryBuilder entries={entries} onAdd={addEntry} onUpdate={updateEntry} onRemove={removeEntry} />
   )}
 
-      <section className="space-y-4 mb-12">
+  <section className="space-y-4 mb-12">
         <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
-  <textarea className="w-full min-h-[200px] bg-neutral-900 border border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
+  <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
         <div className="flex flex-wrap gap-2">
           <button className="btn-primary btn-sm" disabled={loading || !jobDescription} onClick={handleGenerate}>{t('generate.resume')}</button>
           <button type="button" className="btn-secondary btn-sm" onClick={()=>{ trackEvent('clear_click'); clearAll(); }}>{t('button.clear')}</button>
         </div>
-        {loading && <p className="text-sm text-neutral-400">{t('working')}</p>}
+  {loading && <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('working')}</p>}
         {progress.length>0 && (
-          <ul className="text-xs text-neutral-400 space-y-1 bg-neutral-900 border border-neutral-800 rounded p-2 max-h-48 overflow-auto">
+          <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded p-2 max-h-48 overflow-auto">
             {progress.map((p,i)=>(<li key={i}><span className="font-mono text-neutral-500">{i+1}.</span> {p.stage}{p.message?`: ${p.message}`:''}</li>))}
           </ul>
         )}
         {error && <p className="text-sm text-red-400">{error}</p>}
         {resumeJson && (
-          <div className="mt-6 space-y-2 bg-neutral-900/40 rounded">
+          <div className="mt-6 space-y-2 bg-neutral-50/80 dark:bg-neutral-900/40 rounded">
             <button type="button" onClick={()=>setShowJson(s=>!s)} className="btn-link-primary text-xs px-3 py-2">
               {showJson ? t('json.hide') : t('json.show')}
             </button>
             {showJson && (
               <div className="space-y-3 border-t border-neutral-800 pt-3 px-4 pb-4">
                 <h3 className="text-sm font-semibold">{t('json.title')}</h3>
-                <pre className="text-xs overflow-auto max-h-96 bg-neutral-950 p-3 rounded border border-neutral-800">{JSON.stringify(resumeJson, null, 2)}</pre>
+                <pre className="text-xs overflow-auto max-h-96 bg-neutral-100 dark:bg-neutral-950 p-3 rounded border border-neutral-200 dark:border-neutral-800">{JSON.stringify(resumeJson, null, 2)}</pre>
               </div>
             )}
           </div>
@@ -411,7 +414,7 @@ export default function App() {
     {downloadLinks && (
       <section ref={pdfSectionRef} className="mb-24 space-y-4">
         <h2 className="text-xl font-semibold">{t('preview.title')}</h2>
-        <div className="w-full border border-neutral-800 rounded bg-neutral-900 aspect-[8.5/11] relative overflow-hidden">
+  <div className="w-full border border-neutral-200 dark:border-neutral-800 rounded bg-white dark:bg-neutral-900 aspect-[8.5/11] relative overflow-hidden">
           {downloadLinks.pdf ? (
             <iframe title="Resume PDF" src={downloadLinks.pdf} className="w-full h-full" />
           ) : (
@@ -429,33 +432,33 @@ export default function App() {
       </section>
     )}
     {showGenModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-        <div className="w-full max-w-md bg-neutral-900 border border-neutral-700 rounded-lg p-6 shadow-xl space-y-6">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 dark:bg-black/70 backdrop-blur-sm">
+        <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg p-6 shadow-xl space-y-6">
           <div className="flex items-center gap-3">
             <div className="relative w-10 h-10">
               <div className="absolute inset-0 rounded-md bg-red-600 animate-pulse" />
-              <div className="absolute inset-1 rounded-sm bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</div>
+              <div className="absolute inset-1 rounded-sm bg-white dark:bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</div>
             </div>
             <div>
               <h3 className="font-semibold">{t('modal.building.title')}</h3>
-              <p className="text-xs text-neutral-400">{t('modal.building.subtitle')}</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('modal.building.subtitle')}</p>
             </div>
           </div>
           <div>
-            <div className="h-2 w-full rounded bg-neutral-800 overflow-hidden">
+            <div className="h-2 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
               <div className="h-full bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-[progressMove_2s_linear_infinite]" style={{width: percent+"%"}} />
             </div>
-            <div className="flex justify-between mt-1 text-[11px] text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
+            <div className="flex justify-between mt-1 text-[11px] text-neutral-600 dark:text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
           </div>
-          <div className="flex gap-2 flex-wrap text-[10px] text-neutral-400 max-h-24 overflow-auto">
-            {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-800 rounded">{p.stage}</span>))}
+          <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
+            {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
           </div>
-          {ADS_CLIENT && ADS_SLOT && (
-            <div className="mt-2">
-              <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
-              <ins className="adsbygoogle block" style={{display:'block'}} data-ad-client={ADS_CLIENT} data-ad-slot={ADS_SLOT} data-ad-format="auto" data-full-width-responsive="true"></ins>
-            </div>
-          )}
+          <div className="mt-2">
+            <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
+            <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
+              <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
+            </a>
+          </div>
         </div>
       </div>
     )}
@@ -494,7 +497,20 @@ export default function App() {
         if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
       }
     }, [])} />
+    <div className="max-w-5xl mx-auto pointer-events-auto">
+      <AdBanner
+        lightSrc="/Lannis banner - light.png"
+        darkSrc="/Lannis banner - dark.png"
+        alt="Lannis"
+        href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume"
+        className="shadow-lg"
+      />
+    </div>
   <Footer />
+  
+
+    
+  
   </div>
   );
 }

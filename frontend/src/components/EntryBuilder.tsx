@@ -45,7 +45,7 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
   return (
     <section className="mb-12">
       <h2 className="text-xl font-semibold mb-4">{t('add.entry.section')}</h2>
-      <form onSubmit={submit} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 bg-neutral-900/60 border border-neutral-800 rounded p-4">
+  <form onSubmit={submit} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 bg-neutral-50 border border-neutral-200 rounded p-4 dark:bg-neutral-900/60 dark:border-neutral-800">
         <SelectField label={t('field.type')} value={form.type} onChange={v => setField('type', v as EntryType)} options={[
           ['info',t('type.info')],['education',t('type.education')],['job',t('type.job')],['non-profit',t('type.non-profit')],['project',t('type.project')],['contract',t('type.contract')],['part-time',t('type.part-time')]
         ]} />
@@ -53,13 +53,13 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
         {showJobFields && <InputField label={t('field.location')} value={form.location||''} onChange={v=>setField('location',v)} placeholder={t('placeholder.location')} />}
         {form.type !== 'education' && (
           <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wide text-neutral-400">{t('field.role')}</label>
+            <label className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">{t('field.role')}</label>
             {form.type === 'info' ? (
-              <select className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)}>
+              <select className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)}>
                 {['name','email','phone','website','address'].map(r => <option key={r} value={r}>{t('field.personal.'+r)}</option>)}
               </select>
             ) : (
-              <input className="bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={t('placeholder.role')} />
+              <input className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={t('placeholder.role')} />
             )}
           </div>
         )}
@@ -86,8 +86,8 @@ export const EntriesList: React.FC<EntriesListProps> = ({ entries, onEdit, onRem
       {entries.map((e,i) => {
         const isInfo = e.type === 'info';
         return (
-          <div key={i} className={(isInfo? 'bg-red-700/20 border-red-600/40':'bg-neutral-800/70 border-neutral-700') + ' border rounded-xl p-4 flex flex-col gap-2 relative'}>
-            <div className="text-xs uppercase tracking-wide text-neutral-400 flex justify-between items-center">
+          <div key={i} className={(isInfo? 'bg-red-600/10 border-red-600/30':'bg-neutral-100 dark:bg-neutral-800/70 border-neutral-200 dark:border-neutral-700') + ' border rounded-xl p-4 flex flex-col gap-2 relative'}>
+            <div className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 flex justify-between items-center">
               <span>{e.type}</span>
               <div className="flex gap-2">
                 <button onClick={()=>onEdit(i)} className="btn-link-primary text-xs">{t('entry.edit')}</button>
@@ -96,10 +96,10 @@ export const EntriesList: React.FC<EntriesListProps> = ({ entries, onEdit, onRem
             </div>
             <div className="space-y-1 text-sm">
               <p className="font-semibold">{e.role}{e.company? ' @ '+e.company: ''}</p>
-              {e.location && <p className="text-neutral-400">{e.location}</p>}
+              {e.location && <p className="text-neutral-600 dark:text-neutral-400">{e.location}</p>}
               {(e.start || e.end) && <p className="text-neutral-500 text-xs">{e.start || '—'} → {e.end || t('present')}</p>}
-              {e.description && <p className="text-neutral-300 whitespace-pre-wrap text-xs leading-relaxed">{e.description}</p>}
-              {e.role_description && <p className="text-neutral-400 italic text-xs whitespace-pre-wrap">{e.role_description}</p>}
+              {e.description && <p className="text-neutral-700 dark:text-neutral-300 whitespace-pre-wrap text-xs leading-relaxed">{e.description}</p>}
+              {e.role_description && <p className="text-neutral-600 dark:text-neutral-400 italic text-xs whitespace-pre-wrap">{e.role_description}</p>}
             </div>
           </div>
         );
@@ -109,8 +109,8 @@ export const EntriesList: React.FC<EntriesListProps> = ({ entries, onEdit, onRem
 };
 
 // Reusable field components
-const baseInput = 'bg-neutral-800 border border-neutral-700 rounded px-2 py-2 text-sm focus:outline-none focus:ring focus:ring-red-500';
-const labelCls = 'text-xs uppercase tracking-wide text-neutral-400';
+const baseInput = 'bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm focus:outline-none focus:ring focus:ring-red-500';
+const labelCls = 'text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400';
 
 const InputField: React.FC<{label:string; value:string; onChange:(v:string)=>void; placeholder?:string;}> = ({label,value,onChange,placeholder}) => (
   <div className="flex flex-col gap-1">
