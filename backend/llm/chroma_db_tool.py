@@ -1,4 +1,5 @@
 import chromadb
+import logging
 from langchain.tools import BaseTool
 from pydantic import Field, PrivateAttr
 
@@ -72,6 +73,7 @@ class ChromaDBTool(BaseTool):
             collection_name: Optional override for collection name (enables multi-user isolation).
         """
         super().__init__()
+        self._logger = logging.getLogger("betterresume.chroma")
         if collection_name:
             self.collection_name = collection_name  # override default
         # Use a per-path PersistentClient to avoid SharedSystem settings conflicts
@@ -90,6 +92,7 @@ class ChromaDBTool(BaseTool):
                 self._collection = self._client.get_collection(name=self.collection_name)
             except Exception:
                 self._collection = self._client.create_collection(name=self.collection_name)
+        self._logger.info("Chroma initialized dir=%s collection=%s", persist_directory, self.collection_name)
 
     def add_document(self, document: str, id: str):
         """
@@ -97,8 +100,10 @@ class ChromaDBTool(BaseTool):
         """
         try:
             self._collection.add(documents=[document], ids=[id])
+            self._logger.info("Added 1 document id=%s to collection=%s", id, self.collection_name)
             return "Document added successfully."
         except Exception as e:
+            self._logger.exception("Error adding document id=%s: %s", id, e)
             return f"Error adding document: {e}"
 
     def add_documents(self, documents: list, ids: list):
@@ -107,8 +112,10 @@ class ChromaDBTool(BaseTool):
         """
         try:
             self._collection.add(documents=documents, ids=ids)
+            self._logger.info("Added %d documents to collection=%s", len(documents), self.collection_name)
             return "Documents added successfully."
         except Exception as e:
+            self._logger.exception("Error adding %d documents: %s", len(documents), e)
             return f"Error adding documents: {e}"
 
     def _run(self, query: str, **kwargs):
@@ -118,8 +125,10 @@ class ChromaDBTool(BaseTool):
         """
         try:
             results = self._collection.query(query_texts=[query], n_results=2)
+            self._logger.info("Query executed n_results=%d", len(results.get("documents", [[ ]])[0]))
             return list(zip(results["documents"][0], results["distances"][0]))
         except Exception as e:
+            self._logger.exception("Error querying the database: %s", e)
             return f"Error querying the database: {e}"
 
     async def _arun(self, query: str, **kwargs):

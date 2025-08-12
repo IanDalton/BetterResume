@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Dict
 import pandas as pd
 from .base_writer import BaseWriter
@@ -61,13 +62,17 @@ class LatexResumeWriter(BaseWriter):
     """
     def __init__(self, template: str = None, csv_location: str = "jobs.csv"):
         super().__init__(template, csv_location, ".tex")
+        self._logger = logging.getLogger("betterresume.writer")
 
 
     def write(self, response: dict, output: str = None, to_pdf: bool = False):
         tex_file = self.generate_file(response, output.replace(".pdf", ".tex") if output else None)
+        self._logger.info("LaTeX file generated: %s", tex_file)
         if not to_pdf:
             return tex_file
-        return self.to_pdf(output.replace(".tex", ".pdf"), tex_file)
+        pdf = self.to_pdf(output.replace(".tex", ".pdf"), tex_file)
+        self._logger.info("PDF generated: %s", pdf)
+        return pdf
 
     def generate_file(self, response: dict, output: str = None):
         self.response = response

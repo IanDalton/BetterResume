@@ -1,4 +1,5 @@
 import os
+import logging
 from docx import Document
 from docx.shared import Cm, Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -21,15 +22,17 @@ class WordResumeWriter(BaseWriter):
     """ 
     def __init__(self, template: str = None, csv_location: str = "jobs.csv"):
         super().__init__(template, csv_location, ".docx")
+        self._logger = logging.getLogger("betterresume.writer")
 
     
 
     def write(self,response:dict, output: str = None, to_pdf:bool=False):
-
         file = self.generate_file(response, output.replace(".pdf", ".docx") if output else None)
+        self._logger.info("DOCX generated: %s", file if isinstance(file, str) else output)
         if not to_pdf:
             return file
         file = self.to_pdf(output.replace(".docx", ".pdf"), file)
+        self._logger.info("PDF generated: %s", file)
         return file
 
     def generate_file(self,response:dict, output: str = None):

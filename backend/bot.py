@@ -19,10 +19,13 @@ from llm.basic_tool_node import BasicToolNode
 from resume.parser import JobParser
 from resume.writer import ResumeWriter
 from resume.base_writer import BaseWriter
+from utils.logging_utils import request_id_var, user_id_var
 
 
 
-class State(TypedDict): messages: Annotated[list, add_messages]
+class State(TypedDict): 
+    messages: Annotated[list, add_messages]
+    user_id: str
 
 class Bot:
     """
@@ -48,6 +51,7 @@ class Bot:
         writer: BaseWriter,
         llm: BaseLLM,
         tool: Optional[ChromaDBTool] = None,
+        user_id: Optional[str] = None,
         auto_ingest: bool = True,
         jobs_csv: str = "jobs.csv",
         persist_directory: str = "./chroma_db",
@@ -63,22 +67,37 @@ class Bot:
             persist_directory: Directory for Chroma persistence when creating new tool.
         """
         self.llm = llm
+        if user_id:
+            persist_directory+=f"/{user_id}"
         self.tool = tool or ChromaDBTool(persist_directory=persist_directory)
+        self.user_id = user_id
+        self.logger = logging.getLogger("betterresume.bot")
+        self.logger.info(
+            "Bot init model=%s has_tool=%s auto_ingest=%s jobs_csv=%s user=%s",
+            getattr(llm, "model", None), bool(tool), auto_ingest, jobs_csv, user_id,
+        )
 
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             try:
-                data = CSVLoader(file_path=jobs_csv).load()
-                # Create incremental ids based on current collection count
+                # Clear any existing collection docs to avoid cross-run mixing
                 try:
-                    current = self.tool._collection.count()  # type: ignore[attr-defined]
+                    self.logger.info("Resetting Chroma collection for fresh ingest")
+                    self.tool._client.delete_collection(self.tool.collection_name)  # type: ignore[attr-defined]
+                    self.tool._collection = self.tool._client.get_or_create_collection(self.tool.collection_name)
                 except Exception:
-                    current = 0
+                    try:
+                        self.tool._collection = self.tool._client.get_collection(name=self.tool.collection_name)
+                    except Exception:
+                        self.tool._collection = self.tool._client.create_collection(name=self.tool.collection_name)
+
+                data = CSVLoader(file_path=jobs_csv).load()
+                self.logger.info("Auto-ingesting %d rows from %s", len(data), jobs_csv)
                 self.tool.add_documents(
                     [d.page_content for d in data],
-                    [str(current + i) for i, _ in enumerate(data)],
+                    [str(i) for i, _ in enumerate(data)],
                 )
             except Exception as e:
-                logging.warning(f"Bot auto_ingest failed for {jobs_csv}: {e}")
+                self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 
         self.llm_with_tools = llm.copy(tools=[self.tool])
         self.llm_with_tools.bind_tools()
@@ -106,42 +125,49 @@ class Bot:
 
     def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
         #meta=JobParser.extract_language_and_title(jd)
-        logging.info(f"Job Description: {jd}")
+        self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
         res=self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
-        logging.info(f"Resume: {res}")
+        self.logger.info("Graph returned; messages=%d", len(res.get("messages", [])))
         res = ResumeWriter.to_json(res["messages"][-1].content)
-        logging.info(f"Resume JSON: {res}")
+        self.logger.info("Parsed resume json; language=%s", res.get("language"))
         if res["language"].lower() != "en":
             #res = self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(res))]})
             res = self.translate_resume(res)
-            logging.info(f"Translated Resume: {res}")
+            self.logger.info("Translation applied; language=%s", res.get("language"))
         self.json_body = res
         try:
             output_name = f"{output_basename}{self.writer.file_ending}"
             self.writer.write(res, output=output_name, to_pdf=True)
-            logging.info(f"Resume written to {output_name} (and PDF)")
+            self.logger.info("Files written output=%s (and PDF)", output_name)
         except Exception as e:
-            logging.error(f"Failed to write resume files: {e}")
+            self.logger.exception("Failed to write resume files: %s", e)
         return res
 
     def generate_resume_progress(self, jd: str, output_basename: str = "resume"):
         """Generator yielding progress events (stage, optional payload)."""
+        self.logger.info("Streaming: invoking graph")
         yield {"stage": "invoking_graph", "message": "Invoking LLM graph"}
         res = self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
+        self.logger.info("Streaming: graph complete")
         yield {"stage": "graph_complete", "message": "Graph completed"}
         parsed = ResumeWriter.to_json(res["messages"][-1].content)
+        self.logger.info("Streaming: parsed language=%s", parsed.get("language"))
         yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": parsed.get("language")}}
         if parsed.get("language", "").lower() != "en":
+            self.logger.info("Streaming: translating non-EN -> EN")
             yield {"stage": "translating", "message": "Translating resume"}
             parsed = self.translate_resume(parsed)
+            self.logger.info("Streaming: translated language=%s", parsed.get("language"))
             yield {"stage": "translated", "message": "Translation complete", "data": {"language": parsed.get("language")}}
         self.json_body = parsed
+        self.logger.info("Streaming: writing files")
         yield {"stage": "writing_file", "message": "Writing resume file"}
         out_name = f"{output_basename}{self.writer.file_ending}"
         try:
             self.writer.write(parsed, output=out_name, to_pdf=True)
             yield {"stage": "done", "message": "Resume generation complete", "result": parsed, "files": {"source": out_name, "pdf": f"{output_basename}.pdf"}}
         except Exception as e:
+            self.logger.exception("Streaming: write failed: %s", e)
             yield {"stage": "error", "message": f"Failed writing resume: {e}"}
 
     

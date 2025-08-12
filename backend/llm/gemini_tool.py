@@ -1,5 +1,6 @@
 import json
 import os
+import logging
 import time
 import threading
 import random
@@ -34,6 +35,7 @@ class GeminiTool(BaseLLM):
         os.environ["GOOGLE_API_KEY"] = api_key
         
         self.client = init_chat_model("google_genai:gemini-2.5-flash")
+        self._logger = logging.getLogger("betterresume.llm")
      
 
     def bind_tools(self):
@@ -46,9 +48,11 @@ class GeminiTool(BaseLLM):
         """
         if self.tools:
             self.client = self.client.bind_tools(self.tools, tool_choice="any")
+            self._logger.info("Gemini bound tools count=%d", len(self.tools))
 
     def invoke(self, messages: list[BaseMessage]) -> BaseMessage:
         # Rate limited + retrying call
+        self._logger.info("Gemini invoke messages=%d", len(messages))
         return _rate_limited_invoke(lambda: self.client.invoke(messages))
 
 

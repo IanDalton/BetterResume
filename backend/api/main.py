@@ -1,10 +1,11 @@
 import os
+import logging
 import hashlib
 # Disable telemetry noise from dependencies (e.g., ChromaDB / posthog)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "false")
 os.environ.setdefault("POSTHOG_DISABLED", "1")
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -16,6 +17,9 @@ from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
 from typing import Dict
 import re
+import time
+
+from utils.logging_utils import setup_logging, new_request_id, set_user_context, clear_context
 
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")  # default to mounted volume path
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -25,7 +29,10 @@ UPLOADS_BASE = os.path.join(DATA_DIR, "uploads")
 for _d in (PERSIST_CHROMA, OUTPUTS_BASE, UPLOADS_BASE):
     os.makedirs(_d, exist_ok=True)
 
+setup_logging()
 app = FastAPI(title="BetterResume API", version="0.1.0")
+# Module logger (relies on configured handlers)
+logger = logging.getLogger("betterresume.api")
 # Firebase auth disabled for now
 app.add_middleware(
     CORSMiddleware,
@@ -54,6 +61,24 @@ def _validate_user_id(user_id: str):
         raise HTTPException(status_code=400, detail="Invalid user id")
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", user_id or ""):
         raise HTTPException(status_code=400, detail="Invalid user id format")
+
+
+@app.middleware("http")
+async def add_request_context(request: Request, call_next):
+    """Attach a correlation id to every request and basic access log lines."""
+    rid = new_request_id()
+    start = time.time()
+    path = request.url.path
+    method = request.method
+    logger.info("Inbound request %s %s", method, path)
+    try:
+        response = await call_next(request)
+        duration_ms = int((time.time() - start) * 1000)
+        logger.info("Completed %s %s -> %s in %dms", method, path, getattr(response, 'status_code', '?'), duration_ms)
+        return response
+    finally:
+        # Clear only request id; user context cleared by endpoints
+        clear_context()
 
 class ResumeRequest(BaseModel):
     job_description: str
@@ -89,9 +114,11 @@ def health():
 @app.post("/upload-jobs/{user_id}")
 async def upload_jobs(user_id: str, file: UploadFile = File(...)):
     _validate_user_id(user_id)
+    set_user_context(user_id)
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="File must be a .csv")
     contents = await file.read()
+    logger.info("Uploading jobs CSV filename=%s size=%d bytes", file.filename, len(contents))
     new_hash = hashlib.sha256(contents).hexdigest()
     tmp_path = os.path.join(UPLOADS_BASE, f"uploaded_jobs_{user_id}.csv")
     hash_path = tmp_path + ".sha256"
@@ -123,6 +150,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
         try:
             df = pd.read_csv(tmp_path)
         except Exception as e:
+            logger.exception("Failed to parse uploaded CSV")
             raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {e}")
         # Minimum set: company, description, type (dates optional but normalize if present)
         required_min = {"company","description","type"}
@@ -145,9 +173,10 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
         except Exception:
             pass
         rows = len(df)
+        logger.info("Parsed CSV rows=%d; normalizing dates and updating user's collection", rows)
         from langchain_community.document_loaders.csv_loader import CSVLoader
         # Replace existing vectors for this user to avoid mixing across uploads
-        print(tool.collection_name)
+        logger.info("Using Chroma collection for user=%s: %s", user_id, tool.collection_name)
         try:
             tool._client.delete_collection(tool.collection_name)  # drop existing
             tool._collection = tool._client.get_or_create_collection(tool.collection_name)
@@ -162,14 +191,17 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
             current = tool._collection.count()
         except Exception:
             current = 0
+        logger.info("Ingesting %d rows into Chroma (existing=%d)", len(data), current)
         tool.add_documents(
             [d.page_content for d in data],
             [str(current + i) for i, _ in enumerate(data)],
         )
+        logger.info("Ingestion complete; collection=%s new_count~%s", tool.collection_name, "?")
         return {"status": "ok", "rows_ingested": rows, "hash": new_hash}
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Unexpected error during upload/ingest")
         raise HTTPException(status_code=500, detail=str(e))
 
 def _resolve_user_jobs_csv(user_id: str) -> str:
@@ -183,9 +215,10 @@ def _resolve_user_jobs_csv(user_id: str) -> str:
 @app.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
-    print("######",user_id)
+    set_user_context(user_id)
+    logger.info("Generate resume requested; format=%s model=%s", req.format, req.model)
     csv_path = _resolve_user_jobs_csv(user_id)
-    print(csv_path)
+    logger.info("Resolved jobs CSV for user_id=%s at %s", user_id, csv_path)
     # Row count for response metadata
     row_count = None
     try:
@@ -200,8 +233,17 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     clean_output_dir(out_dir)
     cwd = os.getcwd(); os.chdir(out_dir)
     try:
-        bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
+        logger.info("Starting Bot generation; out_dir=%s", out_dir)
+        bot = Bot(
+            writer=writer,
+            llm=GeminiTool(model=req.model),
+            tool=tool,
+            user_id=user_id,
+            auto_ingest=True,
+            jobs_csv=csv_path,
+        )
         result = bot.generate_resume(req.job_description, output_basename="resume")
+        logger.info("Bot generation complete; language=%s skills=%d exp=%d", result.get("language"), len(result.get("resume_section",{}).get("skills",[])), len(result.get("resume_section",{}).get("experience",[])))
     finally:
         os.chdir(cwd)
     files = {"source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}
@@ -217,6 +259,7 @@ def sse_event(data: dict) -> bytes:
 @app.post("/generate-resume-stream/{user_id}")
 async def generate_resume_stream(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
+    set_user_context(user_id)
     """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     csv_path = _resolve_user_jobs_csv(user_id)
     writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
@@ -238,7 +281,15 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         col_docs = tool._collection.count()
     except Exception:
         pass
-    bot = Bot(writer=writer, llm=GeminiTool(model=req.model), tool=tool, auto_ingest=False)
+    logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
+    bot = Bot(
+        writer=writer,
+        llm=GeminiTool(model=req.model),
+        tool=tool,
+        user_id=user_id,
+        auto_ingest=True,
+        jobs_csv=csv_path,
+    )
 
     def event_generator():
         try:
@@ -258,6 +309,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event(event)
             os.chdir(cwd)
         except Exception as e:
+            logger.exception("Streaming generation failed")
             yield sse_event({"stage": "error", "message": str(e)})
 
     # Explicit headers added because some environments / proxies may strip CORS headers on streaming responses
@@ -273,12 +325,14 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 @app.get("/download/{user_id}/{filename}")
 async def download_file(user_id: str, filename: str):
     _validate_user_id(user_id)
+    set_user_context(user_id)
     # Security: basic path traversal guard
     if ".." in filename or filename.startswith('/'):
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = os.path.join(OUTPUTS_BASE, user_id, filename)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="File not found")
+    logger.info("Downloading file %s", filename)
     return FileResponse(path)
 
 @app.get("/users")
@@ -288,6 +342,7 @@ async def list_users():
 @app.delete("/users/{user_id}")
 async def clear_user(user_id: str):
     _validate_user_id(user_id)
+    set_user_context(user_id)
     # Drop the user's collection and remove cache entry
     if user_id not in USER_TOOLS:
         raise HTTPException(status_code=404, detail="User not found")
