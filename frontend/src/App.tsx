@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { uploadJobsCsv, generateResumeStream, buildCsvFromEntries } from './services';
 import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
+import { Footer } from './components/Footer';
 import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
@@ -283,7 +284,7 @@ export default function App() {
   }, [downloadLinks?.pdf]);
 
   return (
-    <div className="max-w-5xl mx-auto p-4 font-sans relative">
+  <div className="max-w-5xl mx-auto p-4 pb-16 font-sans relative">
       <header className="mb-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
@@ -445,6 +446,7 @@ export default function App() {
         if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
       }
     }, [])} />
+  <Footer />
   </div>
   );
 }
