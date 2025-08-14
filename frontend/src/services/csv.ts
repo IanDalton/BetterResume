@@ -4,14 +4,32 @@ export function buildCsvFromEntries(entries: ResumeEntry[]): string {
   // Match reference jobs.csv header exactly
   const header = ['type','company','location','role','start_date','end_date','description'];
   const lines = [header.join(',')];
-  const norm = (v?: string) => {
+  const norm = (val?: string) => {
+    if (!val) return '';
+    const v = String(val).trim();
     if (!v) return '';
-    const m = v.match(/^(\d{1,2})\/(\d{4})$/); // MM/YYYY
+    const low = v.toLowerCase();
+    if (['present','current','now'].includes(low)) return 'present';
+    // Accept MM/YYYY or M/YYYY -> 01/MM/YYYY
+    let m = v.match(/^(\d{1,2})\/(\d{4})$/);
     if (m) {
       const mm = m[1].padStart(2,'0');
-      return `01/${mm}/${m[2]}`; // add day for consistency
+      return `01/${mm}/${m[2]}`;
     }
-    return v; // assume already dd/mm/YYYY or another acceptable form
+    // Accept YYYY/MM or YYYY-M -> 01/MM/YYYY
+    m = v.match(/^(\d{4})[\/-](\d{1,2})$/);
+    if (m) {
+      const mm = m[2].padStart(2,'0');
+      return `01/${mm}/${m[1]}`;
+    }
+    // Accept DD/MM/YYYY type; pad components if needed
+    m = v.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+    if (m) {
+      const dd = m[1].padStart(2,'0');
+      const mm = m[2].padStart(2,'0');
+      return `${dd}/${mm}/${m[3]}`;
+    }
+    return v; // leave as-is; backend will keep string if not parseable
   };
   for (const e of entries) {
     if (e.type === 'info') {

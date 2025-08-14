@@ -188,14 +188,38 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
         missing = sorted(list(required_min - set(df.columns)))
         if missing:
             raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing)}")
-        # If date columns exist, attempt parsing; ignore if absent
-        import warnings
+        # Normalize date columns as strings in DD/MM/YYYY, preserve 'present'
+        def _norm_date(val):
+            try:
+                if pd.isna(val):
+                    return ''
+            except Exception:
+                pass
+            s = str(val).strip()
+            if not s:
+                return ''
+            sl = s.lower()
+            if sl in ('present','current','now'):
+                return 'present'
+            import re as _re
+            m = _re.match(r'^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$', s)
+            if m:
+                dd = m.group(1).zfill(2); mm = m.group(2).zfill(2); yyyy = m.group(3)
+                return f"{dd}/{mm}/{yyyy}"
+            m = _re.match(r'^(\d{1,2})\/(\d{4})$', s)  # MM/YYYY
+            if m:
+                mm = m.group(1).zfill(2); yyyy = m.group(2)
+                return f"01/{mm}/{yyyy}"
+            m = _re.match(r'^(\d{4})[\/-](\d{1,2})$', s)  # YYYY/MM
+            if m:
+                yyyy = m.group(1); mm = m.group(2).zfill(2)
+                return f"01/{mm}/{yyyy}"
+            # leave as-is if cannot confidently parse
+            return s
         for col in ["start_date","end_date"]:
             if col in df.columns:
                 try:
-                    with warnings.catch_warnings():
-                        warnings.simplefilter('ignore')
-                        df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
+                    df[col] = df[col].apply(_norm_date)
                 except Exception:
                     pass
         # Persist normalized dates back to file for downstream readers

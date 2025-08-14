@@ -87,8 +87,24 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-6 shadow-xl space-y-5">
+    <div
+      className="fixed inset-0 bg-black/40 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={() => setShow(false)}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-6 shadow-xl space-y-5 relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          aria-label="Close"
+          className="absolute top-2 right-2 text-neutral-500 hover:text-neutral-300 text-xs"
+          onClick={() => setShow(false)}
+        >
+          ✕
+        </button>
         <h2 className="text-xl font-semibold tracking-tight">{t('auth.welcome')}</h2>
   <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('auth.tagline')}</p>
         <form onSubmit={submit} className="space-y-4">
