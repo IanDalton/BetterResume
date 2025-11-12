@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // Use explicit relative path so Vite resolves without custom alias
-import { uploadJobsCsv, generateResumeStream, buildCsvFromEntries } from './services';
+import { uploadJobsCsv, generateResumeStream, buildCsvFromEntries, resolveProfilePictureUrl } from './services';
 import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
 import { Footer } from './components/Footer';
@@ -10,6 +10,7 @@ import { FirstLoadGuide } from './components/FirstLoadGuide';
 import { DonateToast } from './components/DonateToast';
 import { AdBanner } from './components/AdBanner';
 import { ThemeToggle } from './components/ThemeToggle';
+import { ProfilePictureUploader } from './components/ProfilePictureUploader';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from './services/analytics';
@@ -42,6 +43,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [resumeJson, setResumeJson] = useState<any>(null);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
+  const [profilePictureVersion, setProfilePictureVersion] = useState(0);
+  const handleProfileUploaded = React.useCallback(() => {
+    setProfilePictureVersion(v => v + 1);
+  }, []);
   const [jobDescription, setJobDescription] = useState(() => {
     try { return localStorage.getItem('br.jobDescription') || ''; } catch { return ''; }
   });
@@ -67,6 +73,9 @@ export default function App() {
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
     try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
+  });
+  const [includeProfilePicture, setIncludeProfilePicture] = useState<boolean>(() => {
+    try { return localStorage.getItem('br.includeProfilePicture') === '1'; } catch { return false; }
   });
   const ADS_CLIENT = import.meta.env.VITE_ADSENSE_CLIENT;
   const ADS_SLOT = import.meta.env.VITE_ADSENSE_SLOT_GENERATE;
@@ -133,6 +142,24 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('br.format', format); } catch {} }, [format]);
   useEffect(() => { try { localStorage.setItem('br.onboardingComplete', onboardingComplete? '1':'0'); } catch {} }, [onboardingComplete]);
   useEffect(() => { if (!showGuide) { try { localStorage.setItem('br.guideSeen','1'); } catch {} } }, [showGuide]);
+  useEffect(() => { try { localStorage.setItem('br.includeProfilePicture', includeProfilePicture && !!profilePictureUrl ? '1' : '0'); } catch {} }, [includeProfilePicture, profilePictureUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProfilePicture() {
+      const url = await resolveProfilePictureUrl(userId);
+      if (cancelled) return;
+      setProfilePictureUrl(url);
+    }
+    loadProfilePicture();
+    return () => { cancelled = true; };
+  }, [userId, profilePictureVersion]);
+
+  useEffect(() => {
+    if (!profilePictureUrl && includeProfilePicture) {
+      setIncludeProfilePicture(false);
+    }
+  }, [profilePictureUrl, includeProfilePicture]);
   // Utility: show toast now and record timestamps/counters
   const triggerDonateToast = useCallback((reason: 'daily' | 'count') => {
     try {
@@ -217,7 +244,8 @@ export default function App() {
       const res = await generateResumeStream(userId, {
         job_description: jobDescription,
         format,
-        model: DEFAULT_MODEL
+        model: DEFAULT_MODEL,
+        include_profile_picture: includeProfilePicture && !!profilePictureUrl
       }, evt => {
         if (!firstEventAt) {
           setFirstEventAt(Date.now());
@@ -405,6 +433,14 @@ export default function App() {
   ) : (
     <EntryBuilder entries={entries} onAdd={addEntry} onUpdate={updateEntry} onRemove={removeEntry} />
   )}
+
+  <ProfilePictureUploader
+    userId={userId}
+    include={includeProfilePicture}
+    onIncludeChange={setIncludeProfilePicture}
+    imageUrl={profilePictureUrl}
+    onUploaded={handleProfileUploaded}
+  />
 
   <section className="space-y-4 mb-12">
         <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
