@@ -1,6 +1,11 @@
 import os
 import logging
 import hashlib
+
+from dotenv import load_dotenv
+load_dotenv()
+if not os.getenv("GOOGLE_API_KEY"):
+    raise RuntimeError("GOOGLE_API_KEY environment variable is required")
 # Disable telemetry noise from dependencies (e.g., ChromaDB / posthog)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "false")
@@ -49,7 +54,7 @@ logger = logging.getLogger("betterresume.api")
 # Firebase auth disabled for now
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://iandalton.dev", "http://localhost", "http://127.0.0.1"],
+    allow_origins=["https://iandalton.dev", "http://localhost:5173", "http://127.0.0.1"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -335,8 +340,14 @@ async def upload_profile_picture(user_id: str, file: UploadFile = File(...)):
         logger.exception("Failed storing profile image for user=%s: %s", user_id, exc)
         raise HTTPException(status_code=500, detail="Failed to store profile image") from exc
     logger.info("Stored profile image user=%s path=%s size=%d", user_id, target_path, len(contents))
-    return {"status": "ok", "filename": filename}
-
+    response_data = {"status": "ok", "filename": filename}
+    return JSONResponse(
+        content=response_data,
+        status_code=200,
+        headers={
+            "Content-Type": "application/json"
+        }
+    )
 
 @app.get("/profile-picture/{user_id}")
 async def get_profile_picture(user_id: str):
