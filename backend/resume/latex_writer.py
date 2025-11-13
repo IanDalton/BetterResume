@@ -1,6 +1,7 @@
 import os
 import logging
-from typing import Dict
+import shutil
+from typing import Dict, Optional
 import pandas as pd
 from .base_writer import BaseWriter
 import pdflatex
@@ -60,8 +61,8 @@ class LatexResumeWriter(BaseWriter):
             Raises:
                 RuntimeError: If the LaTeX to PDF conversion fails.
     """
-    def __init__(self, template: str = None, csv_location: str = "jobs.csv"):
-        super().__init__(template, csv_location, ".tex")
+    def __init__(self, template: str = None, csv_location: str = "jobs.csv", profile_image_path: Optional[str] = None):
+        super().__init__(template, csv_location, ".tex", profile_image_path=profile_image_path)
         self._logger = logging.getLogger("betterresume.writer")
 
 
@@ -95,6 +96,7 @@ class LatexResumeWriter(BaseWriter):
         tex = []
         tex.append(r"\documentclass[11pt]{article}")
         tex.append(r"\usepackage[margin=1in]{geometry}")
+        tex.append(r"\usepackage{graphicx}")
         tex.append(r"\usepackage{enumitem}")
         tex.append(r"\usepackage[hidelinks]{hyperref}")
         tex.append(r"\usepackage{titlesec}")
@@ -103,13 +105,56 @@ class LatexResumeWriter(BaseWriter):
         tex.append(r"\begin{document}")
 
         # Header
-        tex.append(r"\begin{center}")
-        tex.append(r"\textbf{\LARGE " + name + r"}\\")
-        tex.append(r"\textit{" + title + r"}\\")
-        tex.append(address + r" \\ " + phone + r" \\ " + email)
-        if websites:
-            tex.append(r"\\ " + " | ".join([r"\href{" + w + "}{" + websites.get(w, w) + r"}" for w in websites]))
-        tex.append(r"\end{center}")
+        profile_path = getattr(self, "profile_image_path", None)
+        image_basename = None
+        if profile_path and os.path.isfile(profile_path):
+            try:
+                ext = os.path.splitext(profile_path)[1].lower()
+                if ext not in (".png", ".jpg", ".jpeg"):
+                    raise ValueError(f"Unsupported LaTeX image format: {ext}")
+                normalized_ext = ".jpg" if ext == ".jpeg" else ext
+                image_basename = f"profilephoto{normalized_ext}"
+                if output:
+                    dest_dir = os.path.dirname(os.path.abspath(output)) or "."
+                    os.makedirs(dest_dir, exist_ok=True)
+                    dest_path = os.path.join(dest_dir, image_basename)
+                    if os.path.abspath(profile_path) != dest_path:
+                        shutil.copyfile(profile_path, dest_path)
+                else:
+                    image_basename = os.path.abspath(profile_path)
+            except Exception as exc:
+                self._logger.warning("Skipping profile image for LaTeX: %s", exc)
+                image_basename = None
+        elif profile_path:
+            self._logger.debug("Profile image path not found: %s", profile_path)
+
+        if image_basename:
+            tex.append(r"\begin{minipage}[t]{0.25\textwidth}")
+            tex.append(r"\centering")
+            tex.append(r"\includegraphics[width=1.5in,keepaspectratio]{" + image_basename.replace('\\', '/') + r"}")
+            tex.append(r"\end{minipage}\hfill")
+            tex.append(r"\begin{minipage}[t]{0.72\textwidth}")
+            tex.append(r"\raggedright")
+            tex.append(r"\textbf{\LARGE " + name + r"}\\")
+            if title:
+                tex.append(r"\textit{" + title + r"}\\")
+            contact_parts = [p for p in [address, phone, email] if p]
+            if contact_parts:
+                tex.append(r" \\ ".join(contact_parts))
+            if websites:
+                tex.append(r"\\ " + " | ".join([r"\href{" + w + "}{" + websites.get(w, w) + r"}" for w in websites]))
+            tex.append(r"\end{minipage}")
+        else:
+            tex.append(r"\begin{center}")
+            tex.append(r"\textbf{\LARGE " + name + r"}\\")
+            if title:
+                tex.append(r"\textit{" + title + r"}\\")
+            contact_parts = [p for p in [address, phone, email] if p]
+            if contact_parts:
+                tex.append(r" \\ ".join(contact_parts))
+            if websites:
+                tex.append(r"\\ " + " | ".join([r"\href{" + w + "}{" + websites.get(w, w) + r"}" for w in websites]))
+            tex.append(r"\end{center}")
         tex.append(r"\vspace{0.5cm}")
 
         # Summary

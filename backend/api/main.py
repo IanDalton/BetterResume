@@ -15,7 +15,7 @@ import shutil
 from bot import Bot
 from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
-from typing import Dict
+from typing import Dict, Optional
 import re
 import time
 import hmac
@@ -30,6 +30,17 @@ OUTPUTS_BASE = os.path.join(DATA_DIR, "outputs")
 UPLOADS_BASE = os.path.join(DATA_DIR, "uploads")
 for _d in (PERSIST_CHROMA, OUTPUTS_BASE, UPLOADS_BASE):
     os.makedirs(_d, exist_ok=True)
+PROFILE_PICS_BASE = os.path.join(UPLOADS_BASE, "profile_pictures")
+os.makedirs(PROFILE_PICS_BASE, exist_ok=True)
+
+ALLOWED_PROFILE_IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/pjpeg": ".jpg",
+    "image/x-png": ".png",
+}
+PROFILE_EXTENSIONS = {".png", ".jpg"}
 
 setup_logging()
 app = FastAPI(title="BetterResume API", version="0.1.0")
@@ -115,6 +126,16 @@ class ResumeRequest(BaseModel):
     job_description: str
     format: str = "latex"  # or "word"
     model: str = "gemini-2.5-flash"
+    include_profile_picture: bool = False
+
+
+def _resolve_profile_picture_path(user_id: str) -> Optional[str]:
+    """Return the stored profile picture path for a user if present."""
+    for ext in PROFILE_EXTENSIONS:
+        candidate = os.path.join(PROFILE_PICS_BASE, f"profile_{user_id}{ext}")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 def clean_output_dir(path: str):
     """Remove all existing files in the user's output directory so only the newly generated resume remains.
@@ -270,6 +291,63 @@ def _resolve_user_jobs_csv(user_id: str) -> str:
         raise HTTPException(status_code=400, detail="Jobs CSV not uploaded. Upload via /upload-jobs/{user_id} first.")
     return csv_path
 
+
+def _detect_profile_extension(file: UploadFile) -> Optional[str]:
+    """Return a supported file extension for an uploaded profile picture or None if unsupported."""
+    content_type = (file.content_type or "").lower()
+    ext = ALLOWED_PROFILE_IMAGE_TYPES.get(content_type)
+    if ext:
+        return ext
+    filename = (file.filename or "").lower()
+    if filename:
+        _, raw_ext = os.path.splitext(filename)
+        if raw_ext in (".png", ".jpg", ".jpeg"):
+            return ".jpg" if raw_ext == ".jpeg" else raw_ext
+    return None
+
+
+@app.post("/upload-profile-picture/{user_id}")
+async def upload_profile_picture(user_id: str, file: UploadFile = File(...)):
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image too large (max 5 MB)")
+    ext = _detect_profile_extension(file)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type. Upload a PNG or JPG file.")
+    filename = f"profile_{user_id}{ext}"
+    target_path = os.path.join(PROFILE_PICS_BASE, filename)
+    # Remove any previous profile image for this user
+    for existing_ext in PROFILE_EXTENSIONS:
+        existing = os.path.join(PROFILE_PICS_BASE, f"profile_{user_id}{existing_ext}")
+        if existing != target_path and os.path.exists(existing):
+            try:
+                os.remove(existing)
+            except Exception:
+                pass
+    try:
+        with open(target_path, "wb") as out:
+            out.write(contents)
+    except Exception as exc:
+        logger.exception("Failed storing profile image for user=%s: %s", user_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to store profile image") from exc
+    logger.info("Stored profile image user=%s path=%s size=%d", user_id, target_path, len(contents))
+    return {"status": "ok", "filename": filename}
+
+
+@app.get("/profile-picture/{user_id}")
+async def get_profile_picture(user_id: str):
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    path = _resolve_profile_picture_path(user_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Profile picture not found")
+    return FileResponse(path)
+
+
 @app.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
@@ -286,7 +364,14 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         pass
     if not row_count:
         raise HTTPException(status_code=400, detail="No jobs found. Please upload your entries before generating.")
-    writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
+    profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
+    if req.include_profile_picture and not profile_path:
+        logger.info("Profile picture requested but none stored for user=%s", user_id)
+    writer = (
+        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        if req.format.lower() == "latex"
+        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+    )
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
@@ -322,7 +407,14 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     set_user_context(user_id)
     """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     csv_path = _resolve_user_jobs_csv(user_id)
-    writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
+    profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
+    if req.include_profile_picture and not profile_path:
+        logger.info("Profile picture requested but none stored for user=%s", user_id)
+    writer = (
+        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        if req.format.lower() == "latex"
+        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+    )
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)

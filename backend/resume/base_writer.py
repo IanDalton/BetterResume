@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import pandas as pd
 
 class BaseWriter(ABC):
@@ -18,8 +18,14 @@ class BaseWriter(ABC):
         generate_file(response: dict, output: str = None) -> str:
             Abstract method to generate a file from the response.
     """
-    
-    def __init__(self, template: str = None,csv_location: str = "jobs.csv",file_ending: str = None):
+
+    def __init__(
+        self,
+        template: str = None,
+        csv_location: str = "jobs.csv",
+        file_ending: str = None,
+        profile_image_path: Optional[str] = None,
+    ):
         try:
             data = pd.read_csv(csv_location)
         except FileNotFoundError:
@@ -36,6 +42,7 @@ class BaseWriter(ABC):
                 pass
         self.data = data
         self.file_ending = template.split(".")[-1] if template else file_ending
+        self.profile_image_path = profile_image_path
 
     @abstractmethod
     def write(self,response:dict, output: str = None,to_pdf:bool=False):
