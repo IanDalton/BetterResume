@@ -122,13 +122,22 @@ def _save_resume_cache(out_dir: str, payload: dict) -> None:
             pass
 
 
-def _build_request_signature(req: "ResumeRequest", csv_hash: Optional[str], profile_hash: Optional[str]) -> str:
+def _build_result_signature(req: "ResumeRequest", csv_hash: Optional[str]) -> str:
     payload = {
         "job_description_hash": hashlib.sha256((req.job_description or "").encode("utf-8")).hexdigest(),
-        "format": req.format.lower(),
         "model": req.model,
-        "include_profile_picture": bool(req.include_profile_picture),
         "csv_hash": csv_hash,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _build_request_signature(req: "ResumeRequest", csv_hash: Optional[str], profile_hash: Optional[str]) -> str:
+    result_signature = _build_result_signature(req, csv_hash)
+    payload = {
+        "result_signature": result_signature,
+        "format": req.format.lower(),
+        "include_profile_picture": bool(req.include_profile_picture),
         "profile_hash": profile_hash if req.include_profile_picture else None,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -444,19 +453,57 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     csv_hash = _file_sha256(csv_path)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
+    result_signature = _build_result_signature(req, csv_hash)
     signature = _build_request_signature(req, csv_hash, profile_hash)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cached = _load_resume_cache(out_dir)
-    files_from_cache = _build_signed_files(user_id, fmt, out_dir) if cached else {}
+    cached_signature = None
+    cached_result_signature = None
+    if cached:
+        cached_signature = cached.get("render_signature") or cached.get("signature")
+        cached_result_signature = cached.get("result_signature") or cached_signature
+    files_from_cache = _build_signed_files(user_id, fmt, out_dir) if cached_signature == signature else {}
+    cached_result = cached.get("result") if cached and cached_result_signature == result_signature else None
     if (
         cached
-        and cached.get("signature") == signature
+        and cached_signature == signature
         and cached.get("result") is not None
         and files_from_cache.get("source")
     ):
         logger.info("Reusing cached resume output for user_id=%s format=%s", user_id, fmt)
         return JSONResponse(content={"result": cached.get("result"), "files": files_from_cache, "rows": row_count})
+
+    if cached_result is not None:
+        logger.info("Reusing cached resume content for new render user_id=%s format=%s include_image=%s", user_id, fmt, req.include_profile_picture)
+        writer = (
+            LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+            if fmt == "latex"
+            else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        )
+        clean_output_dir(out_dir)
+        abs_base = os.path.join(out_dir, "resume")
+        output_name = f"{abs_base}{writer.file_ending}"
+        try:
+            writer.write(cached_result, output=output_name, to_pdf=True)
+        except Exception as exc:
+            logger.exception("Failed rewriting resume from cache: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to render cached resume")
+        signed_files = _build_signed_files(user_id, fmt, out_dir)
+        if signed_files.get("source"):
+            cache_payload = {
+                "render_signature": signature,
+                "result_signature": result_signature,
+                "result": cached_result,
+                "format": fmt,
+                "model": req.model,
+                "include_profile_picture": bool(req.include_profile_picture),
+                "csv_hash": csv_hash,
+                "profile_hash": profile_hash if req.include_profile_picture else None,
+                "generated_at": int(time.time()),
+            }
+            _save_resume_cache(out_dir, cache_payload)
+        return JSONResponse(content={"result": cached_result, "files": signed_files, "rows": row_count})
 
     writer = (
         LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
@@ -486,7 +533,8 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     signed_files = _build_signed_files(user_id, fmt, out_dir)
     if signed_files.get("source"):
         cache_payload = {
-            "signature": signature,
+            "render_signature": signature,
+            "result_signature": result_signature,
             "result": result,
             "format": fmt,
             "model": req.model,
@@ -516,12 +564,19 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     csv_hash = _file_sha256(csv_path)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
+    result_signature = _build_result_signature(req, csv_hash)
     signature = _build_request_signature(req, csv_hash, profile_hash)
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cached = _load_resume_cache(out_dir)
-    cached_files = _build_signed_files(user_id, fmt, out_dir) if cached else {}
+    cached_signature = None
+    cached_result_signature = None
+    if cached:
+        cached_signature = cached.get("render_signature") or cached.get("signature")
+        cached_result_signature = cached.get("result_signature") or cached_signature
+    cached_files = _build_signed_files(user_id, fmt, out_dir) if cached_signature == signature else {}
+    cached_result = cached.get("result") if cached and cached_result_signature == result_signature else None
     # Pre-calc row count for early event
     row_count = None
     collection = None
@@ -561,7 +616,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 
     if (
         cached
-        and cached.get("signature") == signature
+        and cached_signature == signature
         and cached.get("result") is not None
         and cached_files.get("source")
     ):
@@ -582,6 +637,53 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event({"stage": "error", "message": str(exc)})
 
         return StreamingResponse(cached_event_generator(), media_type="text/event-stream", headers=sse_headers)
+
+    if cached_result is not None:
+        logger.info(
+            "Re-rendering cached resume content for stream user_id=%s format=%s include_image=%s",
+            user_id,
+            fmt,
+            req.include_profile_picture,
+        )
+
+        def cached_rerender_generator():
+            try:
+                yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
+                yield sse_event({"stage": "cached", "message": "Reusing cached resume content"})
+                clean_output_dir(out_dir)
+                writer = (
+                    LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+                    if fmt == "latex"
+                    else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+                )
+                abs_base = os.path.join(out_dir, "resume")
+                output_name = f"{abs_base}{writer.file_ending}"
+                writer.write(cached_result, output=output_name, to_pdf=True)
+                files = _build_signed_files(user_id, fmt, out_dir)
+                if files.get("source"):
+                    cache_payload = {
+                        "render_signature": signature,
+                        "result_signature": result_signature,
+                        "result": cached_result,
+                        "format": fmt,
+                        "model": req.model,
+                        "include_profile_picture": bool(req.include_profile_picture),
+                        "csv_hash": csv_hash,
+                        "profile_hash": profile_hash if req.include_profile_picture else None,
+                        "generated_at": int(time.time()),
+                    }
+                    _save_resume_cache(out_dir, cache_payload)
+                yield sse_event({
+                    "stage": "done",
+                    "message": "Resume generation complete",
+                    "result": cached_result,
+                    "files": files,
+                })
+            except Exception as exc:
+                logger.exception("Failed while streaming cached resume rerender: %s", exc)
+                yield sse_event({"stage": "error", "message": str(exc)})
+
+        return StreamingResponse(cached_rerender_generator(), media_type="text/event-stream", headers=sse_headers)
 
     writer = (
         LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
@@ -611,7 +713,8 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                     event["files"] = files
                     if files.get("source"):
                         cache_payload = {
-                            "signature": signature,
+                            "render_signature": signature,
+                            "result_signature": result_signature,
                             "result": event.get("result"),
                             "format": fmt,
                             "model": req.model,
