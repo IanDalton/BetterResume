@@ -1,6 +1,7 @@
 import os
 import logging
 import hashlib
+import json
 # Disable telemetry noise from dependencies (e.g., ChromaDB / posthog)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "false")
@@ -15,7 +16,7 @@ import shutil
 from bot import Bot
 from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
-from typing import Dict
+from typing import Dict, Optional
 import re
 import time
 import hmac
@@ -30,6 +31,19 @@ OUTPUTS_BASE = os.path.join(DATA_DIR, "outputs")
 UPLOADS_BASE = os.path.join(DATA_DIR, "uploads")
 for _d in (PERSIST_CHROMA, OUTPUTS_BASE, UPLOADS_BASE):
     os.makedirs(_d, exist_ok=True)
+PROFILE_PICS_BASE = os.path.join(UPLOADS_BASE, "profile_pictures")
+os.makedirs(PROFILE_PICS_BASE, exist_ok=True)
+
+CACHE_FILENAME = "resume_cache.json"
+
+ALLOWED_PROFILE_IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/pjpeg": ".jpg",
+    "image/x-png": ".png",
+}
+PROFILE_EXTENSIONS = {".png", ".jpg"}
 
 setup_logging()
 app = FastAPI(title="BetterResume API", version="0.1.0")
@@ -38,7 +52,7 @@ logger = logging.getLogger("betterresume.api")
 # Firebase auth disabled for now
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://iandalton.dev", "http://localhost", "http://127.0.0.1"],
+    allow_origins=["https://iandalton.dev", "http://localhost:5173", "http://127.0.0.1"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -61,6 +75,186 @@ def make_signed_download_path(user_id: str, filename: str, ttl_seconds: int = 90
     sig = _hmac_sign(user_id, filename, exp)
     # Keep relative path so the frontend can prefix with API base; include query string
     return f"/download/{user_id}/{filename}?exp={exp}&sig={sig}"
+
+
+def _file_sha256(path: Optional[str]) -> Optional[str]:
+    """Return the SHA256 hash for a file or None if unavailable."""
+    if not path or not os.path.isfile(path):
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        logger.exception("Failed computing hash for path=%s", path)
+        return None
+
+
+def _normalize_resume_cache(raw: Optional[dict]) -> dict:
+    """Return a cache dictionary that always exposes `results` and `renders` maps.
+
+    Older cache payloads stored a single render/result at the top level. This helper
+    converts that legacy shape into the new structure so callers can treat every cache
+    the same way.
+    """
+    normalized: dict = {"results": {}, "renders": {}}
+    if not isinstance(raw, dict):
+        return normalized
+
+    # Already using the new structure – ensure mandatory containers exist.
+    if "results" in raw or "renders" in raw:
+        raw.setdefault("results", {})
+        raw.setdefault("renders", {})
+        return raw
+
+    legacy_result_sig = raw.get("result_signature") or raw.get("signature")
+    legacy_render_sig = raw.get("render_signature") or raw.get("signature")
+    legacy_result = raw.get("result")
+
+    if legacy_result_sig and legacy_result is not None:
+        normalized["results"][legacy_result_sig] = {
+            "result": legacy_result,
+            "model": raw.get("model"),
+            "csv_hash": raw.get("csv_hash"),
+            "job_description_hash": raw.get("job_description_hash"),
+            "generated_at": raw.get("generated_at"),
+        }
+
+    if legacy_render_sig and legacy_result_sig:
+        normalized["renders"][legacy_render_sig] = {
+            "result_signature": legacy_result_sig,
+            "format": raw.get("format"),
+            "include_profile_picture": raw.get("include_profile_picture"),
+            "profile_hash": raw.get("profile_hash"),
+            "generated_at": raw.get("generated_at"),
+        }
+
+    # Preserve legacy top-level keys so future saves continue overwriting them.
+    normalized.update(
+        {
+            "result_signature": legacy_result_sig,
+            "render_signature": legacy_render_sig,
+            "result": legacy_result,
+            "format": raw.get("format"),
+            "include_profile_picture": raw.get("include_profile_picture"),
+            "csv_hash": raw.get("csv_hash"),
+            "model": raw.get("model"),
+            "job_description_hash": raw.get("job_description_hash"),
+            "profile_hash": raw.get("profile_hash"),
+        }
+    )
+    return normalized
+
+
+def _load_resume_cache(out_dir: str) -> Optional[dict]:
+    cache_path = os.path.join(out_dir, CACHE_FILENAME)
+    if not os.path.isfile(cache_path):
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as fh:
+            return _normalize_resume_cache(json.load(fh))
+    except Exception:
+        logger.warning("Unable to read resume cache at %s", cache_path, exc_info=True)
+        return None
+
+
+def _save_resume_cache(out_dir: str, payload: dict) -> None:
+    cache_path = os.path.join(out_dir, CACHE_FILENAME)
+    tmp_path = cache_path + ".tmp"
+    existing = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
+    result_signature = payload.get("result_signature") or payload.get("signature")
+    render_signature = payload.get("render_signature") or payload.get("signature")
+    result_body = payload.get("result")
+    generated_at = payload.get("generated_at") or int(time.time())
+
+    if result_signature and result_body is not None:
+        existing.setdefault("results", {})[result_signature] = {
+            "result": result_body,
+            "model": payload.get("model"),
+            "csv_hash": payload.get("csv_hash"),
+            "job_description_hash": payload.get("job_description_hash"),
+            "generated_at": generated_at,
+        }
+
+    if render_signature and result_signature:
+        existing.setdefault("renders", {})[render_signature] = {
+            "result_signature": result_signature,
+            "format": payload.get("format"),
+            "include_profile_picture": payload.get("include_profile_picture"),
+            "profile_hash": payload.get("profile_hash"),
+            "generated_at": generated_at,
+        }
+
+    # Maintain legacy top-level keys for compatibility with any older readers.
+    existing.update(
+        {
+            "result_signature": result_signature,
+            "render_signature": render_signature,
+            "result": result_body if result_body is not None else existing.get("result"),
+            "format": payload.get("format"),
+            "include_profile_picture": payload.get("include_profile_picture"),
+            "csv_hash": payload.get("csv_hash"),
+            "model": payload.get("model"),
+            "job_description_hash": payload.get("job_description_hash"),
+            "profile_hash": payload.get("profile_hash"),
+        }
+    )
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(existing, fh, ensure_ascii=False)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        logger.warning("Unable to persist resume cache to %s", cache_path, exc_info=True)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+def _hash_text(value: Optional[str]) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def _build_result_signature(req: "ResumeRequest", csv_hash: Optional[str], job_hash: str) -> str:
+    payload = {
+        "job_description_hash": job_hash,
+        "model": req.model,
+        "csv_hash": csv_hash,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _build_request_signature(
+    req: "ResumeRequest", csv_hash: Optional[str], profile_hash: Optional[str], job_hash: str
+) -> str:
+    result_signature = _build_result_signature(req, csv_hash, job_hash)
+    payload = {
+        "result_signature": result_signature,
+        "format": req.format.lower(),
+        "include_profile_picture": bool(req.include_profile_picture),
+        "profile_hash": profile_hash if req.include_profile_picture else None,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _build_signed_files(user_id: str, fmt: str, out_dir: str) -> Dict[str, str]:
+    files: Dict[str, str] = {}
+    ext = ".tex" if fmt == "latex" else ".docx"
+    source_name = f"resume{ext}"
+    source_path = os.path.join(out_dir, source_name)
+    if os.path.isfile(source_path):
+        files["source"] = make_signed_download_path(user_id, source_name)
+    pdf_path = os.path.join(out_dir, "resume.pdf")
+    if os.path.isfile(pdf_path):
+        files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
+    return files
 
 def get_user_tool(user_id: str) -> ChromaDBTool:
     tool = USER_TOOLS.get(user_id)
@@ -115,6 +309,16 @@ class ResumeRequest(BaseModel):
     job_description: str
     format: str = "latex"  # or "word"
     model: str = "gemini-2.5-flash"
+    include_profile_picture: bool = False
+
+
+def _resolve_profile_picture_path(user_id: str) -> Optional[str]:
+    """Return the stored profile picture path for a user if present."""
+    for ext in PROFILE_EXTENSIONS:
+        candidate = os.path.join(PROFILE_PICS_BASE, f"profile_{user_id}{ext}")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 def clean_output_dir(path: str):
     """Remove all existing files in the user's output directory so only the newly generated resume remains.
@@ -270,6 +474,63 @@ def _resolve_user_jobs_csv(user_id: str) -> str:
         raise HTTPException(status_code=400, detail="Jobs CSV not uploaded. Upload via /upload-jobs/{user_id} first.")
     return csv_path
 
+
+def _detect_profile_extension(file: UploadFile) -> Optional[str]:
+    """Return a supported file extension for an uploaded profile picture or None if unsupported."""
+    content_type = (file.content_type or "").lower()
+    ext = ALLOWED_PROFILE_IMAGE_TYPES.get(content_type)
+    if ext:
+        return ext
+    filename = (file.filename or "").lower()
+    if filename:
+        _, raw_ext = os.path.splitext(filename)
+        if raw_ext in (".png", ".jpg", ".jpeg"):
+            return ".jpg" if raw_ext == ".jpeg" else raw_ext
+    return None
+
+
+@app.post("/upload-profile-picture/{user_id}")
+async def upload_profile_picture(user_id: str, file: UploadFile = File(...)):
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image too large (max 5 MB)")
+    ext = _detect_profile_extension(file)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type. Upload a PNG or JPG file.")
+    filename = f"profile_{user_id}{ext}"
+    target_path = os.path.join(PROFILE_PICS_BASE, filename)
+    # Remove any previous profile image for this user
+    for existing_ext in PROFILE_EXTENSIONS:
+        existing = os.path.join(PROFILE_PICS_BASE, f"profile_{user_id}{existing_ext}")
+        if existing != target_path and os.path.exists(existing):
+            try:
+                os.remove(existing)
+            except Exception:
+                pass
+    try:
+        with open(target_path, "wb") as out:
+            out.write(contents)
+    except Exception as exc:
+        logger.exception("Failed storing profile image for user=%s: %s", user_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to store profile image") from exc
+    logger.info("Stored profile image user=%s path=%s size=%d", user_id, target_path, len(contents))
+    return {"status": "ok", "filename": filename}
+
+
+@app.get("/profile-picture/{user_id}")
+async def get_profile_picture(user_id: str):
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    path = _resolve_profile_picture_path(user_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Profile picture not found")
+    return FileResponse(path)
+
+
 @app.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
@@ -286,10 +547,67 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         pass
     if not row_count:
         raise HTTPException(status_code=400, detail="No jobs found. Please upload your entries before generating.")
-    writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
-    tool = get_user_tool(user_id)
+    profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
+    if req.include_profile_picture and not profile_path:
+        logger.info("Profile picture requested but none stored for user=%s", user_id)
+    csv_hash = _file_sha256(csv_path)
+    job_hash = _hash_text(req.job_description)
+    profile_hash = _file_sha256(profile_path) if profile_path else None
+    fmt = req.format.lower()
+    result_signature = _build_result_signature(req, csv_hash, job_hash)
+    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
+    cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
+    cached_renders = cached.get("renders", {})
+    cached_results = cached.get("results", {})
+    render_entry = cached_renders.get(signature)
+    result_entry = cached_results.get(result_signature)
+    cached_result = result_entry.get("result") if result_entry else None
+    files_from_cache = _build_signed_files(user_id, fmt, out_dir) if render_entry else {}
+
+    if render_entry and cached_result is not None and files_from_cache.get("source"):
+        logger.info("Reusing cached resume output for user_id=%s format=%s", user_id, fmt)
+        return JSONResponse(content={"result": cached_result, "files": files_from_cache, "rows": row_count})
+
+    if cached_result is not None:
+        logger.info("Reusing cached resume content for new render user_id=%s format=%s include_image=%s", user_id, fmt, req.include_profile_picture)
+        writer = (
+            LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+            if fmt == "latex"
+            else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        )
+        clean_output_dir(out_dir)
+        abs_base = os.path.join(out_dir, "resume")
+        output_name = f"{abs_base}{writer.file_ending}"
+        try:
+            writer.write(cached_result, output=output_name, to_pdf=True)
+        except Exception as exc:
+            logger.exception("Failed rewriting resume from cache: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to render cached resume")
+        signed_files = _build_signed_files(user_id, fmt, out_dir)
+        if signed_files.get("source"):
+            cache_payload = {
+                "render_signature": signature,
+                "result_signature": result_signature,
+                "result": cached_result,
+                "format": fmt,
+                "model": req.model,
+                "include_profile_picture": bool(req.include_profile_picture),
+                "csv_hash": csv_hash,
+                "profile_hash": profile_hash if req.include_profile_picture else None,
+                "job_description_hash": job_hash,
+                "generated_at": int(time.time()),
+            }
+            _save_resume_cache(out_dir, cache_payload)
+        return JSONResponse(content={"result": cached_result, "files": signed_files, "rows": row_count})
+
+    writer = (
+        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        if fmt == "latex"
+        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+    )
+    tool = get_user_tool(user_id)
     clean_output_dir(out_dir)
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
@@ -303,13 +621,29 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     # Important: use absolute output base to avoid races due to process cwd changes
     abs_base = os.path.join(out_dir, "resume")
     result = bot.generate_resume(req.job_description, output_basename=abs_base)
-    logger.info("Bot generation complete; language=%s skills=%d exp=%d", result.get("language"), len(result.get("resume_section",{}).get("skills",[])), len(result.get("resume_section",{}).get("experience",[])))
-    files = {"source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}
-    pdf_path = os.path.join(out_dir, "resume.pdf")
-    if os.path.isfile(pdf_path):
-        files["pdf"] = f"/download/{user_id}/resume.pdf"
-    # Replace raw paths with signed links
-    signed_files = {k: make_signed_download_path(user_id, v.split('/')[-1]) for k, v in files.items() if v}
+    logger.info(
+        "Bot generation complete; language=%s skills=%d exp=%d",
+        result.get("language"),
+        len(result.get("resume_section", {}).get("skills", [])),
+        len(result.get("resume_section", {}).get("experience", [])),
+    )
+    signed_files = _build_signed_files(user_id, fmt, out_dir)
+    if signed_files.get("source"):
+        cache_payload = {
+            "render_signature": signature,
+            "result_signature": result_signature,
+            "result": result,
+            "format": fmt,
+            "model": req.model,
+            "include_profile_picture": bool(req.include_profile_picture),
+            "csv_hash": csv_hash,
+            "profile_hash": profile_hash,
+            "job_description_hash": job_hash,
+            "generated_at": int(time.time()),
+        }
+        _save_resume_cache(out_dir, cache_payload)
+    else:
+        logger.warning("Resume generation completed but no source file found to cache for user_id=%s", user_id)
     return JSONResponse(content={"result": result, "files": signed_files, "rows": row_count})
 
 def sse_event(data: dict) -> bytes:
@@ -322,11 +656,25 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     set_user_context(user_id)
     """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     csv_path = _resolve_user_jobs_csv(user_id)
-    writer = LatexResumeWriter(csv_location=csv_path) if req.format.lower() == "latex" else WordResumeWriter(csv_location=csv_path)
+    profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
+    if req.include_profile_picture and not profile_path:
+        logger.info("Profile picture requested but none stored for user=%s", user_id)
+    csv_hash = _file_sha256(csv_path)
+    job_hash = _hash_text(req.job_description)
+    profile_hash = _file_sha256(profile_path) if profile_path else None
+    fmt = req.format.lower()
+    result_signature = _build_result_signature(req, csv_hash, job_hash)
+    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
-    clean_output_dir(out_dir)
+    cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
+    cached_renders = cached.get("renders", {})
+    cached_results = cached.get("results", {})
+    render_entry = cached_renders.get(signature)
+    result_entry = cached_results.get(result_signature)
+    cached_files = _build_signed_files(user_id, fmt, out_dir) if render_entry else {}
+    cached_result = result_entry.get("result") if result_entry else None
     # Pre-calc row count for early event
     row_count = None
     collection = None
@@ -355,6 +703,88 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         col_docs = tool._collection.count()
     except Exception:
         pass
+
+    sse_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "*",
+    }
+
+    if render_entry and cached_result is not None and cached_files.get("source"):
+        logger.info("Reusing cached streaming resume for user_id=%s format=%s", user_id, fmt)
+
+        def cached_event_generator():
+            try:
+                yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
+                yield sse_event({"stage": "cached", "message": "Using cached resume output"})
+                yield sse_event({
+                    "stage": "done",
+                    "message": "Resume generation complete",
+                    "result": cached_result,
+                    "files": cached_files,
+                })
+            except Exception as exc:
+                logger.exception("Failed while streaming cached resume: %s", exc)
+                yield sse_event({"stage": "error", "message": str(exc)})
+
+        return StreamingResponse(cached_event_generator(), media_type="text/event-stream", headers=sse_headers)
+
+    if cached_result is not None:
+        logger.info(
+            "Re-rendering cached resume content for stream user_id=%s format=%s include_image=%s",
+            user_id,
+            fmt,
+            req.include_profile_picture,
+        )
+
+        def cached_rerender_generator():
+            try:
+                yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
+                yield sse_event({"stage": "cached", "message": "Reusing cached resume content"})
+                clean_output_dir(out_dir)
+                writer = (
+                    LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+                    if fmt == "latex"
+                    else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+                )
+                abs_base = os.path.join(out_dir, "resume")
+                output_name = f"{abs_base}{writer.file_ending}"
+                writer.write(cached_result, output=output_name, to_pdf=True)
+                files = _build_signed_files(user_id, fmt, out_dir)
+                if files.get("source"):
+                    cache_payload = {
+                        "render_signature": signature,
+                        "result_signature": result_signature,
+                        "result": cached_result,
+                        "format": fmt,
+                        "model": req.model,
+                        "include_profile_picture": bool(req.include_profile_picture),
+                        "csv_hash": csv_hash,
+                        "profile_hash": profile_hash if req.include_profile_picture else None,
+                        "job_description_hash": job_hash,
+                        "generated_at": int(time.time()),
+                    }
+                    _save_resume_cache(out_dir, cache_payload)
+                yield sse_event({
+                    "stage": "done",
+                    "message": "Resume generation complete",
+                    "result": cached_result,
+                    "files": files,
+                })
+            except Exception as exc:
+                logger.exception("Failed while streaming cached resume rerender: %s", exc)
+                yield sse_event({"stage": "error", "message": str(exc)})
+
+        return StreamingResponse(cached_rerender_generator(), media_type="text/event-stream", headers=sse_headers)
+
+    writer = (
+        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        if fmt == "latex"
+        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+    )
+    clean_output_dir(out_dir)
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
     bot = Bot(
         writer=writer,
@@ -373,25 +803,29 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
             for event in bot.generate_resume_progress(req.job_description, output_basename=abs_base):
                 # Normalize final file paths for client (match non-stream endpoint style)
                 if event.get("stage") == "done":
-                    source_name = f"resume{writer.file_ending}"
-                    # Build file list dynamically to avoid broken pdf links and sign them
-                    files: Dict[str, str] = {"source": make_signed_download_path(user_id, source_name)}
-                    if os.path.isfile(os.path.join(out_dir, "resume.pdf")):
-                        files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
+                    files = _build_signed_files(user_id, fmt, out_dir)
                     event["files"] = files
+                    if files.get("source"):
+                        cache_payload = {
+                            "render_signature": signature,
+                            "result_signature": result_signature,
+                            "result": event.get("result"),
+                            "format": fmt,
+                            "model": req.model,
+                            "include_profile_picture": bool(req.include_profile_picture),
+                            "csv_hash": csv_hash,
+                            "profile_hash": profile_hash,
+                            "job_description_hash": job_hash,
+                            "generated_at": int(time.time()),
+                        }
+                        _save_resume_cache(out_dir, cache_payload)
+                    else:
+                        logger.warning("Streaming generation done but source missing for caching user_id=%s", user_id)
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")
             yield sse_event({"stage": "error", "message": str(e)})
 
-    # Explicit headers added because some environments / proxies may strip CORS headers on streaming responses
-    sse_headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Methods": "*",
-    }
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)
 
 @app.get("/download/{user_id}/{filename}")

@@ -9,10 +9,12 @@ body { @apply bg-white text-neutral-900 min-h-screen; }
 
 @layer components {
 	.btn-primary { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium text-white bg-gradient-to-br from-red-600 via-red-600 to-red-500 hover:from-red-500 hover:via-red-500 hover:to-red-400 shadow-sm shadow-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors; }
-	.btn-secondary { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-100 dark:border-neutral-700/60 dark:focus-visible:ring-offset-neutral-900; }
-	.btn-link-primary { @apply text-red-400 hover:text-red-300 underline-offset-2 hover:underline font-medium; }
-	.btn-danger { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium bg-red-700 hover:bg-red-600 text-white shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900 disabled:opacity-50; }
-	.btn-sm { @apply px-3 py-2 text-xs; }
+        .btn-secondary { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-100 dark:border-neutral-700/60 dark:focus-visible:ring-offset-neutral-900; }
+        .btn-tertiary { @apply inline-flex items-center justify-center rounded px-3 py-1.5 text-xs font-medium text-neutral-700 border border-neutral-300 bg-transparent hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-800 dark:focus-visible:ring-offset-neutral-900; }
+        .btn-link-primary { @apply text-red-400 hover:text-red-300 underline-offset-2 hover:underline font-medium; }
+        .btn-danger { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium bg-red-700 hover:bg-red-600 text-white shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900 disabled:opacity-50; }
+        .btn-sm { @apply px-3 py-2 text-xs; }
+        .btn-xs { @apply px-2 py-1 text-xs; }
 	.focus-ring { @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900; }
 }
 

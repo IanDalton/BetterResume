@@ -11,3 +11,4 @@ comtypes
 pdflatex
 uvicorn
 python-multipart
+langchain
