@@ -94,13 +94,69 @@ def _file_sha256(path: Optional[str]) -> Optional[str]:
         return None
 
 
+def _normalize_resume_cache(raw: Optional[dict]) -> dict:
+    """Return a cache dictionary that always exposes `results` and `renders` maps.
+
+    Older cache payloads stored a single render/result at the top level. This helper
+    converts that legacy shape into the new structure so callers can treat every cache
+    the same way.
+    """
+    normalized: dict = {"results": {}, "renders": {}}
+    if not isinstance(raw, dict):
+        return normalized
+
+    # Already using the new structure – ensure mandatory containers exist.
+    if "results" in raw or "renders" in raw:
+        raw.setdefault("results", {})
+        raw.setdefault("renders", {})
+        return raw
+
+    legacy_result_sig = raw.get("result_signature") or raw.get("signature")
+    legacy_render_sig = raw.get("render_signature") or raw.get("signature")
+    legacy_result = raw.get("result")
+
+    if legacy_result_sig and legacy_result is not None:
+        normalized["results"][legacy_result_sig] = {
+            "result": legacy_result,
+            "model": raw.get("model"),
+            "csv_hash": raw.get("csv_hash"),
+            "job_description_hash": raw.get("job_description_hash"),
+            "generated_at": raw.get("generated_at"),
+        }
+
+    if legacy_render_sig and legacy_result_sig:
+        normalized["renders"][legacy_render_sig] = {
+            "result_signature": legacy_result_sig,
+            "format": raw.get("format"),
+            "include_profile_picture": raw.get("include_profile_picture"),
+            "profile_hash": raw.get("profile_hash"),
+            "generated_at": raw.get("generated_at"),
+        }
+
+    # Preserve legacy top-level keys so future saves continue overwriting them.
+    normalized.update(
+        {
+            "result_signature": legacy_result_sig,
+            "render_signature": legacy_render_sig,
+            "result": legacy_result,
+            "format": raw.get("format"),
+            "include_profile_picture": raw.get("include_profile_picture"),
+            "csv_hash": raw.get("csv_hash"),
+            "model": raw.get("model"),
+            "job_description_hash": raw.get("job_description_hash"),
+            "profile_hash": raw.get("profile_hash"),
+        }
+    )
+    return normalized
+
+
 def _load_resume_cache(out_dir: str) -> Optional[dict]:
     cache_path = os.path.join(out_dir, CACHE_FILENAME)
     if not os.path.isfile(cache_path):
         return None
     try:
         with open(cache_path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            return _normalize_resume_cache(json.load(fh))
     except Exception:
         logger.warning("Unable to read resume cache at %s", cache_path, exc_info=True)
         return None
@@ -109,9 +165,47 @@ def _load_resume_cache(out_dir: str) -> Optional[dict]:
 def _save_resume_cache(out_dir: str, payload: dict) -> None:
     cache_path = os.path.join(out_dir, CACHE_FILENAME)
     tmp_path = cache_path + ".tmp"
+    existing = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
+    result_signature = payload.get("result_signature") or payload.get("signature")
+    render_signature = payload.get("render_signature") or payload.get("signature")
+    result_body = payload.get("result")
+    generated_at = payload.get("generated_at") or int(time.time())
+
+    if result_signature and result_body is not None:
+        existing.setdefault("results", {})[result_signature] = {
+            "result": result_body,
+            "model": payload.get("model"),
+            "csv_hash": payload.get("csv_hash"),
+            "job_description_hash": payload.get("job_description_hash"),
+            "generated_at": generated_at,
+        }
+
+    if render_signature and result_signature:
+        existing.setdefault("renders", {})[render_signature] = {
+            "result_signature": result_signature,
+            "format": payload.get("format"),
+            "include_profile_picture": payload.get("include_profile_picture"),
+            "profile_hash": payload.get("profile_hash"),
+            "generated_at": generated_at,
+        }
+
+    # Maintain legacy top-level keys for compatibility with any older readers.
+    existing.update(
+        {
+            "result_signature": result_signature,
+            "render_signature": render_signature,
+            "result": result_body if result_body is not None else existing.get("result"),
+            "format": payload.get("format"),
+            "include_profile_picture": payload.get("include_profile_picture"),
+            "csv_hash": payload.get("csv_hash"),
+            "model": payload.get("model"),
+            "job_description_hash": payload.get("job_description_hash"),
+            "profile_hash": payload.get("profile_hash"),
+        }
+    )
     try:
         with open(tmp_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False)
+            json.dump(existing, fh, ensure_ascii=False)
         os.replace(tmp_path, cache_path)
     except Exception:
         logger.warning("Unable to persist resume cache to %s", cache_path, exc_info=True)
@@ -122,9 +216,13 @@ def _save_resume_cache(out_dir: str, payload: dict) -> None:
             pass
 
 
-def _build_result_signature(req: "ResumeRequest", csv_hash: Optional[str]) -> str:
+def _hash_text(value: Optional[str]) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def _build_result_signature(req: "ResumeRequest", csv_hash: Optional[str], job_hash: str) -> str:
     payload = {
-        "job_description_hash": hashlib.sha256((req.job_description or "").encode("utf-8")).hexdigest(),
+        "job_description_hash": job_hash,
         "model": req.model,
         "csv_hash": csv_hash,
     }
@@ -132,8 +230,10 @@ def _build_result_signature(req: "ResumeRequest", csv_hash: Optional[str]) -> st
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _build_request_signature(req: "ResumeRequest", csv_hash: Optional[str], profile_hash: Optional[str]) -> str:
-    result_signature = _build_result_signature(req, csv_hash)
+def _build_request_signature(
+    req: "ResumeRequest", csv_hash: Optional[str], profile_hash: Optional[str], job_hash: str
+) -> str:
+    result_signature = _build_result_signature(req, csv_hash, job_hash)
     payload = {
         "result_signature": result_signature,
         "format": req.format.lower(),
@@ -451,28 +551,24 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
     csv_hash = _file_sha256(csv_path)
+    job_hash = _hash_text(req.job_description)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
-    result_signature = _build_result_signature(req, csv_hash)
-    signature = _build_request_signature(req, csv_hash, profile_hash)
+    result_signature = _build_result_signature(req, csv_hash, job_hash)
+    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
-    cached = _load_resume_cache(out_dir)
-    cached_signature = None
-    cached_result_signature = None
-    if cached:
-        cached_signature = cached.get("render_signature") or cached.get("signature")
-        cached_result_signature = cached.get("result_signature") or cached_signature
-    files_from_cache = _build_signed_files(user_id, fmt, out_dir) if cached_signature == signature else {}
-    cached_result = cached.get("result") if cached and cached_result_signature == result_signature else None
-    if (
-        cached
-        and cached_signature == signature
-        and cached.get("result") is not None
-        and files_from_cache.get("source")
-    ):
+    cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
+    cached_renders = cached.get("renders", {})
+    cached_results = cached.get("results", {})
+    render_entry = cached_renders.get(signature)
+    result_entry = cached_results.get(result_signature)
+    cached_result = result_entry.get("result") if result_entry else None
+    files_from_cache = _build_signed_files(user_id, fmt, out_dir) if render_entry else {}
+
+    if render_entry and cached_result is not None and files_from_cache.get("source"):
         logger.info("Reusing cached resume output for user_id=%s format=%s", user_id, fmt)
-        return JSONResponse(content={"result": cached.get("result"), "files": files_from_cache, "rows": row_count})
+        return JSONResponse(content={"result": cached_result, "files": files_from_cache, "rows": row_count})
 
     if cached_result is not None:
         logger.info("Reusing cached resume content for new render user_id=%s format=%s include_image=%s", user_id, fmt, req.include_profile_picture)
@@ -500,6 +596,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
                 "include_profile_picture": bool(req.include_profile_picture),
                 "csv_hash": csv_hash,
                 "profile_hash": profile_hash if req.include_profile_picture else None,
+                "job_description_hash": job_hash,
                 "generated_at": int(time.time()),
             }
             _save_resume_cache(out_dir, cache_payload)
@@ -541,6 +638,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
             "include_profile_picture": bool(req.include_profile_picture),
             "csv_hash": csv_hash,
             "profile_hash": profile_hash,
+            "job_description_hash": job_hash,
             "generated_at": int(time.time()),
         }
         _save_resume_cache(out_dir, cache_payload)
@@ -562,21 +660,21 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
     csv_hash = _file_sha256(csv_path)
+    job_hash = _hash_text(req.job_description)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
-    result_signature = _build_result_signature(req, csv_hash)
-    signature = _build_request_signature(req, csv_hash, profile_hash)
+    result_signature = _build_result_signature(req, csv_hash, job_hash)
+    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
-    cached = _load_resume_cache(out_dir)
-    cached_signature = None
-    cached_result_signature = None
-    if cached:
-        cached_signature = cached.get("render_signature") or cached.get("signature")
-        cached_result_signature = cached.get("result_signature") or cached_signature
-    cached_files = _build_signed_files(user_id, fmt, out_dir) if cached_signature == signature else {}
-    cached_result = cached.get("result") if cached and cached_result_signature == result_signature else None
+    cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
+    cached_renders = cached.get("renders", {})
+    cached_results = cached.get("results", {})
+    render_entry = cached_renders.get(signature)
+    result_entry = cached_results.get(result_signature)
+    cached_files = _build_signed_files(user_id, fmt, out_dir) if render_entry else {}
+    cached_result = result_entry.get("result") if result_entry else None
     # Pre-calc row count for early event
     row_count = None
     collection = None
@@ -614,12 +712,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         "Access-Control-Allow-Methods": "*",
     }
 
-    if (
-        cached
-        and cached_signature == signature
-        and cached.get("result") is not None
-        and cached_files.get("source")
-    ):
+    if render_entry and cached_result is not None and cached_files.get("source"):
         logger.info("Reusing cached streaming resume for user_id=%s format=%s", user_id, fmt)
 
         def cached_event_generator():
@@ -629,7 +722,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event({
                     "stage": "done",
                     "message": "Resume generation complete",
-                    "result": cached.get("result"),
+                    "result": cached_result,
                     "files": cached_files,
                 })
             except Exception as exc:
@@ -670,6 +763,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                         "include_profile_picture": bool(req.include_profile_picture),
                         "csv_hash": csv_hash,
                         "profile_hash": profile_hash if req.include_profile_picture else None,
+                        "job_description_hash": job_hash,
                         "generated_at": int(time.time()),
                     }
                     _save_resume_cache(out_dir, cache_payload)
@@ -721,6 +815,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                             "include_profile_picture": bool(req.include_profile_picture),
                             "csv_hash": csv_hash,
                             "profile_hash": profile_hash,
+                            "job_description_hash": job_hash,
                             "generated_at": int(time.time()),
                         }
                         _save_resume_cache(out_dir, cache_payload)
