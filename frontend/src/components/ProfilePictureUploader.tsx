@@ -18,6 +18,15 @@ interface EditorState {
   height: number;
 }
 
+interface Placement {
+  drawWidth: number;
+  drawHeight: number;
+  dx: number;
+  dy: number;
+  maxShiftX: number;
+  maxShiftY: number;
+}
+
 const PREVIEW_SIZE = 128;
 const EXPORT_SIZE = 512;
 
@@ -32,7 +41,7 @@ function calculatePlacement(
   zoom: number,
   offsetX: number,
   offsetY: number
-) {
+): Placement {
   const baseScale = Math.max(targetSize / imageWidth, targetSize / imageHeight);
   const scale = baseScale * zoom;
   const drawWidth = imageWidth * scale;
@@ -41,7 +50,7 @@ function calculatePlacement(
   const maxShiftY = Math.max(0, (drawHeight - targetSize) / 2);
   const dx = (targetSize - drawWidth) / 2 + offsetX * maxShiftX;
   const dy = (targetSize - drawHeight) / 2 + offsetY * maxShiftY;
-  return { drawWidth, drawHeight, dx, dy };
+  return { drawWidth, drawHeight, dx, dy, maxShiftX, maxShiftY };
 }
 
 async function loadImageFromDataUrl(src: string): Promise<HTMLImageElement> {
@@ -132,6 +141,13 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
   const [shape, setShape] = useState<ProfileShape>('square');
+  const [dragState, setDragState] = useState<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    baseOffsetX: number;
+    baseOffsetY: number;
+  } | null>(null);
 
   const triggerFileSelect = () => {
     setStatus(null);
@@ -169,6 +185,56 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     return calculatePlacement(editor.width, editor.height, PREVIEW_SIZE, zoom, offsetX, offsetY);
   }, [editor, zoom, offsetX, offsetY]);
 
+  const isDragging = dragState !== null;
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!editor || !previewPlacement) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {}
+    setDragState({
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseOffsetX: offsetX,
+      baseOffsetY: offsetY,
+    });
+  };
+
+  const updateDragOffsets = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragState || !previewPlacement || dragState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const deltaX = event.clientX - dragState.startX;
+    const deltaY = event.clientY - dragState.startY;
+    let nextOffsetX = dragState.baseOffsetX;
+    let nextOffsetY = dragState.baseOffsetY;
+    if (previewPlacement.maxShiftX > 0) {
+      nextOffsetX = clamp(dragState.baseOffsetX + deltaX / previewPlacement.maxShiftX, -1, 1);
+    }
+    if (previewPlacement.maxShiftY > 0) {
+      nextOffsetY = clamp(dragState.baseOffsetY + deltaY / previewPlacement.maxShiftY, -1, 1);
+    }
+    setOffsetX(nextOffsetX);
+    setOffsetY(nextOffsetY);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragState) return;
+    updateDragOffsets(event);
+  };
+
+  const releaseDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragState && dragState.pointerId === event.pointerId) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {}
+      setDragState(null);
+    }
+  };
+
+
   const handleUpload = async () => {
     if (!editor) return;
     setUploading(true);
@@ -201,7 +267,17 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
             className={`relative flex items-center justify-center border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900 overflow-hidden ${
               editor ? (shape === 'circle' ? 'rounded-full' : 'rounded-lg') : 'rounded-lg'
             }`}
-            style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE }}
+            style={{
+              width: PREVIEW_SIZE,
+              height: PREVIEW_SIZE,
+              cursor: editor ? (isDragging ? 'grabbing' : 'grab') : 'default',
+              touchAction: editor ? 'none' : undefined,
+            }}
+            onPointerDown={editor ? handlePointerDown : undefined}
+            onPointerMove={editor ? handlePointerMove : undefined}
+            onPointerUp={editor ? releaseDrag : undefined}
+            onPointerCancel={editor ? releaseDrag : undefined}
+            onPointerLeave={editor ? releaseDrag : undefined}
           >
             {editor && previewPlacement ? (
               <>
@@ -290,6 +366,19 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
                   onChange={e => setOffsetY(clamp(Number(e.target.value) / 100, -1, 1))}
                 />
               </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-tertiary btn-xs"
+                  onClick={() => {
+                    setZoom(1);
+                    setOffsetX(0);
+                    setOffsetY(0);
+                  }}
+                >
+                  {t('profile.editing.reset')}
+                </button>
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
