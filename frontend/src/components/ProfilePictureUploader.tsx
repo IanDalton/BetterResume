@@ -25,6 +25,8 @@ interface Placement {
   dy: number;
   maxShiftX: number;
   maxShiftY: number;
+  offsetX: number;
+  offsetY: number;
 }
 
 const PREVIEW_SIZE = 128;
@@ -48,9 +50,20 @@ function calculatePlacement(
   const drawHeight = imageHeight * scale;
   const maxShiftX = Math.max(0, (drawWidth - targetSize) / 2);
   const maxShiftY = Math.max(0, (drawHeight - targetSize) / 2);
-  const dx = (targetSize - drawWidth) / 2 + offsetX * maxShiftX;
-  const dy = (targetSize - drawHeight) / 2 + offsetY * maxShiftY;
-  return { drawWidth, drawHeight, dx, dy, maxShiftX, maxShiftY };
+  const clampedOffsetX = clamp(offsetX, -maxShiftX, maxShiftX);
+  const clampedOffsetY = clamp(offsetY, -maxShiftY, maxShiftY);
+  const dx = (targetSize - drawWidth) / 2 + clampedOffsetX;
+  const dy = (targetSize - drawHeight) / 2 + clampedOffsetY;
+  return {
+    drawWidth,
+    drawHeight,
+    dx,
+    dy,
+    maxShiftX,
+    maxShiftY,
+    offsetX: clampedOffsetX,
+    offsetY: clampedOffsetY,
+  };
 }
 
 async function loadImageFromDataUrl(src: string): Promise<HTMLImageElement> {
@@ -107,7 +120,15 @@ async function exportEditedImage(
     ctx.fillRect(0, 0, EXPORT_SIZE, EXPORT_SIZE);
   }
 
-  const placement = calculatePlacement(img.width, img.height, EXPORT_SIZE, zoom, offsetX, offsetY);
+  const offsetScale = EXPORT_SIZE / PREVIEW_SIZE;
+  const placement = calculatePlacement(
+    img.width,
+    img.height,
+    EXPORT_SIZE,
+    zoom,
+    offsetX * offsetScale,
+    offsetY * offsetScale
+  );
   ctx.drawImage(img, placement.dx, placement.dy, placement.drawWidth, placement.drawHeight);
   if (shape === 'circle') {
     ctx.restore();
@@ -134,6 +155,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
 }) => {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pointerPositions = useRef<Map<number, { x: number; y: number }>>(new Map());
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -148,6 +170,39 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     baseOffsetX: number;
     baseOffsetY: number;
   } | null>(null);
+  const [pinchState, setPinchState] = useState<{
+    pointerIds: number[];
+    startDistance: number;
+    baseZoom: number;
+  } | null>(null);
+
+  const applyZoom = (targetZoom: number) => {
+    if (!editor) return;
+    setZoom(prevZoom => {
+      const nextZoom = clamp(targetZoom, 1, 3);
+      if (prevZoom === nextZoom) {
+        return prevZoom;
+      }
+      const ratio = nextZoom / prevZoom;
+      const baseScale = Math.max(PREVIEW_SIZE / editor.width, PREVIEW_SIZE / editor.height);
+      const drawWidth = editor.width * baseScale * nextZoom;
+      const drawHeight = editor.height * baseScale * nextZoom;
+      const maxShiftX = Math.max(0, (drawWidth - PREVIEW_SIZE) / 2);
+      const maxShiftY = Math.max(0, (drawHeight - PREVIEW_SIZE) / 2);
+      setOffsetX(prevOffset => clamp(prevOffset * ratio, -maxShiftX, maxShiftX));
+      setOffsetY(prevOffset => clamp(prevOffset * ratio, -maxShiftY, maxShiftY));
+      return nextZoom;
+    });
+  };
+
+  const resetPlacement = () => {
+    setZoom(1);
+    setOffsetX(0);
+    setOffsetY(0);
+    setDragState(null);
+    setPinchState(null);
+    pointerPositions.current.clear();
+  };
 
   const triggerFileSelect = () => {
     setStatus(null);
@@ -166,9 +221,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     try {
       const prepared = await createEditorState(file);
       setEditor(prepared);
-      setZoom(1);
-      setOffsetX(0);
-      setOffsetY(0);
+      resetPlacement();
       setShape('square');
       setStatus(t('profile.editing.ready'));
     } catch (error: any) {
@@ -190,48 +243,114 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!editor || !previewPlacement) return;
     event.preventDefault();
-    const target = event.currentTarget;
+    pointerPositions.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     try {
-      target.setPointerCapture(event.pointerId);
+      event.currentTarget.setPointerCapture(event.pointerId);
     } catch {}
-    setDragState({
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      baseOffsetX: offsetX,
-      baseOffsetY: offsetY,
-    });
+
+    if (pointerPositions.current.size === 1) {
+      setDragState({
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        baseOffsetX: offsetX,
+        baseOffsetY: offsetY,
+      });
+    } else if (pointerPositions.current.size === 2) {
+      const entries = Array.from(pointerPositions.current.entries());
+      const distance = Math.hypot(
+        entries[0][1].x - entries[1][1].x,
+        entries[0][1].y - entries[1][1].y
+      );
+      if (distance > 0) {
+        setPinchState({
+          pointerIds: entries.map(([id]) => id),
+          startDistance: distance,
+          baseZoom: zoom,
+        });
+      }
+      setDragState(null);
+    }
   };
 
-  const updateDragOffsets = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragState || !previewPlacement || dragState.pointerId !== event.pointerId) return;
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!editor || !previewPlacement) return;
+    if (pointerPositions.current.has(event.pointerId)) {
+      pointerPositions.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+
+    if (pinchState && pinchState.pointerIds.includes(event.pointerId)) {
+      const positions = pinchState.pointerIds
+        .map(id => pointerPositions.current.get(id))
+        .filter((value): value is { x: number; y: number } => !!value);
+      if (positions.length === 2) {
+        const distance = Math.hypot(
+          positions[0].x - positions[1].x,
+          positions[0].y - positions[1].y
+        );
+        if (distance > 0) {
+          applyZoom(pinchState.baseZoom * (distance / pinchState.startDistance));
+        }
+      }
+      return;
+    }
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
     event.preventDefault();
     const deltaX = event.clientX - dragState.startX;
     const deltaY = event.clientY - dragState.startY;
-    let nextOffsetX = dragState.baseOffsetX;
-    let nextOffsetY = dragState.baseOffsetY;
-    if (previewPlacement.maxShiftX > 0) {
-      nextOffsetX = clamp(dragState.baseOffsetX + deltaX / previewPlacement.maxShiftX, -1, 1);
-    }
-    if (previewPlacement.maxShiftY > 0) {
-      nextOffsetY = clamp(dragState.baseOffsetY + deltaY / previewPlacement.maxShiftY, -1, 1);
-    }
+    const nextOffsetX = clamp(
+      dragState.baseOffsetX + deltaX,
+      -previewPlacement.maxShiftX,
+      previewPlacement.maxShiftX
+    );
+    const nextOffsetY = clamp(
+      dragState.baseOffsetY + deltaY,
+      -previewPlacement.maxShiftY,
+      previewPlacement.maxShiftY
+    );
     setOffsetX(nextOffsetX);
     setOffsetY(nextOffsetY);
   };
 
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragState) return;
-    updateDragOffsets(event);
-  };
-
-  const releaseDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragState && dragState.pointerId === event.pointerId) {
+  const endPointerInteraction = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       try {
         event.currentTarget.releasePointerCapture(event.pointerId);
       } catch {}
+    }
+
+    const wasPinching = pinchState && pinchState.pointerIds.includes(event.pointerId);
+    if (wasPinching) {
+      setPinchState(null);
+    }
+
+    pointerPositions.current.delete(event.pointerId);
+
+    if (dragState && dragState.pointerId === event.pointerId) {
       setDragState(null);
     }
+
+    if (wasPinching && pointerPositions.current.size === 1) {
+      const [id, position] = Array.from(pointerPositions.current.entries())[0];
+      setDragState({
+        pointerId: id,
+        startX: position.x,
+        startY: position.y,
+        baseOffsetX: offsetX,
+        baseOffsetY: offsetY,
+      });
+    }
+  };
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!editor) return;
+    event.preventDefault();
+    const factor = Math.exp(-event.deltaY / 300);
+    applyZoom(zoom * factor);
   };
 
 
@@ -244,6 +363,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
       await uploadProfilePicture(userId, processedFile);
       setStatus(t('profile.upload.success'));
       setEditor(null);
+      resetPlacement();
       onUploaded();
     } catch (error: any) {
       const message = error instanceof Error && error.message ? error.message : t('profile.upload.error');
@@ -256,6 +376,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const handleCancel = () => {
     setEditor(null);
     setStatus(null);
+    resetPlacement();
   };
 
   return (
@@ -275,9 +396,10 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
             }}
             onPointerDown={editor ? handlePointerDown : undefined}
             onPointerMove={editor ? handlePointerMove : undefined}
-            onPointerUp={editor ? releaseDrag : undefined}
-            onPointerCancel={editor ? releaseDrag : undefined}
-            onPointerLeave={editor ? releaseDrag : undefined}
+            onPointerUp={editor ? endPointerInteraction : undefined}
+            onPointerCancel={editor ? endPointerInteraction : undefined}
+            onPointerLeave={editor ? endPointerInteraction : undefined}
+            onWheel={editor ? handleWheel : undefined}
           >
             {editor && previewPlacement ? (
               <>
@@ -341,40 +463,15 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
                   max={300}
                   step={5}
                   value={Math.round(zoom * 100)}
-                  onChange={e => setZoom(clamp(Number(e.target.value) / 100, 1, 3))}
+                  onChange={e => applyZoom(Number(e.target.value) / 100)}
                 />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-300">
-                <span className="font-medium">{t('profile.editing.horizontal')}</span>
-                <input
-                  type="range"
-                  min={-100}
-                  max={100}
-                  step={2}
-                  value={Math.round(offsetX * 100)}
-                  onChange={e => setOffsetX(clamp(Number(e.target.value) / 100, -1, 1))}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-300">
-                <span className="font-medium">{t('profile.editing.vertical')}</span>
-                <input
-                  type="range"
-                  min={-100}
-                  max={100}
-                  step={2}
-                  value={Math.round(offsetY * 100)}
-                  onChange={e => setOffsetY(clamp(Number(e.target.value) / 100, -1, 1))}
-                />
-              </label>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.gestureHint')}</p>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   className="btn-tertiary btn-xs"
-                  onClick={() => {
-                    setZoom(1);
-                    setOffsetX(0);
-                    setOffsetY(0);
-                  }}
+                  onClick={resetPlacement}
                 >
                   {t('profile.editing.reset')}
                 </button>
