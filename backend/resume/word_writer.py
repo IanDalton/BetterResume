@@ -90,7 +90,7 @@ class WordResumeWriter(BaseWriter):
                 img_paragraph = img_cell.paragraphs[0]
                 img_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = img_paragraph.add_run()
-                run.add_picture(profile_path, width=Inches(1.35))
+                run.add_picture(profile_path, width=Inches(2.35))
                 header_container = text_cell
             except Exception as e:
                 self._logger.warning("Failed to insert profile image: %s", e)
