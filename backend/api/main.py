@@ -1,6 +1,7 @@
 import os
 import logging
 import hashlib
+import json
 # Disable telemetry noise from dependencies (e.g., ChromaDB / posthog)
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "false")
 os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "false")
@@ -32,6 +33,8 @@ for _d in (PERSIST_CHROMA, OUTPUTS_BASE, UPLOADS_BASE):
     os.makedirs(_d, exist_ok=True)
 PROFILE_PICS_BASE = os.path.join(UPLOADS_BASE, "profile_pictures")
 os.makedirs(PROFILE_PICS_BASE, exist_ok=True)
+
+CACHE_FILENAME = "resume_cache.json"
 
 ALLOWED_PROFILE_IMAGE_TYPES = {
     "image/png": ".png",
@@ -72,6 +75,77 @@ def make_signed_download_path(user_id: str, filename: str, ttl_seconds: int = 90
     sig = _hmac_sign(user_id, filename, exp)
     # Keep relative path so the frontend can prefix with API base; include query string
     return f"/download/{user_id}/{filename}?exp={exp}&sig={sig}"
+
+
+def _file_sha256(path: Optional[str]) -> Optional[str]:
+    """Return the SHA256 hash for a file or None if unavailable."""
+    if not path or not os.path.isfile(path):
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        logger.exception("Failed computing hash for path=%s", path)
+        return None
+
+
+def _load_resume_cache(out_dir: str) -> Optional[dict]:
+    cache_path = os.path.join(out_dir, CACHE_FILENAME)
+    if not os.path.isfile(cache_path):
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        logger.warning("Unable to read resume cache at %s", cache_path, exc_info=True)
+        return None
+
+
+def _save_resume_cache(out_dir: str, payload: dict) -> None:
+    cache_path = os.path.join(out_dir, CACHE_FILENAME)
+    tmp_path = cache_path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        logger.warning("Unable to persist resume cache to %s", cache_path, exc_info=True)
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+
+def _build_request_signature(req: "ResumeRequest", csv_hash: Optional[str], profile_hash: Optional[str]) -> str:
+    payload = {
+        "job_description_hash": hashlib.sha256((req.job_description or "").encode("utf-8")).hexdigest(),
+        "format": req.format.lower(),
+        "model": req.model,
+        "include_profile_picture": bool(req.include_profile_picture),
+        "csv_hash": csv_hash,
+        "profile_hash": profile_hash if req.include_profile_picture else None,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _build_signed_files(user_id: str, fmt: str, out_dir: str) -> Dict[str, str]:
+    files: Dict[str, str] = {}
+    ext = ".tex" if fmt == "latex" else ".docx"
+    source_name = f"resume{ext}"
+    source_path = os.path.join(out_dir, source_name)
+    if os.path.isfile(source_path):
+        files["source"] = make_signed_download_path(user_id, source_name)
+    pdf_path = os.path.join(out_dir, "resume.pdf")
+    if os.path.isfile(pdf_path):
+        files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
+    return files
 
 def get_user_tool(user_id: str) -> ChromaDBTool:
     tool = USER_TOOLS.get(user_id)
@@ -367,14 +441,29 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
+    csv_hash = _file_sha256(csv_path)
+    profile_hash = _file_sha256(profile_path) if profile_path else None
+    fmt = req.format.lower()
+    signature = _build_request_signature(req, csv_hash, profile_hash)
+    out_dir = os.path.join(OUTPUTS_BASE, user_id)
+    os.makedirs(out_dir, exist_ok=True)
+    cached = _load_resume_cache(out_dir)
+    files_from_cache = _build_signed_files(user_id, fmt, out_dir) if cached else {}
+    if (
+        cached
+        and cached.get("signature") == signature
+        and cached.get("result") is not None
+        and files_from_cache.get("source")
+    ):
+        logger.info("Reusing cached resume output for user_id=%s format=%s", user_id, fmt)
+        return JSONResponse(content={"result": cached.get("result"), "files": files_from_cache, "rows": row_count})
+
     writer = (
         LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-        if req.format.lower() == "latex"
+        if fmt == "latex"
         else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
     )
     tool = get_user_tool(user_id)
-    out_dir = os.path.join(OUTPUTS_BASE, user_id)
-    os.makedirs(out_dir, exist_ok=True)
     clean_output_dir(out_dir)
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
@@ -388,13 +477,27 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     # Important: use absolute output base to avoid races due to process cwd changes
     abs_base = os.path.join(out_dir, "resume")
     result = bot.generate_resume(req.job_description, output_basename=abs_base)
-    logger.info("Bot generation complete; language=%s skills=%d exp=%d", result.get("language"), len(result.get("resume_section",{}).get("skills",[])), len(result.get("resume_section",{}).get("experience",[])))
-    files = {"source": f"/download/{user_id}/resume{'.tex' if req.format.lower()=='latex' else '.docx'}"}
-    pdf_path = os.path.join(out_dir, "resume.pdf")
-    if os.path.isfile(pdf_path):
-        files["pdf"] = f"/download/{user_id}/resume.pdf"
-    # Replace raw paths with signed links
-    signed_files = {k: make_signed_download_path(user_id, v.split('/')[-1]) for k, v in files.items() if v}
+    logger.info(
+        "Bot generation complete; language=%s skills=%d exp=%d",
+        result.get("language"),
+        len(result.get("resume_section", {}).get("skills", [])),
+        len(result.get("resume_section", {}).get("experience", [])),
+    )
+    signed_files = _build_signed_files(user_id, fmt, out_dir)
+    if signed_files.get("source"):
+        cache_payload = {
+            "signature": signature,
+            "result": result,
+            "format": fmt,
+            "model": req.model,
+            "include_profile_picture": bool(req.include_profile_picture),
+            "csv_hash": csv_hash,
+            "profile_hash": profile_hash,
+            "generated_at": int(time.time()),
+        }
+        _save_resume_cache(out_dir, cache_payload)
+    else:
+        logger.warning("Resume generation completed but no source file found to cache for user_id=%s", user_id)
     return JSONResponse(content={"result": result, "files": signed_files, "rows": row_count})
 
 def sse_event(data: dict) -> bytes:
@@ -410,15 +513,15 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
-    writer = (
-        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-        if req.format.lower() == "latex"
-        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-    )
+    csv_hash = _file_sha256(csv_path)
+    profile_hash = _file_sha256(profile_path) if profile_path else None
+    fmt = req.format.lower()
+    signature = _build_request_signature(req, csv_hash, profile_hash)
     tool = get_user_tool(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
-    clean_output_dir(out_dir)
+    cached = _load_resume_cache(out_dir)
+    cached_files = _build_signed_files(user_id, fmt, out_dir) if cached else {}
     # Pre-calc row count for early event
     row_count = None
     collection = None
@@ -447,6 +550,45 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         col_docs = tool._collection.count()
     except Exception:
         pass
+
+    sse_headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Allow-Methods": "*",
+    }
+
+    if (
+        cached
+        and cached.get("signature") == signature
+        and cached.get("result") is not None
+        and cached_files.get("source")
+    ):
+        logger.info("Reusing cached streaming resume for user_id=%s format=%s", user_id, fmt)
+
+        def cached_event_generator():
+            try:
+                yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
+                yield sse_event({"stage": "cached", "message": "Using cached resume output"})
+                yield sse_event({
+                    "stage": "done",
+                    "message": "Resume generation complete",
+                    "result": cached.get("result"),
+                    "files": cached_files,
+                })
+            except Exception as exc:
+                logger.exception("Failed while streaming cached resume: %s", exc)
+                yield sse_event({"stage": "error", "message": str(exc)})
+
+        return StreamingResponse(cached_event_generator(), media_type="text/event-stream", headers=sse_headers)
+
+    writer = (
+        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+        if fmt == "latex"
+        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
+    )
+    clean_output_dir(out_dir)
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
     bot = Bot(
         writer=writer,
@@ -465,25 +607,27 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
             for event in bot.generate_resume_progress(req.job_description, output_basename=abs_base):
                 # Normalize final file paths for client (match non-stream endpoint style)
                 if event.get("stage") == "done":
-                    source_name = f"resume{writer.file_ending}"
-                    # Build file list dynamically to avoid broken pdf links and sign them
-                    files: Dict[str, str] = {"source": make_signed_download_path(user_id, source_name)}
-                    if os.path.isfile(os.path.join(out_dir, "resume.pdf")):
-                        files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
+                    files = _build_signed_files(user_id, fmt, out_dir)
                     event["files"] = files
+                    if files.get("source"):
+                        cache_payload = {
+                            "signature": signature,
+                            "result": event.get("result"),
+                            "format": fmt,
+                            "model": req.model,
+                            "include_profile_picture": bool(req.include_profile_picture),
+                            "csv_hash": csv_hash,
+                            "profile_hash": profile_hash,
+                            "generated_at": int(time.time()),
+                        }
+                        _save_resume_cache(out_dir, cache_payload)
+                    else:
+                        logger.warning("Streaming generation done but source missing for caching user_id=%s", user_id)
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")
             yield sse_event({"stage": "error", "message": str(e)})
 
-    # Explicit headers added because some environments / proxies may strip CORS headers on streaming responses
-    sse_headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Methods": "*",
-    }
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)
 
 @app.get("/download/{user_id}/{filename}")
