@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
-import { uploadProfilePicture } from '../services';
+import { resolveProfilePictureUrl, uploadProfilePicture } from '../services';
 
 interface ProfilePictureUploaderProps {
   userId: string;
   include: boolean;
   onIncludeChange: (value: boolean) => void;
   imageUrl: string | null;
-  onUploaded: () => void;
+  onUploaded: (url: string | null) => void;
 }
 
 type ProfileShape = 'square' | 'circle';
@@ -253,20 +253,28 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
       const baseScale = Math.max(EDITOR_SIZE / editor.width, EDITOR_SIZE / editor.height);
       const nextDrawWidth = editor.width * baseScale * nextZoom;
       const nextDrawHeight = editor.height * baseScale * nextZoom;
-      const maxShiftX = Math.max(0, (nextDrawWidth - EDITOR_SIZE) / 2);
-      const maxShiftY = Math.max(0, (nextDrawHeight - EDITOR_SIZE) / 2);
 
       const desiredOffsetX =
         anchorX - (EDITOR_SIZE - nextDrawWidth) / 2 - originX * nextDrawWidth;
       const desiredOffsetY =
         anchorY - (EDITOR_SIZE - nextDrawHeight) / 2 - originY * nextDrawHeight;
 
-      const nextOffsetX = clamp(desiredOffsetX, -maxShiftX, maxShiftX);
-      const nextOffsetY = clamp(desiredOffsetY, -maxShiftY, maxShiftY);
+      const nextPlacement = calculatePlacement(
+        editor.width,
+        editor.height,
+        EDITOR_SIZE,
+        nextZoom,
+        desiredOffsetX,
+        desiredOffsetY
+      );
 
-      placementRef.current = { offsetX: nextOffsetX, offsetY: nextOffsetY, zoom: nextZoom };
-      setOffsetX(nextOffsetX);
-      setOffsetY(nextOffsetY);
+      placementRef.current = {
+        offsetX: nextPlacement.offsetX,
+        offsetY: nextPlacement.offsetY,
+        zoom: nextZoom,
+      };
+      setOffsetX(nextPlacement.offsetX);
+      setOffsetY(nextPlacement.offsetY);
       setZoom(nextZoom);
     },
     [editor]
@@ -413,10 +421,14 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     try {
       const processedFile = await exportEditedImage(editor, shape, zoom, offsetX, offsetY);
       await uploadProfilePicture(userId, processedFile);
+      const refreshedUrl = await resolveProfilePictureUrl(userId);
+      if (!refreshedUrl) {
+        throw new Error(t('profile.upload.refreshError'));
+      }
       setStatus(t('profile.upload.success'));
       setEditor(null);
       resetPlacement();
-      onUploaded();
+      onUploaded(refreshedUrl);
     } catch (error: any) {
       const message = error instanceof Error && error.message ? error.message : t('profile.upload.error');
       setStatus(message);

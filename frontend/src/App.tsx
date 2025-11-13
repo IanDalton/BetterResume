@@ -44,10 +44,6 @@ export default function App() {
   const [resumeJson, setResumeJson] = useState<any>(null);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
   const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
-  const [profilePictureVersion, setProfilePictureVersion] = useState(0);
-  const handleProfileUploaded = React.useCallback(() => {
-    setProfilePictureVersion(v => v + 1);
-  }, []);
   const [jobDescription, setJobDescription] = useState(() => {
     try { return localStorage.getItem('br.jobDescription') || ''; } catch { return ''; }
   });
@@ -77,6 +73,16 @@ export default function App() {
   const [includeProfilePicture, setIncludeProfilePicture] = useState<boolean>(() => {
     try { return localStorage.getItem('br.includeProfilePicture') === '1'; } catch { return false; }
   });
+  const handleProfileUploaded = useCallback((url: string | null) => {
+    setProfilePictureUrl(url);
+    if (url) {
+      if (!includeProfilePicture) {
+        setIncludeProfilePicture(true);
+      }
+    } else if (includeProfilePicture) {
+      setIncludeProfilePicture(false);
+    }
+  }, [includeProfilePicture]);
   const ADS_CLIENT = import.meta.env.VITE_ADSENSE_CLIENT;
   const ADS_SLOT = import.meta.env.VITE_ADSENSE_SLOT_GENERATE;
   const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
@@ -153,7 +159,7 @@ export default function App() {
     }
     loadProfilePicture();
     return () => { cancelled = true; };
-  }, [userId, profilePictureVersion]);
+  }, [userId]);
 
   useEffect(() => {
     if (!profilePictureUrl && includeProfilePicture) {
