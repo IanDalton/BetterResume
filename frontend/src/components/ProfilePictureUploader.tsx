@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { uploadProfilePicture } from '../services';
 
@@ -29,7 +29,8 @@ interface Placement {
   offsetY: number;
 }
 
-const PREVIEW_SIZE = 128;
+const THUMBNAIL_SIZE = 128;
+const EDITOR_SIZE = 320;
 const EXPORT_SIZE = 512;
 
 function clamp(value: number, min: number, max: number) {
@@ -120,7 +121,7 @@ async function exportEditedImage(
     ctx.fillRect(0, 0, EXPORT_SIZE, EXPORT_SIZE);
   }
 
-  const offsetScale = EXPORT_SIZE / PREVIEW_SIZE;
+  const offsetScale = EXPORT_SIZE / EDITOR_SIZE;
   const placement = calculatePlacement(
     img.width,
     img.height,
@@ -155,7 +156,10 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
 }) => {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cropAreaRef = useRef<HTMLDivElement | null>(null);
   const pointerPositions = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const placementRef = useRef({ offsetX: 0, offsetY: 0, zoom: 1 });
+
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -176,38 +180,24 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     baseZoom: number;
   } | null>(null);
 
-  const applyZoom = (targetZoom: number) => {
-    if (!editor) return;
-    setZoom(prevZoom => {
-      const nextZoom = clamp(targetZoom, 1, 3);
-      if (prevZoom === nextZoom) {
-        return prevZoom;
-      }
-      const ratio = nextZoom / prevZoom;
-      const baseScale = Math.max(PREVIEW_SIZE / editor.width, PREVIEW_SIZE / editor.height);
-      const drawWidth = editor.width * baseScale * nextZoom;
-      const drawHeight = editor.height * baseScale * nextZoom;
-      const maxShiftX = Math.max(0, (drawWidth - PREVIEW_SIZE) / 2);
-      const maxShiftY = Math.max(0, (drawHeight - PREVIEW_SIZE) / 2);
-      setOffsetX(prevOffset => clamp(prevOffset * ratio, -maxShiftX, maxShiftX));
-      setOffsetY(prevOffset => clamp(prevOffset * ratio, -maxShiftY, maxShiftY));
-      return nextZoom;
-    });
-  };
+  useEffect(() => {
+    placementRef.current = { offsetX, offsetY, zoom };
+  }, [offsetX, offsetY, zoom]);
 
-  const resetPlacement = () => {
+  const resetPlacement = useCallback(() => {
     setZoom(1);
     setOffsetX(0);
     setOffsetY(0);
     setDragState(null);
     setPinchState(null);
     pointerPositions.current.clear();
-  };
+    placementRef.current = { offsetX: 0, offsetY: 0, zoom: 1 };
+  }, []);
 
-  const triggerFileSelect = () => {
+  const triggerFileSelect = useCallback(() => {
     setStatus(null);
     inputRef.current?.click();
-  };
+  }, []);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -223,7 +213,6 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
       setEditor(prepared);
       resetPlacement();
       setShape('square');
-      setStatus(t('profile.editing.ready'));
     } catch (error: any) {
       const message = error instanceof Error && error.message ? error.message : t('profile.upload.error');
       setStatus(message);
@@ -233,15 +222,65 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     }
   };
 
-  const previewPlacement = useMemo(() => {
+  const applyZoom = useCallback(
+    (targetZoom: number, anchor?: { x: number; y: number }) => {
+      if (!editor) return;
+      const nextZoom = clamp(targetZoom, 1, 3);
+      const prev = placementRef.current;
+      if (prev.zoom === nextZoom) {
+        return;
+      }
+
+      const anchorX = clamp(anchor?.x ?? EDITOR_SIZE / 2, 0, EDITOR_SIZE);
+      const anchorY = clamp(anchor?.y ?? EDITOR_SIZE / 2, 0, EDITOR_SIZE);
+
+      const prevPlacement = calculatePlacement(
+        editor.width,
+        editor.height,
+        EDITOR_SIZE,
+        prev.zoom,
+        prev.offsetX,
+        prev.offsetY
+      );
+
+      const originX = prevPlacement.drawWidth
+        ? clamp((anchorX - prevPlacement.dx) / prevPlacement.drawWidth, 0, 1)
+        : 0.5;
+      const originY = prevPlacement.drawHeight
+        ? clamp((anchorY - prevPlacement.dy) / prevPlacement.drawHeight, 0, 1)
+        : 0.5;
+
+      const baseScale = Math.max(EDITOR_SIZE / editor.width, EDITOR_SIZE / editor.height);
+      const nextDrawWidth = editor.width * baseScale * nextZoom;
+      const nextDrawHeight = editor.height * baseScale * nextZoom;
+      const maxShiftX = Math.max(0, (nextDrawWidth - EDITOR_SIZE) / 2);
+      const maxShiftY = Math.max(0, (nextDrawHeight - EDITOR_SIZE) / 2);
+
+      const desiredOffsetX =
+        anchorX - (EDITOR_SIZE - nextDrawWidth) / 2 - originX * nextDrawWidth;
+      const desiredOffsetY =
+        anchorY - (EDITOR_SIZE - nextDrawHeight) / 2 - originY * nextDrawHeight;
+
+      const nextOffsetX = clamp(desiredOffsetX, -maxShiftX, maxShiftX);
+      const nextOffsetY = clamp(desiredOffsetY, -maxShiftY, maxShiftY);
+
+      placementRef.current = { offsetX: nextOffsetX, offsetY: nextOffsetY, zoom: nextZoom };
+      setOffsetX(nextOffsetX);
+      setOffsetY(nextOffsetY);
+      setZoom(nextZoom);
+    },
+    [editor]
+  );
+
+  const editorPlacement = useMemo(() => {
     if (!editor) return null;
-    return calculatePlacement(editor.width, editor.height, PREVIEW_SIZE, zoom, offsetX, offsetY);
+    return calculatePlacement(editor.width, editor.height, EDITOR_SIZE, zoom, offsetX, offsetY);
   }, [editor, zoom, offsetX, offsetY]);
 
   const isDragging = dragState !== null;
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!editor || !previewPlacement) return;
+    if (!editor || !editorPlacement) return;
     event.preventDefault();
     pointerPositions.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     try {
@@ -253,8 +292,8 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
-        baseOffsetX: offsetX,
-        baseOffsetY: offsetY,
+        baseOffsetX: placementRef.current.offsetX,
+        baseOffsetY: placementRef.current.offsetY,
       });
     } else if (pointerPositions.current.size === 2) {
       const entries = Array.from(pointerPositions.current.entries());
@@ -266,7 +305,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         setPinchState({
           pointerIds: entries.map(([id]) => id),
           startDistance: distance,
-          baseZoom: zoom,
+          baseZoom: placementRef.current.zoom,
         });
       }
       setDragState(null);
@@ -274,7 +313,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!editor || !previewPlacement) return;
+    if (!editor || !editorPlacement) return;
     if (pointerPositions.current.has(event.pointerId)) {
       pointerPositions.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
@@ -289,7 +328,16 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
           positions[0].y - positions[1].y
         );
         if (distance > 0) {
-          applyZoom(pinchState.baseZoom * (distance / pinchState.startDistance));
+          const rect = event.currentTarget.getBoundingClientRect();
+          const midX = (positions[0].x + positions[1].x) / 2;
+          const midY = (positions[0].y + positions[1].y) / 2;
+          applyZoom(
+            pinchState.baseZoom * (distance / pinchState.startDistance),
+            {
+              x: clamp(midX - rect.left, 0, EDITOR_SIZE),
+              y: clamp(midY - rect.top, 0, EDITOR_SIZE),
+            }
+          );
         }
       }
       return;
@@ -304,14 +352,15 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     const deltaY = event.clientY - dragState.startY;
     const nextOffsetX = clamp(
       dragState.baseOffsetX + deltaX,
-      -previewPlacement.maxShiftX,
-      previewPlacement.maxShiftX
+      -editorPlacement.maxShiftX,
+      editorPlacement.maxShiftX
     );
     const nextOffsetY = clamp(
       dragState.baseOffsetY + deltaY,
-      -previewPlacement.maxShiftY,
-      previewPlacement.maxShiftY
+      -editorPlacement.maxShiftY,
+      editorPlacement.maxShiftY
     );
+    placementRef.current = { ...placementRef.current, offsetX: nextOffsetX, offsetY: nextOffsetY };
     setOffsetX(nextOffsetX);
     setOffsetY(nextOffsetY);
   };
@@ -340,8 +389,8 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         pointerId: id,
         startX: position.x,
         startY: position.y,
-        baseOffsetX: offsetX,
-        baseOffsetY: offsetY,
+        baseOffsetX: placementRef.current.offsetX,
+        baseOffsetY: placementRef.current.offsetY,
       });
     }
   };
@@ -349,10 +398,13 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     if (!editor) return;
     event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
     const factor = Math.exp(-event.deltaY / 300);
-    applyZoom(zoom * factor);
+    applyZoom(placementRef.current.zoom * factor, {
+      x: clamp(event.clientX - rect.left, 0, EDITOR_SIZE),
+      y: clamp(event.clientY - rect.top, 0, EDITOR_SIZE),
+    });
   };
-
 
   const handleUpload = async () => {
     if (!editor) return;
@@ -373,129 +425,77 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     }
   };
 
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     setEditor(null);
-    setStatus(null);
     resetPlacement();
-  };
+  }, [resetPlacement]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        handleCancel();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [editor, handleCancel]);
+
+  const successMessage = t('profile.upload.success');
+  const statusTone = status ? (status === successMessage ? 'success' : 'error') : null;
 
   return (
     <section className="mb-10">
       <h2 className="text-xl font-semibold mb-4">{t('profile.section.title')}</h2>
-      <div className="flex flex-col sm:flex-row gap-4 sm:items-start">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div className="flex flex-col items-center gap-3">
           <div
-            className={`relative flex items-center justify-center border border-neutral-300 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900 overflow-hidden ${
-              editor ? (shape === 'circle' ? 'rounded-full' : 'rounded-lg') : 'rounded-lg'
-            }`}
-            style={{
-              width: PREVIEW_SIZE,
-              height: PREVIEW_SIZE,
-              cursor: editor ? (isDragging ? 'grabbing' : 'grab') : 'default',
-              touchAction: editor ? 'none' : undefined,
-            }}
-            onPointerDown={editor ? handlePointerDown : undefined}
-            onPointerMove={editor ? handlePointerMove : undefined}
-            onPointerUp={editor ? endPointerInteraction : undefined}
-            onPointerCancel={editor ? endPointerInteraction : undefined}
-            onPointerLeave={editor ? endPointerInteraction : undefined}
-            onWheel={editor ? handleWheel : undefined}
+            className="relative flex items-center justify-center overflow-hidden rounded-lg border border-neutral-300 bg-neutral-100 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400"
+            style={{ width: THUMBNAIL_SIZE, height: THUMBNAIL_SIZE }}
           >
-            {editor && previewPlacement ? (
-              <>
-                <img
-                  src={editor.dataUrl}
-                  alt={t('profile.section.title')}
-                  style={{
-                    position: 'absolute',
-                    width: previewPlacement.drawWidth,
-                    height: previewPlacement.drawHeight,
-                    left: previewPlacement.dx,
-                    top: previewPlacement.dy,
-                  }}
-                />
-              </>
-            ) : imageUrl ? (
-              <img src={imageUrl} alt={t('profile.section.title')} className="w-full h-full object-cover" />
+            {imageUrl ? (
+              <img src={imageUrl} alt={t('profile.section.title')} className="h-full w-full object-cover" />
             ) : (
-              <span className="text-xs text-neutral-500 text-center px-2">{t('profile.none')}</span>
+              <span className="px-2 text-center text-xs">{t('profile.none')}</span>
             )}
           </div>
-          {editor && (
-            <div className="flex gap-2">
-              <button type="button" className="btn-tertiary btn-xs" onClick={handleCancel} disabled={uploading}>
-                {t('profile.editing.cancel')}
-              </button>
-              <button type="button" className="btn-primary btn-xs" onClick={handleUpload} disabled={uploading}>
-                {uploading ? t('profile.uploading') : t('profile.editing.save')}
-              </button>
-            </div>
-          )}
+          <button type="button" className="btn-secondary btn-sm" onClick={triggerFileSelect} disabled={uploading}>
+            {t('profile.upload')}
+          </button>
         </div>
-        <div className="flex-1 flex flex-col gap-2">
-          <div className="flex flex-wrap gap-2 items-center">
-            <button type="button" className="btn-secondary btn-sm" onClick={triggerFileSelect} disabled={uploading}>
-              {t('profile.upload')}
-            </button>
-            <label className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={include && !!imageUrl}
-                onChange={e => onIncludeChange(e.target.checked)}
-                disabled={!imageUrl}
-              />
-              <span>{t('profile.toggle')}</span>
-            </label>
-          </div>
+        <div className="flex-1 space-y-2 text-sm text-neutral-600 dark:text-neutral-300">
           <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.upload.hint')}</p>
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={include && !!imageUrl}
+              onChange={e => onIncludeChange(e.target.checked)}
+              disabled={!imageUrl}
+            />
+            <span className={!imageUrl ? 'text-neutral-400 dark:text-neutral-600' : ''}>{t('profile.toggle')}</span>
+          </label>
           {!imageUrl && (
             <p className="text-xs text-neutral-500 dark:text-neutral-500">{t('profile.toggle.disabled')}</p>
           )}
-          {editor && (
-            <div className="mt-2 space-y-3 rounded-md border border-dashed border-neutral-300 dark:border-neutral-700 bg-neutral-50/70 dark:bg-neutral-900/40 p-3">
-              <p className="text-xs text-neutral-600 dark:text-neutral-300">{t('profile.editing.instructions')}</p>
-              <label className="flex flex-col gap-1 text-xs text-neutral-600 dark:text-neutral-300">
-                <span className="font-medium">{t('profile.editing.zoom')}</span>
-                <input
-                  type="range"
-                  min={100}
-                  max={300}
-                  step={5}
-                  value={Math.round(zoom * 100)}
-                  onChange={e => applyZoom(Number(e.target.value) / 100)}
-                />
-              </label>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.gestureHint')}</p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="btn-tertiary btn-xs"
-                  onClick={resetPlacement}
-                >
-                  {t('profile.editing.reset')}
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={`btn-tertiary btn-xs ${shape === 'square' ? 'border border-red-500 text-red-600 dark:text-red-400' : ''}`}
-                  onClick={() => setShape('square')}
-                >
-                  {t('profile.shape.square')}
-                </button>
-                <button
-                  type="button"
-                  className={`btn-tertiary btn-xs ${shape === 'circle' ? 'border border-red-500 text-red-600 dark:text-red-400' : ''}`}
-                  onClick={() => setShape('circle')}
-                >
-                  {t('profile.shape.circle')}
-                </button>
-              </div>
-            </div>
-          )}
-          {status && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">{status}</p>
+          {status && !editor && (
+            <p
+              className={`text-xs ${
+                statusTone === 'success'
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-red-500 dark:text-red-400'
+              }`}
+            >
+              {status}
+            </p>
           )}
         </div>
       </div>
@@ -506,6 +506,183 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         className="hidden"
         onChange={handleFileChange}
       />
+
+      {editor && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8"
+          onClick={handleCancel}
+        >
+          <div
+            className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-neutral-200 px-6 py-4 dark:border-neutral-800">
+              <div>
+                <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                  {t('profile.editing.modalTitle')}
+                </h3>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.subtitle')}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="rounded-full p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 focus:outline-none focus:ring-2 focus:ring-red-500 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                aria-label={t('profile.editing.cancel')}
+              >
+                <span className="block h-4 w-4">×</span>
+              </button>
+            </div>
+            <div className="flex flex-col gap-6 px-6 py-6">
+              <div className="flex flex-col items-center gap-4">
+                <div className="relative" style={{ width: EDITOR_SIZE, height: EDITOR_SIZE }}>
+                  <div
+                    ref={cropAreaRef}
+                    className={`relative h-full w-full overflow-hidden bg-neutral-900/80 ${
+                      shape === 'circle' ? 'rounded-full' : 'rounded-[28px]'
+                    }`}
+                    style={{
+                      cursor: isDragging ? 'grabbing' : 'grab',
+                      touchAction: 'none',
+                    }}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={endPointerInteraction}
+                    onPointerCancel={endPointerInteraction}
+                    onPointerLeave={endPointerInteraction}
+                    onWheel={handleWheel}
+                  >
+                    {editorPlacement && (
+                      <img
+                        src={editor.dataUrl}
+                        alt={t('profile.section.title')}
+                        className="pointer-events-none select-none"
+                        style={{
+                          position: 'absolute',
+                          width: editorPlacement.drawWidth,
+                          height: editorPlacement.drawHeight,
+                          left: editorPlacement.dx,
+                          top: editorPlacement.dy,
+                        }}
+                      />
+                    )}
+                  </div>
+                  <div
+                    className={`pointer-events-none absolute inset-0 ${
+                      shape === 'circle' ? 'rounded-full' : 'rounded-[28px]'
+                    }`}
+                    style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }}
+                  />
+                  <div
+                    className={`pointer-events-none absolute inset-0 border border-white/80 ${
+                      shape === 'circle' ? 'rounded-full' : 'rounded-[28px]'
+                    }`}
+                  />
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.gestureHint')}</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-3 text-xs text-neutral-600 dark:text-neutral-300">
+                    <span className="font-medium uppercase tracking-wide text-[11px]">
+                      {t('profile.editing.zoom')}
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded-full border border-neutral-200 px-2 py-1 text-sm font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
+                      onClick={() => applyZoom(placementRef.current.zoom - 0.05, {
+                        x: EDITOR_SIZE / 2,
+                        y: EDITOR_SIZE / 2,
+                      })}
+                      disabled={placementRef.current.zoom <= 1}
+                      aria-label={t('profile.editing.zoomOut')}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="range"
+                      min={100}
+                      max={300}
+                      step={1}
+                      value={Math.round(zoom * 100)}
+                      onChange={event => applyZoom(Number(event.target.value) / 100, {
+                        x: EDITOR_SIZE / 2,
+                        y: EDITOR_SIZE / 2,
+                      })}
+                      className="flex-1 accent-red-500"
+                    />
+                    <button
+                      type="button"
+                      className="rounded-full border border-neutral-200 px-2 py-1 text-sm font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
+                      onClick={() => applyZoom(placementRef.current.zoom + 0.05, {
+                        x: EDITOR_SIZE / 2,
+                        y: EDITOR_SIZE / 2,
+                      })}
+                      disabled={placementRef.current.zoom >= 3}
+                      aria-label={t('profile.editing.zoomIn')}
+                    >
+                      +
+                    </button>
+                    <span className="w-12 text-right text-[11px] text-neutral-500 dark:text-neutral-400">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
+                    <span className="font-medium uppercase tracking-wide text-[11px]">
+                      {t('profile.editing.shapeLabel')}
+                    </span>
+                    <button
+                      type="button"
+                      className={`btn-tertiary btn-xs ${
+                        shape === 'square' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''
+                      }`}
+                      onClick={() => setShape('square')}
+                    >
+                      {t('profile.shape.square')}
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-tertiary btn-xs ${
+                        shape === 'circle' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''
+                      }`}
+                      onClick={() => setShape('circle')}
+                    >
+                      {t('profile.shape.circle')}
+                    </button>
+                    <div className="ml-auto">
+                      <button type="button" className="btn-tertiary btn-xs" onClick={resetPlacement}>
+                        {t('profile.editing.reset')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                {status && statusTone === 'error' && (
+                  <p className="text-xs text-red-500 dark:text-red-400">{status}</p>
+                )}
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-neutral-200 pt-4 text-sm sm:flex-row sm:justify-end dark:border-neutral-800">
+                <button
+                  type="button"
+                  className="btn-tertiary btn-sm"
+                  onClick={handleCancel}
+                  disabled={uploading}
+                >
+                  {t('profile.editing.cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary btn-sm"
+                  onClick={handleUpload}
+                  disabled={uploading}
+                >
+                  {uploading ? t('profile.uploading') : t('profile.editing.save')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };
