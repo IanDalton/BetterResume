@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from llm.chroma_db_tool import ChromaDBTool
 import shutil
 from bot import Bot
+from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_tool import GeminiTool
 from typing import Dict, Optional
@@ -612,7 +613,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiTool(model=req.model),
+        llm=GeminiTool(model=req.model, output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,
@@ -788,7 +789,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiTool(model=req.model),
+        llm=GeminiTool(model=req.model, output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,

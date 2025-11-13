@@ -27,16 +27,19 @@ class GeminiTool(BaseLLM):
         invoke(messages: list[BaseMessage]) -> BaseMessage:
             Sends a list of messages to the ChatGemini client and returns the response.
     """
-    def __init__(self, model: str, api_key: str = None, tools: list = None):
-        super().__init__(tools=tools,model=model)
+    def __init__(self, model: str, api_key: str = None, tools: list = None, output_format=None):
         api_key =  os.environ.get("GOOGLE_API_KEY", api_key)
         if not api_key:
             raise ValueError("API key must be provided or set in environment variable GOOGLE_API_KEY")
         os.environ["GOOGLE_API_KEY"] = api_key
-        
         self.client = init_chat_model("google_genai:gemini-2.5-flash-lite")
+        
+        super().__init__(tools=tools,model=model,output_format=output_format)
+            
         self._logger = logging.getLogger("betterresume.llm")
      
+    def assign_output_format(self, output_format):
+        self.client = self.client.with_structured_output(output_format)
 
     def bind_tools(self):
         """Bind provided tools to the Gemini chat client.

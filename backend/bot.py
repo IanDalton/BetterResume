@@ -20,6 +20,7 @@ from resume.parser import JobParser
 from resume.writer import ResumeWriter
 from resume.base_writer import BaseWriter
 from utils.logging_utils import request_id_var, user_id_var, set_user_context
+from models.resume import ResumeOutputFormat
 
 
 
