@@ -4,6 +4,7 @@ import shutil
 from typing import Dict, Optional
 import pandas as pd
 from .base_writer import BaseWriter
+from models.resume import ResumeOutputFormat
 import pdflatex
 
 def _latex_escape(text: str) -> str:
@@ -66,7 +67,7 @@ class LatexResumeWriter(BaseWriter):
         self._logger = logging.getLogger("betterresume.writer")
 
 
-    def write(self, response: dict, output: str = None, to_pdf: bool = False):
+    def write(self, response: ResumeOutputFormat, output: str = None, to_pdf: bool = False):
         tex_file = self.generate_file(response, output.replace(".pdf", ".tex") if output else None)
         self._logger.info("LaTeX file generated: %s", tex_file)
         if not to_pdf:
@@ -75,7 +76,7 @@ class LatexResumeWriter(BaseWriter):
         self._logger.info("PDF generated: %s", pdf)
         return pdf
 
-    def generate_file(self, response: dict, output: str = None):
+    def generate_file(self, response: ResumeOutputFormat, output: str = None):
         self.response = response
         data = self.data
         # Safe accessors for optional info rows
@@ -85,7 +86,7 @@ class LatexResumeWriter(BaseWriter):
             except Exception:
                 return default
         name = _latex_escape(_safe_first(data[data['company'] == 'name']['description'], ""))
-        title = _latex_escape(response['resume_section']['title'])
+        title = _latex_escape(response.resume_section.title)
         address = _latex_escape(_safe_first(data[data['company'] == 'address']['description'], ""))
         phone = _latex_escape(_safe_first(data[data['company'] == 'phone']['description'], ""))
         email = _latex_escape(_safe_first(data[data['company'] == 'email']['description'], ""))
@@ -159,48 +160,29 @@ class LatexResumeWriter(BaseWriter):
 
         # Summary
         tex.append(r"\section*{Professional Summary}")
-        tex.append(_latex_escape(response["resume_section"]["professional_summary"]))
+        tex.append(_latex_escape(response.resume_section.professional_summary))
 
         # Skills
         tex.append(r"\section*{Skills}")
         tex.append(r"\begin{itemize}[leftmargin=*]")
-        for skill in response["resume_section"].get("skills", []):
-            tex.append(r"\item \textbf{" + _latex_escape(skill["name"]) + r"} -- " + _latex_escape(skill["description"]))
+        for skill in response.resume_section.skills:
+            tex.append(r"\item \textbf{" + _latex_escape(skill.name) + r"} -- " + _latex_escape(skill.description))
         tex.append(r"\end{itemize}")
 
         # Experience
         tex.append(r"\section*{Experience}")
-        for exp in response["resume_section"].get("experience", []):
-            tex.append(r"\textbf{" + _latex_escape(exp["position"]) + r"} \hfill " + _latex_escape(exp["start_date"]) + " -- " + _latex_escape(exp["end_date"]))
-            tex.append(r"\\" + _latex_escape(exp["company"]) + ", " + _latex_escape(exp["location"]))
+        for exp in response.resume_section.experience:
+            tex.append(r"\textbf{" + _latex_escape(exp.position) + r"} \hfill " + _latex_escape(exp.start_date) + " -- " + _latex_escape(exp.end_date))
+            tex.append(r"\\" + _latex_escape(exp.company) + ", " + _latex_escape(exp.location))
             tex.append(r"\begin{itemize}[leftmargin=*]")
-            tex.append(r"\item " + _latex_escape(exp["description"]))
+            tex.append(r"\item " + _latex_escape(exp.description))
             tex.append(r"\end{itemize}")
 
         # Education
         tex.append(r"\section*{Education and Certifications}")
-        def _fmt(dt):
-            try:
-                if pd.isna(dt):
-                    return None
-                return dt.strftime('%m/%Y')
-            except Exception:
-                # If strings snuck through, return as-is
-                try:
-                    return str(dt)
-                except Exception:
-                    return None
-        for _, edu in data[data["type"] == "education"].iterrows():
-            s = _fmt(edu.get("start_date"))
-            e = _fmt(edu.get("end_date"))
-            if s and e:
-                dates = f"{s} -- {e}"
-            elif s and not e:
-                dates = f"{s} -- Present"
-            else:
-                dates = ""
-            tex.append(r"\textbf{" + _latex_escape(edu["company"]) + r"} \hfill " + _latex_escape(dates))
-            tex.append(r"\\" + _latex_escape(edu["location"]) + r" -- " + _latex_escape(edu["description"]))
+        for edu in response.resume_section.education:
+            tex.append(r"\textbf{" + _latex_escape(edu.institution) + r"} \hfill " + _latex_escape(edu.dates))
+            tex.append(r"\\" + _latex_escape(edu.degree))
 
         tex.append(r"\end{document}")
 

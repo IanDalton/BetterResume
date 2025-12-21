@@ -122,7 +122,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     )
     # Important: use absolute output base to avoid races due to process cwd changes
     abs_base = os.path.join(out_dir, "resume")
-    result = bot.generate_resume(req.job_description, output_basename=abs_base)
+    result = await bot.generate_resume(req.job_description, output_basename=abs_base)
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
         result.get("language"),

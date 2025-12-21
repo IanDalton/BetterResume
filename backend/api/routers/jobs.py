@@ -86,7 +86,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
         # Replace existing vectors for this user to avoid mixing across uploads
         logger.info("Using pgvector for user=%s", user_id)
         try:
-            tool.delete_user_documents(user_id)
+            await tool.adelete_user_documents(user_id)
         except Exception:
             pass
         data = CSVLoader(file_path=tmp_path).load()
@@ -95,7 +95,7 @@ async def upload_jobs(user_id: str, file: UploadFile = File(...)):
             return {"status": "ok", "rows_ingested": 0, "hash": new_hash}
         ids = [f"{user_id}_{i}" for i in range(len(data))]
         logger.info("Ingesting %d rows into pgvector for user=%s", len(data), user_id)
-        tool.add_documents(
+        await tool.aadd_documents(
             [d.page_content for d in data],
             ids,
             user_id=user_id,

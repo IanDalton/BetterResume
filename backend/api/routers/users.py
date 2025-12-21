@@ -19,7 +19,7 @@ async def clear_user(user_id: str):
         raise HTTPException(status_code=404, detail="User not found")
     tool = USER_TOOLS.pop(user_id)
     try:
-        tool.delete_user_documents(user_id)
+        await tool.adelete_user_documents(user_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete user documents: {e}")
     return {"status": "deleted", "user_id": user_id}

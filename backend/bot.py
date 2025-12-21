@@ -4,6 +4,7 @@ import os
 
 from langgraph.graph import StateGraph, START, END
 
+import asyncio
 from typing import Annotated, Any, Dict, Optional
 from resume import WordResumeWriter
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -17,6 +18,7 @@ from resume.writer import ResumeWriter
 from resume.base_writer import BaseWriter
 from utils.logging_utils import request_id_var, user_id_var, set_user_context
 from models.resume import ResumeOutputFormat
+from llm.pg_vector_tool import PGVectorTool
 
 
 
@@ -45,6 +47,7 @@ class Bot:
         self,
         writer: BaseWriter,
         llm: BaseLLM,
+        tool: Optional[PGVectorTool] = None,
         user_id: Optional[str] = None,
         auto_ingest: bool = True,
         jobs_csv: str = "jobs.csv",
@@ -60,7 +63,7 @@ class Bot:
             persist_directory: Directory for Chroma persistence when creating new tool.
         """
         self.llm = llm
-        self.tool = None
+        self.tool: Optional[PGVectorTool] = tool
         if not self.tool and self.llm.get_tools():
             self.tool = self.llm.get_tools()[0]
 
@@ -74,60 +77,53 @@ class Bot:
             getattr(llm, "model", None), bool(self.tool), auto_ingest, jobs_csv, user_id, getattr(self.tool, "collection_name", "?"),
         )
 
+        self._auto_ingest_task = None
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
-            try:
-                # Remove any existing vectors for this user to avoid cross-run mixing
-                try:
-                    self.logger.info("Resetting pgvector rows for fresh ingest user=%s", self.user_id)
-                    self.tool.delete_user_documents(self.user_id)
-                except Exception:
-                    pass
-
-                data = CSVLoader(file_path=jobs_csv).load()
-                ids = [f"{self.user_id}_{i}" for i in range(len(data))]
-                self.logger.info("Auto-ingesting %d rows from %s for user=%s", len(data), jobs_csv, self.user_id)
-                self.tool.add_documents(
-                    [d.page_content for d in data],
-                    ids,
-                    user_id=self.user_id,
-                )
-            except Exception as e:
-                self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
+            self._start_auto_ingest(jobs_csv)
 
         
-
-        self.graph = self._create_graph()
         self.json_body = None
         self.writer = writer
 
-    def _create_graph(self):
-        async def chatbot(state: State):
-            return await self.llm.ainvoke(state)
-        def has_tool_call_orchestrator(state: State) -> bool:
-            messages = state["messages"]
-            msg = messages[-1] if messages else None
-            if "tool_call" in msg.additional_kwargs:
-                return True
-            return False
-        async def tool_call(state: State):
-            return await self.tool_node.ainvoke(state)
-        
-        g = StateGraph(State)
-        g.add_node("agent", chatbot )
-        g.add_node("toolsBot", tool_call )
+    def _start_auto_ingest(self, jobs_csv: str):
+        """Kick off auto-ingest synchronously or as a background task, depending on loop state."""
+        if not self.tool:
+            self.logger.warning("Auto-ingest skipped: tool missing")
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop; run to completion.
+            asyncio.run(self._auto_ingest_jobs(jobs_csv))
+            self._auto_ingest_task = None
+            return
+        # Running loop; schedule background task.
+        self._auto_ingest_task = loop.create_task(self._auto_ingest_jobs(jobs_csv))
 
-        g.add_edge(START, "agent")
-        g.add_conditional_edges("agent", has_tool_call_orchestrator,{
-            True: "toolsBot",
-            False: END,
-        })
-        g.add_edge("toolsBot", "agent")
+    async def _auto_ingest_jobs(self, jobs_csv: str):
+        try:
+            self.logger.info("Resetting pgvector rows for fresh ingest user=%s", self.user_id)
+            try:
+                await self.tool.adelete_user_documents(self.user_id)
+            except Exception:
+                pass
 
-        
-        return g.compile()
+            data = CSVLoader(file_path=jobs_csv).load()
+            ids = [f"{self.user_id}_{i}" for i in range(len(data))]
+            self.logger.info("Auto-ingesting %d rows from %s for user=%s", len(data), jobs_csv, self.user_id)
+            await self.tool.aadd_documents(
+                [d.page_content for d in data],
+                ids,
+                user_id=self.user_id,
+            )
+        except Exception as e:
+            self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 
+    
     async def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
         #meta=JobParser.extract_language_and_title(jd)
+        if self._auto_ingest_task:
+            await self._auto_ingest_task
         if self.user_id:
             set_user_context(self.user_id)
         self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
@@ -240,5 +236,7 @@ if __name__=="__main__":
     import argparse
 
     p=argparse.ArgumentParser();p.add_argument("--job",required=True);p.add_argument("--translate",action="store_true");a=p.parse_args()
-    jd=open(a.job).read();b=Bot(writer=WordResumeWriter());out=b.generate_resume(jd);print(json.dumps(out,indent=2,ensure_ascii=False))
+    jd=open(a.job).read();b=Bot(writer=WordResumeWriter())
+    out=asyncio.run(b.generate_resume(jd))
+    print(json.dumps(out,indent=2,ensure_ascii=False))
     if a.translate: print(json.dumps(b.translate_resume(out),indent=2,ensure_ascii=False))
