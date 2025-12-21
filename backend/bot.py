@@ -13,7 +13,7 @@ from llm.openai_tool import OpenAITool
 from llm.base import BaseLLM
 
 from llm.gemini_tool import GeminiTool
-from llm.chroma_db_tool import ChromaDBTool
+from llm.pg_vector_tool import PGVectorTool
 from llm.basic_tool_node import BasicToolNode
 
 from resume.parser import JobParser
@@ -34,7 +34,7 @@ class Bot:
     language models, tools, and a state graph.
     Attributes:
         llm (OpenAITool): The primary language model tool for processing messages.
-        tool (ChromaDBTool): A tool for managing and querying a ChromaDB database.
+        tool (PGVectorTool): A tool for managing and querying pgvector-backed embeddings in Postgres.
         llm_with_tools (OpenAITool): A language model tool bound with additional tools.
         graph (StateGraph): A compiled state graph for managing the flow of operations.
         json_body (dict): The JSON representation of the generated resume.
@@ -51,7 +51,7 @@ class Bot:
         self,
         writer: BaseWriter,
         llm: BaseLLM,
-        tool: Optional[ChromaDBTool] = None,
+        tool: Optional[PGVectorTool] = None,
         user_id: Optional[str] = None,
         auto_ingest: bool = True,
         jobs_csv: str = "jobs.csv",
@@ -70,7 +70,7 @@ class Bot:
         self.llm = llm
         # Always respect injected tool (API supplies per-user tool with isolated persist+collection)
         # Only create a new one if not provided.
-        self.tool = tool or ChromaDBTool(persist_directory=persist_directory)
+        self.tool = tool or PGVectorTool(user_id=user_id)
         self.user_id = user_id
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
@@ -80,28 +80,21 @@ class Bot:
 
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             try:
-                # Clear any existing collection docs to avoid cross-run mixing (per-user collection)
+                # Remove any existing vectors for this user to avoid cross-run mixing
                 try:
-                    self.logger.info("Resetting Chroma collection for fresh ingest")
-                    self.tool._client.delete_collection(self.tool.collection_name)  # type: ignore[attr-defined]
-                    self.tool._collection = self.tool._client.get_or_create_collection(self.tool.collection_name)
-                except Exception:
-                    try:
-                        self.tool._collection = self.tool._client.get_collection(name=self.tool.collection_name)
-                    except Exception:
-                        self.tool._collection = self.tool._client.create_collection(name=self.tool.collection_name)
-
-                data = CSVLoader(file_path=jobs_csv).load()
-                self.logger.info("Auto-ingesting %d rows from %s into collection=%s", len(data), jobs_csv, self.tool.collection_name)
-                self.tool.add_documents(
-                    [d.page_content for d in data],
-                    [str(i) for i, _ in enumerate(data)],
-                )
-                try:
-                    cnt = self.tool._collection.count()
-                    self.logger.info("Post-ingest collection count=%s", cnt)
+                    self.logger.info("Resetting pgvector rows for fresh ingest user=%s", self.user_id)
+                    self.tool.delete_user_documents(self.user_id)
                 except Exception:
                     pass
+
+                data = CSVLoader(file_path=jobs_csv).load()
+                ids = [f"{self.user_id}_{i}" for i in range(len(data))]
+                self.logger.info("Auto-ingesting %d rows from %s for user=%s", len(data), jobs_csv, self.user_id)
+                self.tool.add_documents(
+                    [d.page_content for d in data],
+                    ids,
+                    user_id=self.user_id,
+                )
             except Exception as e:
                 self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 

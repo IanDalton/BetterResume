@@ -1,5 +1,6 @@
 from langchain_core.messages import ToolMessage
 import json
+import asyncio
 
 class BasicToolNode:
     """
@@ -16,11 +17,11 @@ class BasicToolNode:
     """
     
 
-    def __init__(self, tools: list, require_tool: bool = True) -> None:
+    def __init__(self, tools: list, require_tool: bool = False) -> None:
         self.tools_by_name = {tool.name: tool for tool in tools}
         self.require_tool = require_tool
 
-    def __call__(self, inputs: dict):
+    async def ainvoke(self, inputs: dict):
         if messages := inputs.get("messages", []):
             message = messages[-1]
         else:
@@ -32,7 +33,10 @@ class BasicToolNode:
                 tool = self.tools_by_name.get(tool_call["name"])
                 if not tool:
                     continue
-                tool_result = tool.invoke(tool_call["args"])
+                if not hasattr(tool, "a_invoke"):
+                    tool_result = await asyncio.to_thread(tool.invoke, tool_call["args"])
+                else:
+                    tool_result = await tool.a_invoke(tool_call["args"])
                 outputs.append(
                     ToolMessage(
                         content=json.dumps(tool_result),
@@ -40,25 +44,10 @@ class BasicToolNode:
                         tool_call_id=tool_call["id"],
                     )
                 )
-        # Fallback: force one retrieval call with last user/AI content if none requested
-        elif self.require_tool and self.tools_by_name:
-            # Pick first tool deterministically
-            fallback_tool_name = next(iter(self.tools_by_name))
-            tool = self.tools_by_name[fallback_tool_name]
-            query_text = getattr(message, "content", "") or str(message)
-            try:
-                tool_result = tool.invoke({"query": query_text})
-            except Exception:
-                # Try plain string if tool expects it
-                try:
-                    tool_result = tool.invoke(query_text)  # type: ignore
-                except Exception as e:
-                    tool_result = f"Forced tool call failed: {e}" 
-            outputs.append(
-                ToolMessage(
-                    content=json.dumps(tool_result),
-                    name=fallback_tool_name,
-                    tool_call_id="forced-0",
-                )
-            )
-        return {"messages": outputs}
+  
+            return {"messages": outputs}
+        else:
+            # Fallback path: no tool calls found
+            if self.require_tool:
+                raise ValueError("No tool calls found in the message")
+            return {"messages": []}

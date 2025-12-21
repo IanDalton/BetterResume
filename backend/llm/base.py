@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-
+from langchain.chat_models import init_chat_model
 from utils.file_io import load_prompt
 from pydantic import BaseModel
 class BaseLLM(ABC):
@@ -19,11 +19,10 @@ class BaseLLM(ABC):
             This method must be implemented by subclasses.
     """
 
-    def __init__(self,tools: list,model=str,job_prompt: str ="job_prompt",translation_prompt: str ="translation_prompt", output_format:BaseModel = None):
-        self.JOB_PROMPT = load_prompt(job_prompt)
-        self.TRANSLATE_PROMPT = load_prompt(translation_prompt)
+    def __init__(self,tools: list,model=str, output_format: BaseModel = None) -> None:
+
         self.tools = tools
-        self.model = model
+        self.model = init_chat_model(model_name=model,tools=tools,)
         if output_format:
             self.assign_output_format(output_format)
         
@@ -34,13 +33,8 @@ class BaseLLM(ABC):
         return self.__class__(tools=tools, model=self.model)
 
     def assign_output_format(self,output_format:BaseModel) -> None:
-        """Assign output format to the LLM instance."""
-        pass
+        self.model = self.model.with_structured_output(output_format)
 
-    @abstractmethod
-    def bind_tools(self) -> None:
-        """Bind external tools (e.g. vector DB) to the LLM."""
-        pass
 
     @abstractmethod
     def invoke(self, messages: List[Dict[str, Any]], tools: List[Any]) -> Any:
