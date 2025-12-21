@@ -10,6 +10,8 @@ class DBStorage:
     """
     def __init__(self, db_url: Optional[str] = None):
         self.db_url = db_url or os.getenv("DATABASE_URL")
+        if self.db_url and self.db_url.startswith("postgresql+asyncpg://"):
+            self.db_url = self.db_url.replace("postgresql+asyncpg://", "postgresql://")
         self.logger = logging.getLogger("betterresume.db_storage")
 
     def _get_conn(self):

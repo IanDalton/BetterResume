@@ -5,13 +5,13 @@ import time
 import threading
 import random
 from typing import Callable, Any
-
+from pydantic import BaseModel
 from langchain_core.messages import BaseMessage
 from langchain.chat_models import init_chat_model
 from .base import BaseLLM
 from utils.file_io import load_prompt
 
-class GeminiTool(BaseLLM):
+class GeminiAgent(BaseLLM):
     """
     A class that wraps around the ChatGemini client to provide additional functionality
     such as binding tools and invoking the model with messages.
@@ -27,7 +27,9 @@ class GeminiTool(BaseLLM):
         invoke(messages: list[BaseMessage]) -> BaseMessage:
             Sends a list of messages to the ChatGemini client and returns the response.
     """
-    def __init__(self, tools, output_format = None):
+    def __init__(self, tools, output_format:BaseModel = None):
         super().__init__(tools, model="google_genai:gemini-2.5-flash-lite", output_format=output_format)
+    def invoke(self, inputs: dict):
+        return self.model.invoke(inputs)
     async def ainvoke(self, inputs: dict):
-        return await self.model.ainvoke(**inputs)
+        return await self.model.ainvoke(inputs)

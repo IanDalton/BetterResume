@@ -27,12 +27,20 @@ class BasicToolNode:
         else:
             raise ValueError("No message found in input")
         outputs = []
+        # Extract user_id from state for tools that need it
+        user_id = inputs.get("user_id")
+        
         # Normal path: model specified tool calls
         if getattr(message, "tool_calls", None):
             for tool_call in message.tool_calls:
                 tool = self.tools_by_name.get(tool_call["name"])
                 if not tool:
                     continue
+                
+                # Inject user_id into tool if it has this attribute
+                if hasattr(tool, 'user_id') and user_id:
+                    tool._user_id = user_id
+                
                 if not hasattr(tool, "a_invoke"):
                     tool_result = await asyncio.to_thread(tool.invoke, tool_call["args"])
                 else:

@@ -1,20 +1,16 @@
 import json
 import logging
 import os
-from langgraph.graph.message import add_messages
+
 from langgraph.graph import StateGraph, START, END
-from typing_extensions import TypedDict
+
 from typing import Annotated, Any, Dict, Optional
 from resume import WordResumeWriter
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_community.document_loaders.csv_loader import CSVLoader
-
-from llm.openai_tool import OpenAITool
 from llm.base import BaseLLM
-
-from llm.gemini_tool import GeminiTool
-from llm.pg_vector_tool import PGVectorTool
 from llm.basic_tool_node import BasicToolNode
+from llm.state import State
 
 from resume.parser import JobParser
 from resume.writer import ResumeWriter
@@ -24,9 +20,7 @@ from models.resume import ResumeOutputFormat
 
 
 
-class State(TypedDict): 
-    messages: Annotated[list, add_messages]
-    user_id: str
+
 
 class Bot:
     """
@@ -51,11 +45,9 @@ class Bot:
         self,
         writer: BaseWriter,
         llm: BaseLLM,
-        tool: Optional[PGVectorTool] = None,
         user_id: Optional[str] = None,
         auto_ingest: bool = True,
         jobs_csv: str = "jobs.csv",
-        persist_directory: str = "./chroma_db",
     ):
         """Initialize Bot.
 
@@ -68,9 +60,13 @@ class Bot:
             persist_directory: Directory for Chroma persistence when creating new tool.
         """
         self.llm = llm
+        self.tool = None
+        if not self.tool and self.llm.get_tools():
+            self.tool = self.llm.get_tools()[0]
+
         # Always respect injected tool (API supplies per-user tool with isolated persist+collection)
         # Only create a new one if not provided.
-        self.tool = tool or PGVectorTool(user_id=user_id)
+        self.tool_node = BasicToolNode(tools=self.llm.get_tools())
         self.user_id = user_id
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
@@ -98,38 +94,74 @@ class Bot:
             except Exception as e:
                 self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 
-        self.llm_with_tools = llm.copy(tools=[self.tool])
-        self.llm_with_tools.bind_tools()
+        
 
         self.graph = self._create_graph()
         self.json_body = None
         self.writer = writer
 
     def _create_graph(self):
-        def tools(state):
-            return {"messages": [self.llm_with_tools.invoke(state["messages"]) ]}
-
-        def chatbot(state):
-            return {"messages": [self.llm.invoke(state["messages"]) ]}
-
+        async def chatbot(state: State):
+            return await self.llm.ainvoke(state)
+        def has_tool_call_orchestrator(state: State) -> bool:
+            messages = state["messages"]
+            msg = messages[-1] if messages else None
+            if "tool_call" in msg.additional_kwargs:
+                return True
+            return False
+        async def tool_call(state: State):
+            return await self.tool_node.ainvoke(state)
+        
         g = StateGraph(State)
-        g.add_node("toolsBot", tools)
-        g.add_edge(START, "toolsBot")
-        g.add_node("tools", BasicToolNode(tools=[self.tool], require_tool=True))
-        g.add_edge("toolsBot", "tools")
-        g.add_node("chatbot", chatbot)
-        g.add_edge("tools", "chatbot")
-        g.add_edge("chatbot", END)
+        g.add_node("agent", chatbot )
+        g.add_node("toolsBot", tool_call )
+
+        g.add_edge(START, "agent")
+        g.add_conditional_edges("agent", has_tool_call_orchestrator,{
+            True: "toolsBot",
+            False: END,
+        })
+        g.add_edge("toolsBot", "agent")
+
+        
         return g.compile()
 
-    def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
+    async def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
         #meta=JobParser.extract_language_and_title(jd)
         if self.user_id:
             set_user_context(self.user_id)
         self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
-        res=self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
+        res=await self.graph.ainvoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
         self.logger.info("Graph returned; messages=%d", len(res.get("messages", [])))
-        res = ResumeWriter.to_json(res["messages"][-1].content)
+        last_content = res["messages"][-1].content
+
+        # If a structured output format (Pydantic) is provided, try to coerce into that object.
+        parsed_obj = None
+        if getattr(self.llm, "output_format", None):
+            try:
+                cleaned = ResumeWriter.clean_tools_output(last_content)
+                model_cls = (
+                    self.llm.output_format
+                    if isinstance(self.llm.output_format, type)
+                    else self.llm.output_format.__class__
+                )
+                # Prefer Pydantic v2 API if available
+                if hasattr(model_cls, "model_validate_json"):
+                    parsed_obj = model_cls.model_validate_json(cleaned)
+                else:
+                    # Fallback for Pydantic v1
+                    parsed_obj = model_cls.parse_raw(cleaned)
+            except Exception as e:
+                self.logger.warning("Structured parse failed, falling back to JSON: %s", e)
+
+        # Convert to plain dict for downstream usage
+        if parsed_obj is not None:
+            try:
+                res = parsed_obj.model_dump()  # pydantic v2
+            except Exception:
+                res = parsed_obj.dict()        # pydantic v1
+        else:
+            res = ResumeWriter.to_json(last_content)
         self.logger.info("Parsed resume json; language=%s", res.get("language"))
         if res["language"].lower() != "en":
             #res = self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(res))]})
@@ -153,7 +185,30 @@ class Bot:
         res = self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
         self.logger.info("Streaming: graph complete")
         yield {"stage": "graph_complete", "message": "Graph completed"}
-        parsed = ResumeWriter.to_json(res["messages"][-1].content)
+        last_content = res["messages"][-1].content
+        parsed_obj = None
+        if getattr(self.llm, "output_format", None):
+            try:
+                cleaned = ResumeWriter.clean_tools_output(last_content)
+                model_cls = (
+                    self.llm.output_format
+                    if isinstance(self.llm.output_format, type)
+                    else self.llm.output_format.__class__
+                )
+                if hasattr(model_cls, "model_validate_json"):
+                    parsed_obj = model_cls.model_validate_json(cleaned)
+                else:
+                    parsed_obj = model_cls.parse_raw(cleaned)
+            except Exception as e:
+                self.logger.warning("Structured parse failed (stream), falling back to JSON: %s", e)
+
+        if parsed_obj is not None:
+            try:
+                parsed = parsed_obj.model_dump()
+            except Exception:
+                parsed = parsed_obj.dict()
+        else:
+            parsed = ResumeWriter.to_json(last_content)
         self.logger.info("Streaming: parsed language=%s", parsed.get("language"))
         yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": parsed.get("language")}}
         if parsed.get("language", "").lower() != "en":

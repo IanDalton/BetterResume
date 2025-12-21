@@ -56,42 +56,7 @@ Keep concise: one line per entry (Institution • Degree • Date).
 
 Place at the bottom unless job description requests otherwise.
 
-3. Output
-Return only this JSON (no extra text):
-```
-json
-{
-  "language": "ES/EN/FR/DE/IT/PT" -> language of the job description,
-  "resume_section": {
-    "title": "Target Job Title from job description",
-    "professional_summary": "Brief summary (3–4 lines) highlighting relevant skills, achievements, and domain expertise.",
-    "experience": [
-      {
-        "position": "Job Title",
-        "company": "Company Name or Descriptor (e.g., 'Global Consulting Firm')",
-        "location": "Location",
-        "start_date": "Month Year",
-        "end_date": "Month Year or Present",
-        "description": "3–4 bullets, each starting with an action verb and including tools, outcomes, and metrics."
-      }
-    ],
-    "skills": [
-      {
-        "name": "Skill Category",
-        "description": "Impact-oriented explanation with measurable result."
-      }
-    ],
-    "education": [
-      {
-        "institution": "Institution Name",
-        "degree": "Degree or Certification",
-        "dates": "Start – End"
-      }
-    ]
-  }
-}
-```
-4. Style Enforcement
+3. Style Enforcement
 No vague adjectives without proof (replace “excellent” with “reduced processing time by 35%”). If metrics are unknown, write clear, specific responsibilities without invented numbers.
 
 Keep tense consistent: present tense for current roles, past tense for previous ones.

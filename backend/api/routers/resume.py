@@ -28,7 +28,7 @@ from utils.logging_utils import set_user_context
 from bot import Bot
 from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
-from llm.gemini_tool import GeminiTool
+from backend.llm.gemini_agent import GeminiAgent
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
@@ -114,7 +114,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiTool(model=req.model, output_format=ResumeOutputFormat),
+        llm=GeminiAgent(model=req.model, output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,
@@ -286,7 +286,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiTool(model=req.model, output_format=ResumeOutputFormat),
+        llm=GeminiAgent(model=req.model, output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,

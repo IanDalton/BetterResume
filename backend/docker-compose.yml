@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   postgres:
-    image: ankane/pgvector:postgres-15
+    image: pgvector/pgvector:0.8.1-pg18-trixie
     container_name: better-resume-db
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -10,8 +8,10 @@ services:
       POSTGRES_DB: ${DB_NAME:-better_resume}
     expose:
       - "5432"
+    ports:
+      - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./docker-initdb.d:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
@@ -19,6 +19,23 @@ services:
       timeout: 5s
       retries: 5
 
+  embedding-service:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    platform: linux/amd64
+    container_name: nomic-embed
+    restart: unless-stopped
+    # Mount a volume so the model downloads only once
+    volumes:
+      - ./embeddings:/data
+    # Shared memory size might need increasing for large batches
+    shm_size: 1g 
+    ports:
+      - "80:80"
+    command: >
+      --model-id nomic-ai/nomic-embed-text-v1.5
+      --revision main
+      --port 80
+      --max-client-batch-size 32
   backend:
     build:
       context: .
@@ -28,6 +45,7 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-better_resume}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy

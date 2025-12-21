@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS resume_vectors (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   content TEXT,
-  embedding vector(1536)
+  embedding vector(768)
 );
 
 -- IVFFLAT index for ANN search. Tune lists for your dataset; 100 is a reasonable start.

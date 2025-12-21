@@ -1,13 +1,16 @@
 import os
 import logging
-from typing import Any, List, Optional
+from typing import Annotated, Any, List, Optional
+from langchain_core.runnables import RunnableConfig
+from langgraph.prebuilt import InjectedState
 
 import psycopg
 from pgvector.psycopg import register_vector
 from pgvector import Vector
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain.tools import BaseTool
 from pydantic import Field, PrivateAttr
+from llm.state import State
 
 
 class PGVectorTool(BaseTool):
@@ -22,19 +25,25 @@ class PGVectorTool(BaseTool):
 
     table_name: str = Field(default="resume_vectors")
     dim: int = Field(default=1536)
+    db_url: str = Field(default="")
+    user_id: Optional[str] = Field(default=None)
 
     _conn: Any = PrivateAttr()
-    _emb: Any = PrivateAttr()
+    _emb: OpenAIEmbeddings = PrivateAttr()
 
-    def __init__(self, db_url: Optional[str] = None, table_name: Optional[str] = None, dim: Optional[int] = None, user_id: Optional[str] = None):
+    def __init__(self, db_url: Optional[str] = "", table_name: Optional[str] = "resume_vectors", dim: Optional[int] = 768, user_id: Optional[str] = None):
         super().__init__()
         self._logger = logging.getLogger("betterresume.pgvector")
-        self.db_url = db_url or os.getenv("DATABASE_URL")
+        self.db_url =  os.getenv("DATABASE_URL",db_url)
+        if self.db_url and self.db_url.startswith("postgresql+asyncpg://"):
+            self.db_url = self.db_url.replace("postgresql+asyncpg://", "postgresql://")
         if table_name:
             self.table_name = table_name
         if dim:
             self.dim = dim
-        self.user_id = user_id
+        if user_id:
+            self.user_id = user_id
+
 
         # Connect & register vector adapter
         self._conn = psycopg.connect(self.db_url, autocommit=True)
@@ -58,7 +67,13 @@ class PGVectorTool(BaseTool):
             )
 
         # Embedding provider
-        self._emb = OpenAIEmbeddings()
+        self._emb = OpenAIEmbeddings(
+            base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://nomic-embed:80/v1"),
+            api_key="asdsad",
+            model="nomic-ai/nomic-embed-text-v1.5",
+            
+        )
+        
 
     def add_documents(self, documents: List[str], ids: List[str], user_id: str):
         """Compute embeddings and upsert to Postgres for a user."""
@@ -89,10 +104,18 @@ class PGVectorTool(BaseTool):
             self._logger.exception("Error deleting user documents: %s", e)
             return f"Error deleting user documents: {e}"
 
-    def _run(self, query: str, **kwargs):
-        """Query signature: _run(query: str, user_id: str = ..., n_results: int = 2)"""
-        user_id = kwargs.get("user_id")
-        n_results = int(kwargs.get("n_results", 2))
+    def _run(
+        self, 
+        query: str,
+        state: Annotated[State, InjectedState],
+        n_results: int = 2,
+        **kwargs
+    ):
+        """Query signature: _run(query: str, n_results: int = 2)
+        The user_id is extracted from the tool's runtime config."""
+        user_id = state.get("user_id")
+
+        
         if user_id is None:
             raise ValueError("user_id is required for pgvector queries")
         try:
@@ -114,5 +137,5 @@ class PGVectorTool(BaseTool):
             self._logger.exception("Error querying: %s", e)
             return f"Error querying: {e}"
 
-    async def _arun(self, query: str, **kwargs):
-        return self._run(query, **kwargs)
+    async def _arun(self, query: str,state:Annotated[State, InjectedState], n_results: int = 2, **kwargs):
+        return self._run(query, n_results=n_results, state=state, **kwargs)
