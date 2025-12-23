@@ -2,7 +2,7 @@ import os
 import logging
 import json
 import psycopg
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 class DBStorage:
     """
@@ -17,9 +17,22 @@ class DBStorage:
     def _get_conn(self):
         return psycopg.connect(self.db_url, autocommit=True)
 
+    def _ensure_user(self, user_id: str):
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                        (user_id,),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to ensure user exists: %s", e)
+            raise
+
     def save_file(self, user_id: str, file_type: str, content: bytes, filename: str, mime_type: Optional[str] = None):
         """Upsert a file for a user."""
         try:
+            self._ensure_user(user_id)
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -68,6 +81,7 @@ class DBStorage:
     def save_cache(self, user_id: str, cache_key: str, data: Dict[str, Any]):
         """Upsert cache entry."""
         try:
+            self._ensure_user(user_id)
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -108,3 +122,48 @@ class DBStorage:
                     cur.execute("DELETE FROM resume_generation_cache WHERE user_id = %s", (user_id,))
         except Exception as e:
             self.logger.exception("Failed to clear user data: %s", e)
+
+    def replace_job_experiences(self, user_id: str, records: List[Dict[str, Any]]):
+        """Replace all job experience rows for a user with provided records."""
+        try:
+            self._ensure_user(user_id)
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM job_experiences WHERE user_id = %s", (user_id,))
+                    for rec in records:
+                        cur.execute(
+                            """
+                            INSERT INTO job_experiences (
+                                user_id, company, description, type, role, location, start_date, end_date, raw
+                            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            """,
+                            (
+                                user_id,
+                                rec.get("company", ""),
+                                rec.get("description", ""),
+                                rec.get("type", ""),
+                                rec.get("role"),
+                                rec.get("location"),
+                                rec.get("start_date"),
+                                rec.get("end_date"),
+                                json.dumps(rec),
+                            ),
+                        )
+            self.logger.info("Replaced %d job experience rows for user=%s", len(records), user_id)
+        except Exception as e:
+            self.logger.exception("Failed to replace job experiences: %s", e)
+            raise
+
+    def insert_resume_request(self, user_id: str, job_posting: str):
+        """Insert a resume request row."""
+        try:
+            self._ensure_user(user_id)
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO resume_requests (user_id, job_posting) VALUES (%s, %s)",
+                        (user_id, job_posting),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to insert resume request: %s", e)
+            raise

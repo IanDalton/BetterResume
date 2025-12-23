@@ -13,6 +13,35 @@ CREATE TABLE IF NOT EXISTS resume_vectors (
 CREATE INDEX IF NOT EXISTS idx_resume_vectors_embedding
 ON resume_vectors USING ivfflat (embedding) WITH (lists = 100);
 
+-- Users table
+CREATE TABLE IF NOT EXISTS users (
+  user_id TEXT PRIMARY KEY,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Resume requests table
+CREATE TABLE IF NOT EXISTS resume_requests (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  job_posting TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Job experiences table
+CREATE TABLE IF NOT EXISTS job_experiences (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  company TEXT NOT NULL,
+  description TEXT NOT NULL,
+  type TEXT NOT NULL,
+  role TEXT,
+  location TEXT,
+  start_date TEXT,
+  end_date TEXT,
+  raw JSONB,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Table for storing user files (CSVs, images, generated resumes)
 CREATE TABLE IF NOT EXISTS user_files (
     user_id TEXT NOT NULL,

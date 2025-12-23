@@ -51,7 +51,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: python manage.py runserver 0.0.0.0:8000
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
 
 volumes:
   postgres_data:

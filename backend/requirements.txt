@@ -16,3 +16,5 @@ pdflatex
 uvicorn
 python-multipart
 langchain
+
+langchain-google-vertexai #????

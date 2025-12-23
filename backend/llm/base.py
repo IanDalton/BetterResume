@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Type, Union
 from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
 from utils.file_io import load_prompt
 from pydantic import BaseModel
 from langchain_core.messages import BaseMessage
@@ -35,8 +36,9 @@ class BaseLLM(ABC):
         # Keep a reference to the desired structured output format (Pydantic model or class)
         self.output_format: Optional[Union[Type[BaseModel], BaseModel]] = output_format
 
+        chat_model = init_chat_model(model, model_provider="google_genai")
         self.model = create_agent(
-            model=model,
+            model=chat_model,
             tools=tools,
             response_format=ToolStrategy(output_format),
             state_schema=State,

@@ -8,14 +8,20 @@ interface ResumeRequestPayload {
   include_profile_picture?: boolean;
 }
 
-export async function uploadJobsCsv(userId: string, file: File) {
-  const form = new FormData();
-  form.append('file', file);
+export async function uploadJobsJson(userId: string, jobs: Array<{type:string; company:string; description:string; role?:string; location?:string; start_date?:string; end_date?:string}>) {
   const res = await fetch(`${API_BASE}/upload-jobs/${encodeURIComponent(userId)}`, {
     method: 'POST',
-    body: form
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobs })
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  if (!res.ok) {
+    let message = `Upload failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch {}
+    throw new Error(message);
+  }
   return res.json();
 }
 

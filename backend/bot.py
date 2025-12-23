@@ -120,117 +120,73 @@ class Bot:
             self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 
     
-    async def generate_resume(self, jd: str, output_basename: str = "resume") -> Dict[str, Any]:
+    async def generate_resume(self, jd: str, output_basename: str = "resume") -> ResumeOutputFormat:
         #meta=JobParser.extract_language_and_title(jd)
         if self._auto_ingest_task:
             await self._auto_ingest_task
         if self.user_id:
             set_user_context(self.user_id)
-        self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
-        res=await self.graph.ainvoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
-        self.logger.info("Graph returned; messages=%d", len(res.get("messages", [])))
-        last_content = res["messages"][-1].content
-
-        # If a structured output format (Pydantic) is provided, try to coerce into that object.
-        parsed_obj = None
-        if getattr(self.llm, "output_format", None):
-            try:
-                cleaned = ResumeWriter.clean_tools_output(last_content)
-                model_cls = (
-                    self.llm.output_format
-                    if isinstance(self.llm.output_format, type)
-                    else self.llm.output_format.__class__
-                )
-                # Prefer Pydantic v2 API if available
-                if hasattr(model_cls, "model_validate_json"):
-                    parsed_obj = model_cls.model_validate_json(cleaned)
-                else:
-                    # Fallback for Pydantic v1
-                    parsed_obj = model_cls.parse_raw(cleaned)
-            except Exception as e:
-                self.logger.warning("Structured parse failed, falling back to JSON: %s", e)
-
-        # Convert to plain dict for downstream usage
-        if parsed_obj is not None:
-            try:
-                res = parsed_obj.model_dump()  # pydantic v2
-            except Exception:
-                res = parsed_obj.dict()        # pydantic v1
         else:
-            res = ResumeWriter.to_json(last_content)
-        self.logger.info("Parsed resume json; language=%s", res.get("language"))
-        if res["language"].lower() != "en":
-            #res = self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(res))]})
-            res = self.translate_resume(res)
-            self.logger.info("Translation applied; language=%s", res.get("language"))
-        self.json_body = res
-        try:
-            output_name = f"{output_basename}{self.writer.file_ending}"
-            self.writer.write(res, output=output_name, to_pdf=True)
-            self.logger.info("Files written output=%s (and PDF)", output_name)
-        except Exception as e:
-            self.logger.exception("Failed to write resume files: %s", e)
-        return res
+            raise ValueError("user_id is required to generate a resume")
+        self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
+        res = await self.llm.ainvoke({
+            "messages": [SystemMessage(self.llm.JOB_PROMPT), HumanMessage(jd)],
+            "user_id": self.user_id,
+        })
+        self.logger.info("Graph returned; messages=%d", len(res.get("messages", [])))
+        resume:ResumeOutputFormat = res["structured_response"]
 
-    def generate_resume_progress(self, jd: str, output_basename: str = "resume"):
-        """Generator yielding progress events (stage, optional payload)."""
+        if resume.language.lower() != "en":
+            #res = self.graph.invoke({"messages":[SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(json.dumps(res))]})
+            resume = await self.translate_resume(resume, jd)
+            self.logger.info("Translation applied; language=%s", resume.language)
+            
+        self.json_body = resume.model_dump() 
+        # TODO: Store files in db
+        return resume
+
+    async def generate_resume_progress(self, jd: str):
+        """Async generator yielding progress events; leaves file creation to API layer."""
+        # Ensure any background ingest completes
+        if self._auto_ingest_task:
+            try:
+                await self._auto_ingest_task
+            except Exception:
+                pass
         if self.user_id:
             set_user_context(self.user_id)
-        self.logger.info("Streaming: invoking graph")
-        yield {"stage": "invoking_graph", "message": "Invoking LLM graph"}
-        res = self.graph.invoke({"messages":[SystemMessage(self.llm.JOB_PROMPT),HumanMessage(jd)]})
-        self.logger.info("Streaming: graph complete")
-        yield {"stage": "graph_complete", "message": "Graph completed"}
-        last_content = res["messages"][-1].content
-        parsed_obj = None
-        if getattr(self.llm, "output_format", None):
-            try:
-                cleaned = ResumeWriter.clean_tools_output(last_content)
-                model_cls = (
-                    self.llm.output_format
-                    if isinstance(self.llm.output_format, type)
-                    else self.llm.output_format.__class__
-                )
-                if hasattr(model_cls, "model_validate_json"):
-                    parsed_obj = model_cls.model_validate_json(cleaned)
-                else:
-                    parsed_obj = model_cls.parse_raw(cleaned)
-            except Exception as e:
-                self.logger.warning("Structured parse failed (stream), falling back to JSON: %s", e)
-
-        if parsed_obj is not None:
-            try:
-                parsed = parsed_obj.model_dump()
-            except Exception:
-                parsed = parsed_obj.dict()
         else:
-            parsed = ResumeWriter.to_json(last_content)
-        self.logger.info("Streaming: parsed language=%s", parsed.get("language"))
-        yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": parsed.get("language")}}
-        if parsed.get("language", "").lower() != "en":
+            raise ValueError("user_id is required to generate a resume")
+
+        self.logger.info("Streaming: invoking LLM")
+        yield {"stage": "invoking_llm", "message": "Invoking LLM"}
+        res = await self.llm.ainvoke({
+            "messages": [SystemMessage(self.llm.JOB_PROMPT), HumanMessage(jd)],
+            "user_id": self.user_id,
+        })
+        self.logger.info("Streaming: LLM complete; messages=%d", len(res.get("messages", [])))
+        resume: ResumeOutputFormat = res["structured_response"]
+        yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": getattr(resume, "language", None)}}
+
+        if (getattr(resume, "language", "") or "").lower() != "en":
             self.logger.info("Streaming: translating non-EN -> EN")
             yield {"stage": "translating", "message": "Translating resume"}
-            parsed = self.translate_resume(parsed)
-            self.logger.info("Streaming: translated language=%s", parsed.get("language"))
-            yield {"stage": "translated", "message": "Translation complete", "data": {"language": parsed.get("language")}}
-        self.json_body = parsed
-        self.logger.info("Streaming: writing files")
-        yield {"stage": "writing_file", "message": "Writing resume file"}
-        out_name = f"{output_basename}{self.writer.file_ending}"
-        try:
-            self.writer.write(parsed, output=out_name, to_pdf=True)
-            yield {"stage": "done", "message": "Resume generation complete", "result": parsed, "files": {"source": out_name, "pdf": f"{output_basename}.pdf"}}
-        except Exception as e:
-            self.logger.exception("Streaming: write failed: %s", e)
-            yield {"stage": "error", "message": f"Failed writing resume: {e}"}
+            resume = await self.translate_resume(resume, jd)
+            yield {"stage": "translated", "message": "Translation complete", "data": {"language": getattr(resume, "language", None)}}
 
-    
-    def translate_resume(self,r:dict)->dict:
+        self.json_body = resume.model_dump()
+        self.logger.info("Streaming: done")
+        yield {"stage": "done", "message": "Resume generation complete", "result": resume}
+
+    async def translate_resume(self,r:ResumeOutputFormat, original_jd:str)->ResumeOutputFormat:
         if isinstance(r, dict):
             r = str(r)
 
-        res=self.llm.invoke([SystemMessage(self.llm.TRANSLATE_PROMPT),HumanMessage(r)])
-        return ResumeWriter.to_json(res.content)
+        res = await self.llm.ainvoke({
+            "messages": [SystemMessage(self.llm.TRANSLATE_PROMPT), HumanMessage(original_jd), HumanMessage(r)],
+            "user_id": self.user_id,
+        })
+        return res["structured_response"]
 
 if __name__=="__main__":
     import argparse

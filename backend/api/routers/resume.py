@@ -24,11 +24,12 @@ from api.utils import (
     _hmac_sign
 )
 from utils.logging_utils import set_user_context
+from utils.db_storage import DBStorage
 
 from bot import Bot
 from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
-from backend.llm.gemini_agent import GeminiAgent
+from llm.gemini_agent import GeminiAgent
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
@@ -54,6 +55,10 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         logger.info("Profile picture requested but none stored for user=%s", user_id)
     csv_hash = _file_sha256(csv_path)
     job_hash = _hash_text(req.job_description)
+    try:
+        DBStorage().insert_resume_request(user_id, req.job_description)
+    except Exception:
+        logger.warning("Failed to record resume request for user_id=%s", user_id, exc_info=True)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
@@ -83,7 +88,11 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         abs_base = os.path.join(out_dir, "resume")
         output_name = f"{abs_base}{writer.file_ending}"
         try:
-            writer.write(cached_result, output=output_name, to_pdf=True)
+            typed_result = (
+                cached_result if isinstance(cached_result, ResumeOutputFormat)
+                else ResumeOutputFormat.model_validate(cached_result)
+            )
+            writer.write(typed_result, output=output_name, to_pdf=True)
         except Exception as exc:
             logger.exception("Failed rewriting resume from cache: %s", exc)
             raise HTTPException(status_code=500, detail="Failed to render cached resume")
@@ -92,7 +101,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
             cache_payload = {
                 "render_signature": signature,
                 "result_signature": result_signature,
-                "result": cached_result,
+                "result": (typed_result.model_dump() if isinstance(typed_result, ResumeOutputFormat) else cached_result),
                 "format": fmt,
                 "model": req.model,
                 "include_profile_picture": bool(req.include_profile_picture),
@@ -114,7 +123,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(model=req.model, output_format=ResumeOutputFormat),
+        llm=GeminiAgent(tools=[tool], model=req.model, output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,
@@ -125,16 +134,23 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     result = await bot.generate_resume(req.job_description, output_basename=abs_base)
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
-        result.get("language"),
-        len(result.get("resume_section", {}).get("skills", [])),
-        len(result.get("resume_section", {}).get("experience", [])),
+        result.language,
+        len(result.resume_section.skills),
+        len(result.resume_section.experience),
     )
+    # Write files in API layer for consistency
+    output_name = f"{abs_base}{writer.file_ending}"
+    try:
+        writer.write(result, output=output_name, to_pdf=True)
+    except Exception as exc:
+        logger.exception("Failed writing resume files: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to render resume")
     signed_files = _build_signed_files(user_id, fmt, out_dir)
     if signed_files.get("source"):
         cache_payload = {
             "render_signature": signature,
             "result_signature": result_signature,
-            "result": result,
+            "result": (result.model_dump() if hasattr(result, "model_dump") else result),
             "format": fmt,
             "model": req.model,
             "include_profile_picture": bool(req.include_profile_picture),
@@ -146,7 +162,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         _save_resume_cache(out_dir, cache_payload)
     else:
         logger.warning("Resume generation completed but no source file found to cache for user_id=%s", user_id)
-    return JSONResponse(content={"result": result, "files": signed_files, "rows": row_count})
+    return JSONResponse(content={"result": (result.model_dump() if hasattr(result, "model_dump") else result), "files": signed_files, "rows": row_count})
 
 @router.post("/generate-resume-stream/{user_id}")
 async def generate_resume_stream(user_id: str, req: ResumeRequest):
@@ -159,6 +175,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         logger.info("Profile picture requested but none stored for user=%s", user_id)
     csv_hash = _file_sha256(csv_path)
     job_hash = _hash_text(req.job_description)
+    try:
+        DBStorage().insert_resume_request(user_id, req.job_description)
+    except Exception:
+        logger.warning("Failed to record resume request for user_id=%s (stream)", user_id, exc_info=True)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
@@ -249,13 +269,20 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 )
                 abs_base = os.path.join(out_dir, "resume")
                 output_name = f"{abs_base}{writer.file_ending}"
-                writer.write(cached_result, output=output_name, to_pdf=True)
+                try:
+                    typed_result = (
+                        cached_result if isinstance(cached_result, ResumeOutputFormat)
+                        else ResumeOutputFormat.model_validate(cached_result)
+                    )
+                    writer.write(typed_result, output=output_name, to_pdf=True)
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to render cached resume: {exc}")
                 files = _build_signed_files(user_id, fmt, out_dir)
                 if files.get("source"):
                     cache_payload = {
                         "render_signature": signature,
                         "result_signature": result_signature,
-                        "result": cached_result,
+                        "result": (typed_result.model_dump() if isinstance(typed_result, ResumeOutputFormat) else cached_result),
                         "format": fmt,
                         "model": req.model,
                         "include_profile_picture": bool(req.include_profile_picture),
@@ -286,39 +313,46 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(model=req.model, output_format=ResumeOutputFormat),
+        llm=GeminiAgent(tools=[tool], model=req.model, output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,
         jobs_csv=csv_path,
     )
 
-    def event_generator():
+    async def event_generator():
         try:
             # Send initial CSV info event
             yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
             abs_base = os.path.join(out_dir, "resume")
-            for event in bot.generate_resume_progress(req.job_description, output_basename=abs_base):
-                # Normalize final file paths for client (match non-stream endpoint style)
+            async for event in bot.generate_resume_progress(req.job_description):
                 if event.get("stage") == "done":
-                    files = _build_signed_files(user_id, fmt, out_dir)
-                    event["files"] = files
-                    if files.get("source"):
-                        cache_payload = {
-                            "render_signature": signature,
-                            "result_signature": result_signature,
-                            "result": event.get("result"),
-                            "format": fmt,
-                            "model": req.model,
-                            "include_profile_picture": bool(req.include_profile_picture),
-                            "csv_hash": csv_hash,
-                            "profile_hash": profile_hash,
-                            "job_description_hash": job_hash,
-                            "generated_at": int(time.time()),
-                        }
-                        _save_resume_cache(out_dir, cache_payload)
-                    else:
-                        logger.warning("Streaming generation done but source missing for caching user_id=%s", user_id)
+                    # Write files here, based on final result
+                    output_name = f"{abs_base}{writer.file_ending}"
+                    try:
+                        result_obj = event.get("result")
+                        writer.write(result_obj, output=output_name, to_pdf=True)
+                        files = _build_signed_files(user_id, fmt, out_dir)
+                        event["files"] = files
+                        if files.get("source"):
+                            cache_payload = {
+                                "render_signature": signature,
+                                "result_signature": result_signature,
+                                "result": (result_obj.model_dump() if hasattr(result_obj, "model_dump") else result_obj),
+                                "format": fmt,
+                                "model": req.model,
+                                "include_profile_picture": bool(req.include_profile_picture),
+                                "csv_hash": csv_hash,
+                                "profile_hash": profile_hash,
+                                "job_description_hash": job_hash,
+                                "generated_at": int(time.time()),
+                            }
+                            _save_resume_cache(out_dir, cache_payload)
+                        else:
+                            logger.warning("Streaming generation done but source missing for caching user_id=%s", user_id)
+                    except Exception as exc:
+                        logger.exception("Streaming: file write failed: %s", exc)
+                        event = {"stage": "error", "message": f"Failed writing resume: {exc}"}
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")

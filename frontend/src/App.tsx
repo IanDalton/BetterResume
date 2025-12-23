@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // Use explicit relative path so Vite resolves without custom alias
-import { uploadJobsCsv, generateResumeStream, buildCsvFromEntries, resolveProfilePictureUrl } from './services';
+import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl } from './services';
 import { ResumeEntry } from './types';
 import { EntryBuilder } from './components/EntryBuilder';
 import { Footer } from './components/Footer';
@@ -197,10 +197,8 @@ export default function App() {
     if (uploading) return; // guard
     setUploading(true);
     try {
-      const csv = buildCsvFromEntries(entries);
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const file = new File([blob], 'jobs.csv', { type: 'text/csv' });
-      const result = await uploadJobsCsv(userId, file);
+      const jobs = buildJobsFromEntries(entries);
+      const result = await uploadJobsJson(userId, jobs);
       if (user?.mode === 'auth') {
         // Persist only if experience entries changed
         saveUserDataIfExperienceChanged(user.uid, { entries, jobDescription, format }).catch(()=>{});

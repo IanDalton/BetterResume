@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 import logging
+import tempfile
 from hashlib import sha256
 from typing import Optional, Dict
 from fastapi import HTTPException, UploadFile
@@ -16,11 +17,11 @@ from api.config import (
     PROFILE_PICS_BASE,
     PROFILE_EXTENSIONS,
     ALLOWED_PROFILE_IMAGE_TYPES,
-    UPLOADS_BASE,
     OUTPUTS_BASE
 )
 from api.state import USER_TOOLS
 from llm.pg_vector_tool import PGVectorTool
+from utils.db_storage import DBStorage
 
 logger = logging.getLogger("betterresume.api.utils")
 
@@ -252,12 +253,22 @@ def clean_output_dir(path: str):
         pass
 
 def _resolve_user_jobs_csv(user_id: str) -> str:
-    """Return absolute path to the uploaded jobs CSV for a user or raise HTTP 400 if missing."""
+    """Materialize the uploaded jobs CSV from Postgres into a temporary file."""
     _validate_user_id(user_id)
-    csv_path = os.path.join(UPLOADS_BASE, f"uploaded_jobs_{user_id}.csv")
-    if not os.path.isfile(csv_path):
+    storage = DBStorage()
+    stored = storage.get_file(user_id, "jobs_csv")
+    if not stored:
         raise HTTPException(status_code=400, detail="Jobs CSV not uploaded. Upload via /upload-jobs/{user_id} first.")
-    return csv_path
+    content_raw, _, _ = stored
+    content = bytes(content_raw) if content_raw is not None else b""
+    tmp_path = os.path.join(tempfile.gettempdir(), f"uploaded_jobs_{user_id}.csv")
+    try:
+        with open(tmp_path, "wb") as fh:
+            fh.write(content)
+    except Exception:
+        logger.exception("Failed to materialize jobs CSV for user=%s", user_id)
+        raise HTTPException(status_code=500, detail="Unable to read stored jobs CSV.")
+    return tmp_path
 
 def _detect_profile_extension(file: UploadFile) -> Optional[str]:
     """Return a supported file extension for an uploaded profile picture or None if unsupported."""
