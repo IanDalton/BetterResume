@@ -334,6 +334,9 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                         writer.write(result_obj, output=output_name, to_pdf=True)
                         files = _build_signed_files(user_id, fmt, out_dir)
                         event["files"] = files
+                        # Serialize result for JSON encoding
+                        if hasattr(result_obj, "model_dump"):
+                            event["result"] = result_obj.model_dump()
                         if files.get("source"):
                             cache_payload = {
                                 "render_signature": signature,

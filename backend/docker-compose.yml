@@ -52,6 +52,17 @@ services:
     volumes:
       - .:/app
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+  pg_admin:
+    image: dpage/pgadmin4
+    container_name: better-resume-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@betterresume.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+      
 
 volumes:
   postgres_data:
