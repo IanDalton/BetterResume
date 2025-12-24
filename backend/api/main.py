@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from utils.logging_utils import setup_logging, new_request_id, clear_request_id
-from api.routers import health, jobs, profile, resume, users
+from api.routers import health, jobs, profile, resume, users, donations
 
 setup_logging()
 app = FastAPI(title="BetterResume API", version="0.1.0")
@@ -42,6 +42,7 @@ app.include_router(jobs.router)
 app.include_router(profile.router)
 app.include_router(resume.router)
 app.include_router(users.router)
+app.include_router(donations.router)
 
 # Convenience root
 @app.get("/")

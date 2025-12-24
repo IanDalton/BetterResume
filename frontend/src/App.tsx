@@ -8,12 +8,14 @@ import { OnboardingWizard } from './components/OnboardingWizard.js';
 import { AuthGate, UserBar } from './components/AuthGate';
 import { FirstLoadGuide } from './components/FirstLoadGuide';
 import { DonateToast } from './components/DonateToast';
+import { StripeDonateBanner } from './components/StripeDonateBanner';
 import { AdBanner } from './components/AdBanner';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ProfilePictureUploader } from './components/ProfilePictureUploader';
 import { logout, loadUserData, saveUserDataIfExperienceChanged } from './services/firebase';
 import { useI18n, availableLanguages } from './i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from './services/analytics';
+import { detectCountry } from './services/geolocation';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -66,6 +68,8 @@ export default function App() {
     try { return localStorage.getItem('br.guideSeen') !== '1'; } catch { return true; }
   });
   const [showDonateToast, setShowDonateToast] = useState(false);
+  const [showStripeDonateToast, setShowStripeDonateToast] = useState(false);
+  const [geoLocation, setGeoLocation] = useState<{isOutsideUS: boolean; isArgentina: boolean; country: string} | null>(null);
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
     try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
@@ -95,6 +99,31 @@ export default function App() {
       pageView(window.location.pathname, document.title);
     }
   }, [GA_MEASUREMENT_ID]);
+
+  // Detect user geolocation on mount
+  useEffect(() => {
+    let cancelled = false;
+    detectCountry().then((geo) => {
+      if (!cancelled) {
+        setGeoLocation({
+          isOutsideUS: geo.isOutsideUS,
+          isArgentina: geo.isArgentina,
+          country: geo.country,
+        });
+      }
+    }).catch((error) => {
+      console.error('Failed to detect geolocation:', error);
+      // Default to US if detection fails
+      if (!cancelled) {
+        setGeoLocation({
+          isOutsideUS: false,
+          isArgentina: false,
+          country: 'Unknown',
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Load AdSense script on demand when generation modal opens
   useEffect(()=>{
@@ -186,6 +215,24 @@ export default function App() {
       return () => clearTimeout(id);
     }
   }, [showGenModal, showGuide, triggerDonateToast]);
+
+  // Stripe donation toast: show to non-US users after 3 resumes or daily
+  useEffect(() => {
+    if (!geoLocation || !geoLocation.isOutsideUS || geoLocation.isArgentina) return;
+    
+    const lastShown = Number.parseInt(localStorage.getItem('br.stripeDonateShown') || '0');
+    const dayElapsed = (Date.now() - lastShown) > 86_400_000; // 24h
+    
+    // Show if 3+ resumes generated or daily reminder
+    if ((resumeCount >= 3 && dayElapsed) || (resumeCount >= 5)) {
+      const id = setTimeout(() => {
+        if (!showGenModal && !showGuide && !showDonateToast) {
+          setShowStripeDonateToast(true);
+        }
+      }, 2000);
+      return () => clearTimeout(id);
+    }
+  }, [resumeCount, geoLocation, showGenModal, showGuide, showDonateToast]);
 
   const addEntry = (entry: ResumeEntry) => setEntries(p => [...p, entry]);
   const updateEntry = (index: number, entry: ResumeEntry) => setEntries(p => p.map((e,i)=> i===index? entry : e));
@@ -532,6 +579,13 @@ export default function App() {
     )}
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
   <DonateToast open={showDonateToast} onClose={()=>{ try { localStorage.setItem('br.toastDonateLastShown', String(Date.now())); localStorage.setItem('br.toastDonateGenCount','0'); } catch {} setShowDonateToast(false); }} />
+  {geoLocation?.isOutsideUS && !geoLocation.isArgentina && (
+    <StripeDonateBanner 
+      open={showStripeDonateToast} 
+      onClose={()=>{ try { localStorage.setItem('br.stripeDonateShown', String(Date.now())); } catch {} setShowStripeDonateToast(false); }} 
+      isArgentina={geoLocation.isArgentina}
+    />
+  )}
     {showDonate && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">

@@ -174,7 +174,13 @@ const dictionaries: Record<Language, Dict> = {
   'donate.toast.title': 'Help keep it free',
   'donate.toast.body': 'Traffic grew a lot. A small donation (~$5,000 ARS, less than a hamburger) helps keep the servers running and this tool free.',
   'donate.toast.cta': 'Donate',
-  'donate.toast.dismiss': 'Not now'
+  'donate.toast.dismiss': 'Not now',
+  // Stripe donation
+  'donate.stripe.title': 'Help Keep BetterResume Free',
+  'donate.stripe.body.international': 'If this tool saved you time, consider supporting development with a small donation. Payments are processed securely via Stripe.',
+  'donate.stripe.body.argentina': 'Si te resultó útil, considera hacer una pequeña donación para mantener el proyecto en funcionamiento. Pagos seguros con Stripe.',
+  'donate.stripe.cta': 'Donate via Stripe',
+  'donate.error': 'Failed to process donation. Please try again.'
   },
   es: {
     'app.title': 'Better Resume',
@@ -345,7 +351,13 @@ const dictionaries: Record<Language, Dict> = {
   'donate.toast.title': 'Ayúdanos a mantenerlo gratis',
   'donate.toast.body': 'El tráfico creció mucho. Una pequeña donación (~$5.000 ARS, menos que una hamburguesa) ayuda a mantener el servidor y esta herramienta gratis.',
   'donate.toast.cta': 'Donar',
-  'donate.toast.dismiss': 'Ahora no'
+  'donate.toast.dismiss': 'Ahora no',
+  // Stripe donation
+  'donate.stripe.title': 'Ayúdanos a mantener BetterResume gratis',
+  'donate.stripe.body.international': 'Si te resultó útil, considera apoyar el desarrollo con una pequeña donación. Pagos seguros a través de Stripe.',
+  'donate.stripe.body.argentina': 'Si te resultó útil, considera hacer una pequeña donación para mantener el proyecto en funcionamiento. Pagos seguros con Stripe.',
+  'donate.stripe.cta': 'Donar con Stripe',
+  'donate.error': 'Falló al procesar la donación. Por favor, intenta de nuevo.'
   }
 };
 
