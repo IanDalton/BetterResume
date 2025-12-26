@@ -578,14 +578,18 @@ export default function App() {
       </div>
     )}
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
-  <DonateToast open={showDonateToast} onClose={()=>{ try { localStorage.setItem('br.toastDonateLastShown', String(Date.now())); localStorage.setItem('br.toastDonateGenCount','0'); } catch {} setShowDonateToast(false); }} />
-  {geoLocation?.isOutsideUS && !geoLocation.isArgentina && (
+  <DonateToast 
+    open={showDonateToast} 
+    onClose={()=>{ try { localStorage.setItem('br.toastDonateLastShown', String(Date.now())); localStorage.setItem('br.toastDonateGenCount','0'); } catch {} setShowDonateToast(false); }} 
+    onDonateClick={!geoLocation || !geoLocation.isArgentina ? () => { setShowStripeDonateToast(true); setShowDonateToast(false); } : undefined}
+  />
+  {!geoLocation || !geoLocation.isArgentina ? (
     <StripeDonateBanner 
       open={showStripeDonateToast} 
       onClose={()=>{ try { localStorage.setItem('br.stripeDonateShown', String(Date.now())); } catch {} setShowStripeDonateToast(false); }} 
-      isArgentina={geoLocation.isArgentina}
+      isArgentina={false}
     />
-  )}
+  ) : null}
     {showDonate && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">
@@ -593,7 +597,11 @@ export default function App() {
           <h3 className="text-xl font-semibold tracking-tight">{t('donate.title')}</h3>
           <p className="text-sm text-neutral-400 leading-relaxed">{t('donate.body')}</p>
           <div className="flex gap-3 flex-wrap">
-            <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
+            {!geoLocation || !geoLocation.isArgentina ? (
+              <button onClick={() => { setShowStripeDonateToast(true); setShowDonate(false); }} className="btn-primary">{t('donate.cta')}</button>
+            ) : (
+              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
+            )}
             <button onClick={()=>setShowDonate(false)} className="btn-secondary">{t('donate.later')}</button>
           </div>
           <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
