@@ -35,8 +35,8 @@ class BaseLLM(ABC):
         self.tools = tools
         # Keep a reference to the desired structured output format (Pydantic model or class)
         self.output_format: Optional[Union[Type[BaseModel], BaseModel]] = output_format
-
-        chat_model = init_chat_model(model, model_provider="google_genai")
+        provider, model = model.split(":", 1)
+        chat_model = init_chat_model(model, model_provider=provider)
         self.model = create_agent(
             model=chat_model,
             tools=tools,
