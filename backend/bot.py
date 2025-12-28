@@ -183,7 +183,7 @@ class Bot:
             r = str(r)
 
         res = await self.llm.ainvoke({
-            "messages": [SystemMessage(self.llm.TRANSLATE_PROMPT), HumanMessage(original_jd), HumanMessage(r)],
+            "messages": [SystemMessage(self.llm.TRANSLATE_PROMPT), HumanMessage(original_jd), HumanMessage(r.model_dump_json())],
             "user_id": self.user_id,
         })
         return res["structured_response"]
