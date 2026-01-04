@@ -51,7 +51,7 @@ class PGVectorTool(BaseTool):
         self._emb = OpenAIEmbeddings(
             base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://nomic-embed:80/v1"),
             api_key="asdsad",
-            model="nomic-ai/nomic-embed-text-v1.5",
+            model="sentence-transformers/all-MiniLM-L6-v2",
             
         )
 

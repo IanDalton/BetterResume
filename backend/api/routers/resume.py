@@ -123,7 +123,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(tools=[tool], model=req.model, output_format=ResumeOutputFormat),
+        llm=GeminiAgent(tools=[tool], output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,

@@ -32,10 +32,11 @@ services:
     ports:
       - "80:80"
     command: >
-      --model-id nomic-ai/nomic-embed-text-v1.5
+      --model-id sentence-transformers/all-MiniLM-L6-v2
       --revision main
       --port 80
-      --max-client-batch-size 32
+      --max-client-batch-size 8
+      --max-batch-requests 8
   backend:
     build:
       context: .
@@ -46,22 +47,13 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-better_resume}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - .:/app
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000
-  pg_admin:
-    image: dpage/pgadmin4
-    container_name: better-resume-pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@betterresume.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
-    ports:
-      - "8080:80"
-    depends_on:
-      - postgres
       
 
 volumes:

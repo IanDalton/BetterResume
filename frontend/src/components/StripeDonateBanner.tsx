@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useI18n } from '../i18n';
+const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 
 interface Props {
   open: boolean;
@@ -10,18 +12,23 @@ interface Props {
 export function StripeDonateBanner({ open, onClose, isArgentina = false }: Props) {
   const { t } = useI18n();
   const [isLoading, setIsLoading] = useState(false);
+  const [amount, setAmount] = useState(isArgentina ? 1000 : 5);
 
   if (!open) return null;
 
   const handleDonateClick = async () => {
+    if (!amount || amount < 1) {
+      alert("Please enter a valid amount");
+      return;
+    }
     setIsLoading(true);
     try {
       // Call backend to create Stripe checkout session
-      const response = await fetch('/api/create-donation-session', {
+      const response = await fetch(`${API_BASE}/create-donation-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          amount: 500, // $5 USD or equivalent
+          amount: Math.round(amount * 100), // Convert to cents/centavos
           currency: isArgentina ? 'ARS' : 'USD',
         }),
       });
@@ -57,13 +64,30 @@ export function StripeDonateBanner({ open, onClose, isArgentina = false }: Props
                 ? t('donate.stripe.body.argentina') || 'Si te resultó útil, considera hacer una pequeña donación para mantener el proyecto en funcionamiento.'
                 : t('donate.stripe.body.international') || 'If this tool saved you time, consider supporting development with a small donation.'}
             </p>
-            <div className="mt-3 flex gap-2">
+            
+            <div className="flex items-center gap-2 mb-3">
+              <label className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                Amount ({isArgentina ? 'ARS' : 'USD'}):
+              </label>
+              <div className="relative flex-1">
+                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500">$</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={amount}
+                  onChange={(e) => setAmount(Number(e.target.value))}
+                  className="w-full pl-6 pr-2 py-1 text-sm border border-neutral-300 dark:border-neutral-600 rounded bg-white dark:bg-neutral-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
               <button
                 onClick={handleDonateClick}
-                disabled={isLoading}
-                className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isLoading || !amount}
+                className="btn-primary btn-sm disabled:opacity-50 disabled:cursor-not-allowed flex-1"
               >
-                {isLoading ? t('working') || 'Processing...' : (t('donate.stripe.cta') || 'Donate $5')}
+                {isLoading ? t('working') || 'Processing...' : `${t('donate.stripe.cta') || 'Donate'} $${amount}`}
               </button>
               <button
                 className="btn-secondary btn-sm"

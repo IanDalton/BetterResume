@@ -45,7 +45,7 @@ async def create_donation_session(request: Request):
         origin = request.headers.get('origin') or 'https://betterresume.dev'
         return_url = f"{origin}/donate-success"
         
-        session = stripe.checkout.sessions.create(
+        session = stripe.checkout.Session.create(
             ui_mode='embedded',
             line_items=[
                 {
@@ -63,7 +63,7 @@ async def create_donation_session(request: Request):
             mode='payment',
             return_url=return_url,
             submit_type='donate',
-            billing_address_collection='optional',
+            billing_address_collection='auto',
         )
         
         logger.info(
@@ -88,7 +88,7 @@ async def get_session_status(session_id: str):
         raise HTTPException(status_code=400, detail="Missing session_id")
     
     try:
-        session = stripe.checkout.sessions.retrieve(session_id)
+        session = stripe.checkout.Session.retrieve(session_id)
         
         return JSONResponse(content={
             'status': session.status,
