@@ -115,12 +115,12 @@ export function Home() {
         setGeoLocation({
           isOutsideUS: false,
           isArgentina: false,
-          country: 'Unknown',
+          country: t('geo.unknown'),
         });
       }
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [t]);
 
   // Load AdSense script on demand when generation modal opens
   useEffect(()=>{
@@ -261,14 +261,14 @@ export function Home() {
       setLoading(true);
       const res: any = await performUpload();
       if (res?.status === 'unchanged') {
-        alert('Jobs unchanged; ingestion skipped');
+        alert(t('upload.unchanged'));
       } else if (res?.rows_ingested != null) {
-        alert(`Jobs uploaded (${res.rows_ingested} rows)`);
+        alert(`${t('upload.success.rows')} (${res.rows_ingested})`);
       } else {
-        alert('Jobs uploaded');
+        alert(t('upload.success'));
       }
     } catch (e: any) {
-      setError(e.message || 'Upload failed');
+      setError(e.message || t('upload.failed'));
     } finally {
       setLoading(false);
     }
@@ -278,8 +278,8 @@ export function Home() {
     try {
       setError(null);
       // Frontend guard: block calls if requirements not met
-      if (!hasPersonalBasics) { setError('Please complete your personal info (name and email) before generating.'); return; }
-      if (!hasExperience) { setError('Please add at least one experience entry before generating.'); return; }
+      if (!hasPersonalBasics) { setError(t('generate.error.personal')); return; }
+      if (!hasExperience) { setError(t('generate.error.experience')); return; }
       setLoading(true);
       setGenStartAt(Date.now());
       setFirstEventAt(null);
@@ -341,7 +341,7 @@ export function Home() {
         return next;
       });
     } catch (e: any) {
-      setError(e.message || 'Generation failed');
+      setError(e.message || t('generate.error.failed'));
     } finally {
       setLoading(false);
   setTimeout(()=> setShowGenModal(false), 600); // slight delay for UX
@@ -356,7 +356,7 @@ export function Home() {
       // Attempt fetch to ensure file exists and to avoid popup blockers / blocked navigation
       const res = await fetch(url, { method: 'GET' });
       if (!res.ok) {
-        throw new Error(`File not ready (${res.status})`);
+        throw new Error(`${t('download.error.notReady')} (${res.status})`);
       }
       const blob = await res.blob();
       // Prefer filename from Content-Disposition when available
@@ -387,7 +387,7 @@ export function Home() {
       link.remove();
       setTimeout(()=> URL.revokeObjectURL(link.href), 5000);
     } catch (e:any) {
-      setError(e.message || 'Download failed');
+      setError(e.message || t('download.error.failed'));
     } finally {
       setDownloading(null);
     }
@@ -501,7 +501,7 @@ export function Home() {
         </div>
         {(!hasPersonalBasics || !hasExperience) && (
           <p className="text-xs text-red-500">
-            {!hasPersonalBasics ? 'Please complete your personal info (name and email).' : 'Please add at least one experience entry.'}
+            {!hasPersonalBasics ? t('validation.personal') : t('validation.experience')}
           </p>
         )}
   {loading && <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('working')}</p>}

@@ -5,6 +5,7 @@ import {
   EmbeddedCheckout
 } from '@stripe/react-stripe-js';
 import { useSearchParams, Link } from 'react-router-dom';
+import { useI18n } from '../i18n';
 
 // Initialize Stripe
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
@@ -13,6 +14,7 @@ const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 
 export function Donate() {
+  const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientSecret, setClientSecret] = useState<string | null>(searchParams.get('client_secret'));
   const [amount, setAmount] = useState(5);
@@ -29,7 +31,7 @@ export function Donate() {
 
   const handleDonateClick = async () => {
     if (!amount || amount < 1) {
-      alert("Please enter a valid amount");
+      alert(t('donate.error.amount'));
       return;
     }
     setIsLoading(true);
@@ -46,14 +48,14 @@ export function Donate() {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to create session: ${response.status}`);
+        throw new Error(`${t('donate.error.session')}: ${response.status}`);
       }
 
       const data = await response.json();
       const secret = data.clientSecret;
 
       if (!secret) {
-        throw new Error('No client secret received');
+        throw new Error(t('donate.error.secret'));
       }
 
       setClientSecret(secret);
@@ -61,7 +63,7 @@ export function Donate() {
       setSearchParams({ client_secret: secret });
     } catch (err: any) {
       console.error('Donation error:', err);
-      setError(err.message || 'Failed to process donation. Please try again.');
+      setError(err.message || t('donate.error.process'));
     } finally {
       setIsLoading(false);
     }
@@ -73,10 +75,10 @@ export function Donate() {
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">
-              Complete Your Donation
+              {t('donate.complete.title')}
             </h1>
             <Link to="/donate" onClick={() => { setClientSecret(null); setSearchParams({}); }} className="text-sm text-blue-600 hover:underline mt-2 inline-block">
-              Change Amount
+              {t('donate.changeAmount')}
             </Link>
           </div>
           
@@ -91,7 +93,7 @@ export function Donate() {
 
           <div className="mt-8 text-center">
             <Link to="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
-              ← Back to BetterResume
+              {t('donate.back')}
             </Link>
           </div>
         </div>
@@ -104,17 +106,17 @@ export function Donate() {
       <div className="max-w-md w-full space-y-8 bg-white dark:bg-neutral-800 p-8 rounded-xl shadow-lg">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">
-            Support BetterResume
+            {t('donate.support.title')}
           </h1>
           <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-            Your donation helps keep this tool free and running.
+            {t('donate.support.subtitle')}
           </p>
         </div>
 
         <div className="space-y-6">
           <div>
             <label htmlFor="amount" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
-              Donation Amount (USD)
+              {t('donate.amount.label')}
             </label>
             <div className="grid grid-cols-3 gap-3 mb-4">
               {[5, 10, 20].map((val) => (
@@ -159,12 +161,12 @@ export function Donate() {
             disabled={isLoading}
             className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isLoading ? 'Processing...' : `Donate $${amount}`}
+            {isLoading ? t('donate.processing') : `${t('donate.button')}${amount}`}
           </button>
 
           <div className="text-center">
             <Link to="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
-              Maybe later
+              {t('donate.later')}
             </Link>
           </div>
         </div>

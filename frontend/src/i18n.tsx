@@ -180,7 +180,37 @@ const dictionaries: Record<Language, Dict> = {
   'donate.stripe.body.international': 'If this tool saved you time, consider supporting development with a small donation. Payments are processed securely via Stripe.',
   'donate.stripe.body.argentina': 'Si te resultó útil, considera hacer una pequeña donación para mantener el proyecto en funcionamiento. Pagos seguros con Stripe.',
   'donate.stripe.cta': 'Donate via Stripe',
-  'donate.error': 'Failed to process donation. Please try again.'
+  'donate.error': 'Failed to process donation. Please try again.',
+  // Donate page
+  'donate.error.amount': 'Please enter a valid amount',
+  'donate.error.session': 'Failed to create session',
+  'donate.error.secret': 'No client secret received',
+  'donate.error.process': 'Failed to process donation. Please try again.',
+  'donate.complete.title': 'Complete Your Donation',
+  'donate.changeAmount': 'Change Amount',
+  'donate.back': '← Back to BetterResume',
+  'donate.support.title': 'Support BetterResume',
+  'donate.support.subtitle': 'Your donation helps keep this tool free and running.',
+  'donate.amount.label': 'Donation Amount (USD)',
+  'donate.processing': 'Processing...',
+  'donate.button': 'Donate $',
+  // Thank You page
+  'thankyou.title': 'Thank You!',
+  'thankyou.message': 'Your donation helps keep BetterResume free and running for everyone. We really appreciate your support!',
+  'thankyou.back': 'Back to Resume Builder',
+  // Home page
+  'geo.unknown': 'Unknown',
+  'upload.unchanged': 'Jobs unchanged; ingestion skipped',
+  'upload.success.rows': 'Jobs uploaded',
+  'upload.success': 'Jobs uploaded',
+  'upload.failed': 'Upload failed',
+  'generate.error.personal': 'Please complete your personal info (name and email) before generating.',
+  'generate.error.experience': 'Please add at least one experience entry before generating.',
+  'generate.error.failed': 'Generation failed',
+  'download.error.notReady': 'File not ready',
+  'download.error.failed': 'Download failed',
+  'validation.personal': 'Please complete your personal info (name and email).',
+  'validation.experience': 'Please add at least one experience entry.'
   },
   es: {
     'app.title': 'Better Resume',
@@ -357,7 +387,37 @@ const dictionaries: Record<Language, Dict> = {
   'donate.stripe.body.international': 'Si te resultó útil, considera apoyar el desarrollo con una pequeña donación. Pagos seguros a través de Stripe.',
   'donate.stripe.body.argentina': 'Si te resultó útil, considera hacer una pequeña donación para mantener el proyecto en funcionamiento. Pagos seguros con Stripe.',
   'donate.stripe.cta': 'Donar con Stripe',
-  'donate.error': 'Falló al procesar la donación. Por favor, intenta de nuevo.'
+  'donate.error': 'Falló al procesar la donación. Por favor, intenta de nuevo.',
+  // Donate page
+  'donate.error.amount': 'Por favor ingresa un monto válido',
+  'donate.error.session': 'Fallo al crear la sesión',
+  'donate.error.secret': 'No se recibió el secreto del cliente',
+  'donate.error.process': 'Fallo al procesar la donación. Por favor intenta de nuevo.',
+  'donate.complete.title': 'Completa tu Donación',
+  'donate.changeAmount': 'Cambiar Monto',
+  'donate.back': '← Volver a BetterResume',
+  'donate.support.title': 'Apoya a BetterResume',
+  'donate.support.subtitle': 'Tu donación ayuda a mantener esta herramienta gratis y funcionando.',
+  'donate.amount.label': 'Monto de Donación (USD)',
+  'donate.processing': 'Procesando...',
+  'donate.button': 'Donar $',
+  // Thank You page
+  'thankyou.title': '¡Gracias!',
+  'thankyou.message': 'Tu donación ayuda a mantener BetterResume gratis y funcionando para todos. ¡Realmente apreciamos tu apoyo!',
+  'thankyou.back': 'Volver al Constructor de CV',
+  // Home page
+  'geo.unknown': 'Desconocido',
+  'upload.unchanged': 'Trabajos sin cambios; ingesta omitida',
+  'upload.success.rows': 'Trabajos subidos',
+  'upload.success': 'Trabajos subidos',
+  'upload.failed': 'Fallo en la subida',
+  'generate.error.personal': 'Por favor completa tu información personal (nombre y correo) antes de generar.',
+  'generate.error.experience': 'Por favor agrega al menos una experiencia antes de generar.',
+  'generate.error.failed': 'Fallo en la generación',
+  'download.error.notReady': 'Archivo no listo',
+  'download.error.failed': 'Fallo en la descarga',
+  'validation.personal': 'Por favor completa tu información personal (nombre y correo).',
+  'validation.experience': 'Por favor agrega al menos una experiencia.'
   }
 };
 
