@@ -10,7 +10,8 @@ import { useI18n } from '../i18n';
 import { authStateListener } from '../services/firebase';
 
 // Initialize Stripe
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
+const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
+const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
 
 const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
@@ -112,12 +113,18 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
           </div>
           
           <div className="bg-white dark:bg-neutral-800 rounded-xl shadow-lg overflow-hidden">
-            <EmbeddedCheckoutProvider
-              stripe={stripePromise}
-              options={{ clientSecret }}
-            >
-              <EmbeddedCheckout />
-            </EmbeddedCheckoutProvider>
+            {stripePromise ? (
+              <EmbeddedCheckoutProvider
+                stripe={stripePromise}
+                options={{ clientSecret }}
+              >
+                <EmbeddedCheckout />
+              </EmbeddedCheckoutProvider>
+            ) : (
+              <div className="p-8 text-center text-red-500">
+                Stripe configuration missing.
+              </div>
+            )}
           </div>
 
           <div className="mt-8 text-center">

@@ -49,6 +49,12 @@ async def add_request_context(request: Request, call_next):
         # Clear only the request id; user id is tied to the endpoint handling
         clear_request_id()
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'self' https://iandalton.dev http://localhost:5173 http://127.0.0.1"
+    return response
+
 app.include_router(health.router)
 app.include_router(jobs.router, prefix="/resume")
 app.include_router(profile.router, prefix="/resume")

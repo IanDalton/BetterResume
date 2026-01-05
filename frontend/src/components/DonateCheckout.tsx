@@ -6,12 +6,17 @@ import {
 } from '@stripe/react-stripe-js';
 
 // Initialize Stripe outside of component to avoid recreating stripe object on every render
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
+const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
+const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
 
 export function DonateCheckout() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
 
-  
+  useEffect(() => {
+    if (!STRIPE_KEY) {
+      console.error('Stripe public key is missing');
+    }
+  }, []);
 
   useEffect(() => {
     // Get client_secret from URL search params
@@ -51,13 +56,18 @@ export function DonateCheckout() {
         </div>
         
         <div className="bg-white dark:bg-neutral-800 rounded-xl shadow-lg overflow-hidden">
-          <EmbeddedCheckoutProvider
-            stripe={stripePromise}
-            options={{ clientSecret }}
-            
-          >
-            <EmbeddedCheckout />
-          </EmbeddedCheckoutProvider>
+          {stripePromise && clientSecret ? (
+            <EmbeddedCheckoutProvider
+              stripe={stripePromise}
+              options={{ clientSecret }}
+            >
+              <EmbeddedCheckout />
+            </EmbeddedCheckoutProvider>
+          ) : (
+            <div className="p-8 text-center text-red-500">
+              {!STRIPE_KEY ? 'Stripe configuration missing.' : 'Loading payment...'}
+            </div>
+          )}
         </div>
 
         <div className="mt-8 text-center">

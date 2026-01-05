@@ -357,8 +357,8 @@ export function Home() {
       const blob = await res.blob();
       // Prefer filename from Content-Disposition when available
       let fname = '';
-      const cd = res.headers.get('Content-Disposition') || res.headers.get('content-disposition');
-      if (cd) {
+      const cd = res.headers ? (res.headers.get('Content-Disposition') || res.headers.get('content-disposition')) : null;
+      if (cd && typeof cd === 'string') {
         // naive parse: filename="resume.pdf" or filename=resume.pdf
         const m = cd.match(/filename\*=UTF-8''([^;]+)|filename\s*=\s*"?([^";]+)"?/i);
         const raw = (m && (m[1] || m[2])) || '';
