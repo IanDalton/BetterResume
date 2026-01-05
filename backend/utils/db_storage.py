@@ -154,6 +154,24 @@ class DBStorage:
             self.logger.exception("Failed to replace job experiences: %s", e)
             raise
 
+    def get_job_experiences(self, user_id: str, type_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Retrieve job experiences, optionally filtered by type."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    query = "SELECT raw FROM job_experiences WHERE user_id = %s"
+                    params = [user_id]
+                    if type_filter:
+                        query += " AND LOWER(TRIM(type)) = LOWER(TRIM(%s))"
+                        params.append(type_filter)
+                    
+                    cur.execute(query, params)
+                    rows = cur.fetchall()
+                    return [row[0] if isinstance(row[0], dict) else json.loads(row[0]) for row in rows]
+        except Exception as e:
+            self.logger.exception("Failed to get job experiences: %s", e)
+            return []
+
     def insert_resume_request(self, user_id: str, job_posting: str):
         """Insert a resume request row."""
         try:

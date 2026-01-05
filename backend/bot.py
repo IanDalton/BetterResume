@@ -19,6 +19,8 @@ from resume.base_writer import BaseWriter
 from utils.logging_utils import request_id_var, user_id_var, set_user_context
 from models.resume import ResumeOutputFormat
 from llm.pg_vector_tool import PGVectorTool
+from utils.db_storage import DBStorage
+from models.education import Education
 
 
 
@@ -167,13 +169,30 @@ class Bot:
         self.logger.info("Streaming: LLM complete; messages=%d", len(res.get("messages", [])))
         resume: ResumeOutputFormat = res["structured_response"]
         yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": getattr(resume, "language", None)}}
-
+        
         if (getattr(resume, "language", "") or "").lower() != "en":
             self.logger.info("Streaming: translating non-EN -> EN")
             yield {"stage": "translating", "message": "Translating resume"}
             resume = await self.translate_resume(resume, jd)
             yield {"stage": "translated", "message": "Translation complete", "data": {"language": getattr(resume, "language", None)}}
 
+        # Fetch education from DB
+        storage = DBStorage()
+        education_records = storage.get_job_experiences(self.user_id, type_filter="education")
+        self.logger.info("Fetched %d education records for user=%s", len(education_records), self.user_id)
+        education_list = []
+        for rec in education_records:
+            # Map DB record to Education model
+            # DB: type, company, description, role, location, start_date, end_date
+            # Model: institution, degree, dates
+            edu = Education(
+                institution=rec.get("company") or "",
+                degree=(rec.get("description") or "") or (rec.get("role") or ""),
+                dates=f"{rec.get('start_date') or ''} - {rec.get('end_date') or ''}"
+            )
+            education_list.append(edu)
+        
+        resume.resume_section.education = education_list
         self.json_body = resume.model_dump()
         self.logger.info("Streaming: done")
         yield {"stage": "done", "message": "Resume generation complete", "result": resume}
