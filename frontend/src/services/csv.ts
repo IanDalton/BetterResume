@@ -63,3 +63,51 @@ function sanitize(v: string) {
   if (v.includes(',') || v.includes('\n') || v.includes('"')) return '"' + v.replace(/"/g,'""') + '"';
   return v;
 }
+
+export function buildJobsFromEntries(entries: ResumeEntry[]): Array<{type:string; company:string; description:string; role?:string; location?:string; start_date?:string; end_date?:string}> {
+  const norm = (val?: string) => {
+    if (!val) return '';
+    const v = String(val).trim();
+    if (!v) return '';
+    const low = v.toLowerCase();
+    if (['present','current','now'].includes(low)) return 'present';
+    let m = v.match(/^(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const mm = m[1].padStart(2,'0');
+      return `01/${mm}/${m[2]}`;
+    }
+    m = v.match(/^(\d{4})[\/\-](\d{1,2})$/);
+    if (m) {
+      const mm = m[2].padStart(2,'0');
+      return `01/${mm}/${m[1]}`;
+    }
+    m = v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (m) {
+      const dd = m[1].padStart(2,'0');
+      const mm = m[2].padStart(2,'0');
+      return `${dd}/${mm}/${m[3]}`;
+    }
+    return v;
+  };
+  const out: Array<{type:string; company:string; description:string; role?:string; location?:string; start_date?:string; end_date?:string}> = [];
+  for (const e of entries) {
+    if (e.type === 'info') {
+      out.push({
+        type: e.type,
+        company: e.role || '',
+        description: (e.description || '') + (e.role_description ? `\n${e.role_description}` : ''),
+      });
+    } else if (['job','contract','part-time','project','non-profit','education','certification'].includes(e.type)) {
+      out.push({
+        type: e.type,
+        company: e.company || '',
+        location: e.location || '',
+        role: e.role || '',
+        start_date: norm(e.start),
+        end_date: norm(e.end),
+        description: (e.description || '') + (e.role_description ? `\n${e.role_description}` : ''),
+      });
+    }
+  }
+  return out;
+}

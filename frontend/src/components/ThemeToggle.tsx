@@ -2,7 +2,7 @@ import React from 'react';
 
 type Theme = 'light' | 'dark' | 'system';
 
-export function ThemeToggle() {
+export function ThemeToggle({ onThemeChange }: { onThemeChange?: (theme: Theme) => void }) {
   const [theme, setTheme] = React.useState<Theme>(() => {
     try {
       const saved = localStorage.getItem('theme') as Theme | null;
@@ -15,7 +15,8 @@ export function ThemeToggle() {
     const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     const enableDark = next === 'dark' || (next === 'system' && prefersDark);
     root.classList.toggle('dark', enableDark);
-  }, []);
+    onThemeChange?.(next);
+  }, [onThemeChange]);
 
   React.useEffect(() => {
     applyTheme(theme);

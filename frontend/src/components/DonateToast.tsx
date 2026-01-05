@@ -4,10 +4,11 @@ import { useI18n } from '../i18n';
 interface Props {
   open: boolean;
   onClose: () => void;
+  onDonateClick?: () => void; // callback when donate button clicked
   href?: string; // donation link
 }
 
-export function DonateToast({ open, onClose, href }: Props) {
+export function DonateToast({ open, onClose, onDonateClick, href }: Props) {
   const { t } = useI18n();
   if (!open) return null;
   const link = href || 'https://link.mercadopago.com.ar/betterresume';
@@ -22,17 +23,29 @@ export function DonateToast({ open, onClose, href }: Props) {
               {t('donate.toast.body')}
             </p>
             <div className="mt-3 flex gap-2">
-              <a
-                href={link}
-                target="_blank"
-                rel="noreferrer"
-                className="btn-primary btn-sm"
-                onClick={() => {
-                  onClose();
-                }}
-              >
-                {t('donate.toast.cta')}
-              </a>
+              {onDonateClick ? (
+                <button
+                  onClick={() => {
+                    onDonateClick();
+                    onClose();
+                  }}
+                  className="btn-primary btn-sm"
+                >
+                  {t('donate.toast.cta')}
+                </button>
+              ) : (
+                <a
+                  href={link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-primary btn-sm"
+                  onClick={() => {
+                    onClose();
+                  }}
+                >
+                  {t('donate.toast.cta')}
+                </a>
+              )}
               <button
                 className="btn-secondary btn-sm"
                 onClick={() => {

@@ -1,8 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
-
+from typing import List, Dict, Any, Optional, Type, Union
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
 from utils.file_io import load_prompt
-
+from pydantic import BaseModel
+from langchain_core.messages import BaseMessage
+from llm.state import State
+from langchain.agents.structured_output import ToolStrategy
 class BaseLLM(ABC):
     """BaseLLM is an abstract base class that serves as a blueprint for creating adapters for 
     Large Language Models (LLMs). It provides a structure for initializing prompts and 
@@ -19,24 +23,41 @@ class BaseLLM(ABC):
             This method must be implemented by subclasses.
     """
 
-    def __init__(self,tools: list,model=str,job_prompt: str ="job_prompt",translation_prompt: str ="translation_prompt"):
-        self.JOB_PROMPT = load_prompt(job_prompt)
-        self.TRANSLATE_PROMPT = load_prompt(translation_prompt)
-        self.tools = tools
-        self.model = model
-        
+    def __init__(
+        self,
+        tools: list,
+        model: str,
+        output_format: Optional[Union[Type[BaseModel], BaseModel]] = None,
+    ) -> None:
 
+        self.JOB_PROMPT = load_prompt("job_prompt")
+        self.TRANSLATE_PROMPT = load_prompt("translation_prompt")
+        self.tools = tools
+        # Keep a reference to the desired structured output format (Pydantic model or class)
+        self.output_format: Optional[Union[Type[BaseModel], BaseModel]] = output_format
+        provider, model = model.split(":", 1)
+        chat_model = init_chat_model(model, model_provider=provider)
+        self.model = create_agent(
+            model=chat_model,
+            tools=tools,
+            response_format=ToolStrategy(output_format),
+            state_schema=State,
+        )
+
+        
+    def get_tools(self) -> list:
+        return self.tools
     def copy(self,tools: list) -> 'BaseLLM':
         """Create a copy of the current LLM instance."""
         
         return self.__class__(tools=tools, model=self.model)
 
-    @abstractmethod
-    def bind_tools(self) -> None:
-        """Bind external tools (e.g. vector DB) to the LLM."""
-        pass
 
     @abstractmethod
-    def invoke(self, messages: List[Dict[str, Any]], tools: List[Any]) -> Any:
+    def invoke(self, messages: List[BaseMessage]) -> Any:
         """Send chat messages to the LLM and return its response."""
+        pass
+    @abstractmethod
+    async def ainvoke(self, messages: List[BaseMessage]) -> Any:
+        """Asynchronously send chat messages to the LLM and return its response."""
         pass

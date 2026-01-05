@@ -5,16 +5,23 @@ interface ResumeRequestPayload {
   job_description: string;
   format: string;
   model: string;
+  include_profile_picture?: boolean;
 }
 
-export async function uploadJobsCsv(userId: string, file: File) {
-  const form = new FormData();
-  form.append('file', file);
+export async function uploadJobsJson(userId: string, jobs: Array<{type:string; company:string; description:string; role?:string; location?:string; start_date?:string; end_date?:string}>) {
   const res = await fetch(`${API_BASE}/upload-jobs/${encodeURIComponent(userId)}`, {
     method: 'POST',
-    body: form
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobs })
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  if (!res.ok) {
+    let message = `Upload failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch {}
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -92,4 +99,44 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
       pump();
     }).catch(err => reject(err));
   });
+}
+
+export async function uploadProfilePicture(userId: string, file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_BASE}/upload-profile-picture/${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: form
+  });
+  if (!res.ok) {
+    let message = `Upload failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch {
+      const text = await res.text().catch(()=> '');
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function resolveProfilePictureUrl(userId: string): Promise<string | null> {
+  const cacheBuster = Date.now();
+  const url = `${API_BASE}/profile-picture/${encodeURIComponent(userId)}?v=${cacheBuster}`;
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    if (res.ok) return url;
+    if (res.status === 405) {
+      const getRes = await fetch(url, { method: 'GET' });
+      if (!getRes.ok) return null;
+      // Consume body to avoid locking resources
+      try { await getRes.arrayBuffer(); } catch {}
+      return url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

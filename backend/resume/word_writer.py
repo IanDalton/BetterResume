@@ -3,9 +3,11 @@ import logging
 from docx import Document
 from docx.shared import Cm, Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from typing import Dict, Any
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from typing import Dict, Any, Optional
 import pandas as pd
 from .base_writer import BaseWriter
+from models.resume import ResumeOutputFormat
 from utils.word_utils import set_paragraph_font, set_paragraph_format, set_heading_font, add_hyperlink
 
 class WordResumeWriter(BaseWriter):
@@ -20,11 +22,11 @@ class WordResumeWriter(BaseWriter):
     to_pdf(output: str, src_path: str = None) -> str:
         Converts a Word document to a PDF file using the comtypes library.
     """ 
-    def __init__(self, template: str = None, csv_location: str = "jobs.csv"):
-        super().__init__(template, csv_location, ".docx")
+    def __init__(self, template: str = None, csv_location: str = "jobs.csv", profile_image_path: Optional[str] = None):
+        super().__init__(template, csv_location, ".docx", profile_image_path=profile_image_path)
         self._logger = logging.getLogger("betterresume.writer")
 
-    
+
 
     def write(self,response:dict, output: str = None, to_pdf:bool=False):
         file = self.generate_file(response, output.replace(".pdf", ".docx") if output else None)
@@ -35,10 +37,10 @@ class WordResumeWriter(BaseWriter):
         self._logger.info("PDF generated: %s", file)
         return file
 
-    def generate_file(self,response:dict, output: str = None):
+    def generate_file(self,response:ResumeOutputFormat, output: str = None):
         
         data = self.data
-        self.response = response or {}
+        
 
         # Create the Word document
         
@@ -62,32 +64,86 @@ class WordResumeWriter(BaseWriter):
             except Exception:
                 return default
 
-        resume_section = {}
-        try:
-            resume_section = (self.response or {}).get("resume_section", {}) or {}
-        except Exception:
-            resume_section = {}
+        
+        
+        resume_section = response.resume_section
+        
+        profile_path = self.profile_image_path if getattr(self, "profile_image_path", None) else None
+        if profile_path and not os.path.isfile(profile_path):
+            self._logger.debug("Profile image path does not exist: %s", profile_path)
+            profile_path = None
+
+        header_container = document
+        table_created = None
+        if profile_path:
+            try:
+                table_created = document.add_table(rows=1, cols=2)
+                table_created.alignment = WD_TABLE_ALIGNMENT.LEFT
+                table_created.autofit = False
+                img_cell = table_created.rows[0].cells[0]
+                text_cell = table_created.rows[0].cells[1]
+                img_cell.width = Inches(1.75)
+                text_cell.width = Inches(6.0)
+                img_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                text_cell.vertical_alignment = WD_ALIGN_VERTICAL.TOP
+                img_paragraph = img_cell.paragraphs[0]
+                img_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = img_paragraph.add_run()
+                run.add_picture(profile_path, width=Inches(2.35))
+                header_container = text_cell
+            except Exception as e:
+                self._logger.warning("Failed to insert profile image: %s", e)
+                header_container = document
+                if table_created is not None:
+                    try:
+                        tbl = table_created._tbl
+                        tbl.getparent().remove(tbl)
+                    except Exception:
+                        pass
+
+        def _add_heading(container, text: str):
+            if not text:
+                return None
+            try:
+                if hasattr(container, "add_heading"):
+                    heading = container.add_heading(text, 0)
+                else:
+                    heading = container.add_paragraph(text)
+                set_heading_font(heading, font_name="Times New Roman", font_size=16)
+                return heading
+            except Exception as exc:
+                self._logger.debug("Failed adding heading: %s", exc)
+                return None
+
+        def _add_paragraph(container, text: str):
+            if not text:
+                return None
+            try:
+                paragraph = container.add_paragraph(text)
+                set_paragraph_font(paragraph)
+                set_paragraph_format(paragraph)
+                return paragraph
+            except Exception as exc:
+                self._logger.debug("Failed adding paragraph: %s", exc)
+                return None
 
         # Heading (Name - Title)
         try:
             name_txt = _safe_first(data[data['company'] == 'name']['description'], "")
-            title_txt = resume_section.get("title", "")
+            title_txt = resume_section.title
             heading_txt_parts = [p for p in [name_txt, title_txt] if p]
             if heading_txt_parts:
-                heading = document.add_heading(" - ".join(heading_txt_parts), 0)
-                set_heading_font(heading, font_name="Times New Roman", font_size=16)
+                _add_heading(header_container, " - ".join(heading_txt_parts))
         except Exception as e:
             self._logger.debug("Skipping heading due to missing data: %s", e)
-        
+
         # Address • Phone
         try:
             address_txt = _safe_first(data[data['company'] == 'address']['description'], "")
             phone_txt = _safe_first(data[data['company'] == 'phone']['description'], "")
             parts = [p for p in [address_txt, phone_txt] if p]
             if parts:
-                contact_paragraph = document.add_paragraph(" • ".join(parts))
-                set_paragraph_font(contact_paragraph)
-                set_paragraph_format(contact_paragraph)
+                _add_paragraph(header_container, " • ".join(parts))
         except Exception as e:
             self._logger.debug("Skipping address/phone due to missing data: %s", e)
 
@@ -100,23 +156,24 @@ class WordResumeWriter(BaseWriter):
             except Exception:
                 websites = []
             if email_txt or websites:
-                p = document.add_paragraph(f"{email_txt}" + (" • " if email_txt and websites else ""))
-                set_paragraph_font(p)
-                set_paragraph_format(p)
-                for i, website in enumerate([w for w in websites if w]):
-                    try:
-                        add_hyperlink(p, website, website)
-                    except Exception:
-                        # Fallback to plain text if hyperlink fails
-                        p.add_run(website)
-                    if i < len([w for w in websites if w]) - 1:
-                        p.add_run(" • ")
+                p = _add_paragraph(header_container, f"{email_txt}" + (" • " if email_txt and websites else ""))
+                if p:
+                    for i, website in enumerate([w for w in websites if w]):
+                        try:
+                            add_hyperlink(p, website, website)
+                        except Exception:
+                            p.add_run(website)
+                        if i < len([w for w in websites if w]) - 1:
+                            p.add_run(" • ")
         except Exception as e:
             self._logger.debug("Skipping email/websites due to missing data: %s", e)
 
+        if header_container is not document:
+            document.add_paragraph("")
+
         # Professional summary
         try:
-            summary_txt = resume_section.get("professional_summary", "")
+            summary_txt = resume_section.professional_summary
             if summary_txt:
                 summary_paragraph = document.add_paragraph(summary_txt)
                 set_paragraph_font(summary_paragraph)
@@ -126,7 +183,7 @@ class WordResumeWriter(BaseWriter):
 
         # Skills
         try:
-            skills = resume_section.get("skills", []) or []
+            skills = resume_section.skills
             if skills:
                 skills_heading = document.add_heading('SKILLS', level=0)
                 set_heading_font(skills_heading, font_name="Times New Roman", font_size=11)
@@ -137,8 +194,8 @@ class WordResumeWriter(BaseWriter):
                         p.style = "List Bullet"
                         set_paragraph_font(p)
                         set_paragraph_format(p)
-                        name = (skill or {}).get("name", "")
-                        desc = (skill or {}).get("description", "")
+                        name = skill.name
+                        desc = skill.description
                         if name:
                             p.add_run(name).bold = True
                         if desc:
@@ -153,19 +210,18 @@ class WordResumeWriter(BaseWriter):
 
         # Experience
         try:
-            experiences = resume_section.get("experience", []) or []
+            experiences = resume_section.experience
             if experiences:
                 experience_heading = document.add_heading('EXPERIENCE', level=0)
                 set_heading_font(experience_heading, font_name="Times New Roman", font_size=11)
 
                 for experience in experiences:
                     try:
-                        exp = experience or {}
-                        company = exp.get("company", "")
-                        location = exp.get("location", "")
-                        position = exp.get("position", "")
-                        start_date = exp.get("start_date", "")
-                        end_date = exp.get("end_date", None)
+                        company = experience.company
+                        location = experience.location
+                        position = experience.position
+                        start_date = experience.start_date
+                        end_date = experience.end_date
 
                         p = document.add_paragraph()
                         set_paragraph_font(p)
@@ -189,12 +245,12 @@ class WordResumeWriter(BaseWriter):
                             pass
 
                         date_right = None
-                        if start_date or (end_date is not None):
-                            end_txt = end_date if end_date else 'Present'
+                        if start_date or end_date:
+                            end_txt = end_date if end_date and end_date.lower() != 'present' else 'Present'
                             date_right = f"\t({start_date} - {end_txt})"
                             p.add_run(date_right)
 
-                        desc = exp.get("description", "")
+                        desc = experience.description
                         if desc:
                             p2 = document.add_paragraph()
                             set_paragraph_font(p2)
@@ -207,28 +263,21 @@ class WordResumeWriter(BaseWriter):
 
         # Education and certifications
         try:
-            edu_df = None
-            try:
-                edu_df = data[data["type"] == "education"]
-            except Exception:
-                edu_df = None
-            if edu_df is not None and not edu_df.empty:
+            education_list = resume_section.education
+            if education_list:
                 education_heading = document.add_heading('EDUCATION AND CERTIFICATIONS', level=0)
                 set_heading_font(education_heading, font_name="Times New Roman", font_size=11)
 
-                for _, edu in edu_df.iterrows():
+                for edu in education_list:
                     try:
-                        company = edu.get('company', '') if isinstance(edu, pd.Series) else ''
-                        location = edu.get('location', '') if isinstance(edu, pd.Series) else ''
-                        description = edu.get('description', '') if isinstance(edu, pd.Series) else ''
-                        left_parts = [p for p in [company, location] if p]
-                        left_txt = ", ".join(left_parts) if left_parts else company or location
-                        line_txt = left_txt
-                        if description:
-                            if line_txt:
-                                line_txt += f" • {description}"
-                            else:
-                                line_txt = description
+                        institution = edu.institution
+                        degree = edu.degree
+                        dates = edu.dates
+                        
+                        left_parts = [p for p in [institution, degree] if p]
+                        left_txt = ", ".join(left_parts) if left_parts else institution or degree
+                        line_txt = left_txt if left_txt else ""
+                        
                         p = document.add_paragraph(line_txt)
                         set_paragraph_font(p)
                         set_paragraph_format(p)
@@ -237,22 +286,9 @@ class WordResumeWriter(BaseWriter):
                             tab_stop.alignment = WD_ALIGN_PARAGRAPH.RIGHT
                         except Exception:
                             pass
-                        def fmt(dt):
-                            try:
-                                if pd.isna(dt):
-                                    return ''
-                                if hasattr(dt, 'strftime'):
-                                    return dt.strftime('%m/%Y')
-                                return str(dt)
-                            except Exception:
-                                return ''
-                        start_txt = fmt(edu.get('start_date') if isinstance(edu, pd.Series) else None)
-                        end_raw = edu.get('end_date') if isinstance(edu, pd.Series) else None
-                        end_txt = fmt(end_raw) if end_raw is not None else ''
-                        if not end_txt:
-                            end_txt = 'Present'
-                        if start_txt or end_txt:
-                            p.add_run(f"\t{start_txt} - {end_txt}")
+                        
+                        if dates:
+                            p.add_run(f"\t{dates}")
                     except Exception:
                         continue
         except Exception as e:

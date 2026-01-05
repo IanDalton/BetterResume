@@ -108,7 +108,7 @@ const PersonalStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEn
     if (globalIdx>=0) removeEntry(globalIdx);
   };
   const [newSite, setNewSite] = React.useState('');
-  const [newKind, setNewKind] = React.useState<string>('portfolio');
+  const [newKind, setNewKind] = React.useState<string>('linkedin');
   const [newCustom, setNewCustom] = React.useState('');
   return (
     <div className="space-y-8">
@@ -133,7 +133,7 @@ const PersonalStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEn
             {newKind==='other' && <input className="w-32 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" placeholder={t('wizard.personal.label')} value={newCustom} onChange={e=>setNewCustom(e.target.value)} />}
             <input className="flex-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" placeholder="https://..." value={newSite} onChange={e=>setNewSite(e.target.value)} onKeyDown={e=>{ if (e.key==='Enter'){ e.preventDefault(); addWebsite(newSite, newKind, newCustom); setNewSite(''); } }} />
           </div>
-          <button type="button" onClick={()=>{ addWebsite(newSite, newKind, newCustom); setNewSite(''); }} className="btn-primary btn-sm self-start">{t('wizard.personal.add')}</button>
+          <button type="button" onClick={()=>{ addWebsite(newSite, newKind, newCustom); setNewSite(''); }} className="btn-secondary btn-sm self-start">{t('wizard.personal.add')}</button>
         </div>
         {websites.length>0 && (
           <ul className="space-y-2 text-sm">
@@ -183,7 +183,7 @@ const EducationStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeE
         </div>
         <textarea placeholder={t('education.description.placeholder')} className="md:col-span-2 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm min-h-[80px]" value={form.description} onChange={e=>setForm(f=>({...f, description:e.target.value}))} />
         <div className="md:col-span-2 flex justify-end">
-          <button className="btn-primary">{t('education.add')}</button>
+          <button className="btn-secondary">{t('education.add')}</button>
         </div>
       </form>
       <ul className="space-y-2">
@@ -216,7 +216,7 @@ const ExperienceStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:Resume
         </div>
         <textarea placeholder={t('experience.description.placeholder')} className="md:col-span-2 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm min-h-[80px]" value={form.description} onChange={e=>setForm(f=>({...f, description:e.target.value}))} />
         <div className="md:col-span-2 flex justify-end">
-          <button className="btn-primary">{t('experience.add')}</button>
+          <button className="btn-secondary">{t('experience.add')}</button>
         </div>
       </form>
       <ul className="space-y-2">
