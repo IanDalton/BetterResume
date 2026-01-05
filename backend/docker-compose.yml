@@ -32,7 +32,7 @@ services:
     ports:
       - "80:80"
     command: >
-      --model-id sentence-transformers/all-MiniLM-L6-v2
+      --model-id nomic-ai/nomic-embed-text-v1.5
       --revision main
       --port 80
       --max-client-batch-size 8

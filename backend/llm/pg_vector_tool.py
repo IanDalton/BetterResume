@@ -51,8 +51,8 @@ class PGVectorTool(BaseTool):
         self._emb = OpenAIEmbeddings(
             base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://nomic-embed:80/v1"),
             api_key="asdsad",
-            model="sentence-transformers/all-MiniLM-L6-v2",
-            
+            model="nomic-ai/nomic-embed-text-v1.5",
+            chunk_size=8
         )
 
     async def _ensure_connection(self):
@@ -87,8 +87,11 @@ class PGVectorTool(BaseTool):
     async def aadd_documents(self, documents: List[str], ids: List[str], user_id: str):
         """Compute embeddings and upsert to Postgres for a user (async)."""
         await self._ensure_connection()
+        # Truncate documents to avoid token limit errors (256 tokens max for this model)
+        # Using 1000 characters as a safe upper bound approximation
+        truncated_docs = [doc[:1000] for doc in documents]
         try:
-            embs = await self._emb.aembed_documents(documents)
+            embs = await self._emb.aembed_documents(truncated_docs)
             async with self._conn.cursor() as cur:
                 for id_, doc, emb in zip(ids, documents, embs):
                     await cur.execute(

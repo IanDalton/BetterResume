@@ -30,6 +30,7 @@ from bot import Bot
 from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
 from llm.gemini_agent import GeminiAgent
+from llm.job_experience_tool import GetLatestJobExperienceTool
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
@@ -119,11 +120,12 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
     )
     tool = get_user_tool(user_id)
+    latest_job_tool = GetLatestJobExperienceTool(user_id=user_id)
     clean_output_dir(out_dir)
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(tools=[tool], output_format=ResumeOutputFormat),
+        llm=GeminiAgent(tools=[tool, latest_job_tool], output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,
@@ -311,9 +313,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     )
     clean_output_dir(out_dir)
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
+    latest_job_tool = GetLatestJobExperienceTool(user_id=user_id)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(tools=[tool], output_format=ResumeOutputFormat),
+        llm=GeminiAgent(tools=[tool, latest_job_tool], output_format=ResumeOutputFormat),
         tool=tool,
         user_id=user_id,
         auto_ingest=True,
