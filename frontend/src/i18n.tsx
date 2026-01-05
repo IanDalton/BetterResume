@@ -172,7 +172,7 @@ const dictionaries: Record<Language, Dict> = {
   ,
   // Donation toast
   'donate.toast.title': 'Help keep it free',
-  'donate.toast.body': 'Traffic grew a lot. A small donation (~$5,000 ARS, less than a hamburger) helps keep the servers running and this tool free.',
+  'donate.toast.body': 'Traffic grew a lot. A small donation (~$5 USD, less than a big mac) helps keep the servers running and this tool free.',
   'donate.toast.cta': 'Donate',
   'donate.toast.dismiss': 'Not now',
   // Stripe donation
@@ -189,6 +189,9 @@ const dictionaries: Record<Language, Dict> = {
   'donate.complete.title': 'Complete Your Donation',
   'donate.changeAmount': 'Change Amount',
   'donate.back': '← Back to BetterResume',
+  'donate.job.title': '🎉 Did you get a job?',
+  'donate.job.subtitle': 'Spread the love! Consider a larger donation to help others land their dream jobs too.',
+  'donate.job.button': 'Spread the Love ($25)',
   'donate.support.title': 'Support BetterResume',
   'donate.support.subtitle': 'Your donation helps keep this tool free and running.',
   'donate.amount.label': 'Donation Amount (USD)',
@@ -393,6 +396,9 @@ const dictionaries: Record<Language, Dict> = {
   'donate.error.session': 'Fallo al crear la sesión',
   'donate.error.secret': 'No se recibió el secreto del cliente',
   'donate.error.process': 'Fallo al procesar la donación. Por favor intenta de nuevo.',
+  'donate.job.title': '🎉 ¿Conseguiste trabajo?',
+  'donate.job.subtitle': '¡Comparte el amor! Considera una donación mayor para ayudar a otros a conseguir el trabajo de sus sueños.',
+  'donate.job.button': 'Comparte el Amor ($25)',
   'donate.complete.title': 'Completa tu Donación',
   'donate.changeAmount': 'Cambiar Monto',
   'donate.back': '← Volver a BetterResume',

@@ -114,6 +114,23 @@ export function Donate() {
         </div>
 
         <div className="space-y-6">
+          <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
+            <h3 className="text-lg font-semibold text-green-800 dark:text-green-300 mb-2">
+              {t('donate.job.title')}
+            </h3>
+            <p className="text-sm text-green-700 dark:text-green-400 mb-3">
+              {t('donate.job.subtitle')}
+            </p>
+            <button
+              onClick={() => setAmount(25)}
+              className={`w-full py-2 px-4 rounded-lg border border-green-500 text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors ${
+                amount === 25 ? 'bg-green-100 dark:bg-green-900/40 ring-2 ring-green-500' : 'bg-white dark:bg-transparent'
+              }`}
+            >
+              {t('donate.job.button')}
+            </button>
+          </div>
+
           <div>
             <label htmlFor="amount" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
               {t('donate.amount.label')}

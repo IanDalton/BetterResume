@@ -628,8 +628,7 @@ export function Home() {
         className="shadow-lg"
       />
     </div>
-  <Footer />
-  <Footer />
+  <Footer geoLocation={geoLocation} onDonateClick={setShowDonate} />
   </div>
   );
 }

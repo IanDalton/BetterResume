@@ -12,6 +12,7 @@ export default function App() {
         <Route path="/donate" element={<Donate />} />
         <Route path="/donate-checkout" element={<Donate />} />
         <Route path="/thank-you" element={<ThankYou />} />
+        <Route path="/donate-success" element={<ThankYou />} />
       </Routes>
     </BrowserRouter>
   );
