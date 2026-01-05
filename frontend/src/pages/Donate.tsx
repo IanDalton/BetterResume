@@ -13,7 +13,7 @@ import { authStateListener } from '../services/firebase';
 const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
 const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
 
-const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
 
 export function Donate() {
