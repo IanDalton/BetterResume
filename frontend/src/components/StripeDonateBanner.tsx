@@ -24,7 +24,7 @@ export function StripeDonateBanner({ open, onClose, isArgentina = false }: Props
     setIsLoading(true);
     try {
       // Call backend to create Stripe checkout session
-      const response = await fetch(`${API_BASE}/resume/create-donation-session`, {
+      const response = await fetch(`${API_BASE}/create-donation-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
