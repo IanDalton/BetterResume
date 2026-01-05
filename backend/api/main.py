@@ -38,11 +38,12 @@ async def add_request_context(request: Request, call_next):
         clear_request_id()
 
 app.include_router(health.router)
-app.include_router(jobs.router)
-app.include_router(profile.router)
-app.include_router(resume.router)
-app.include_router(users.router)
-app.include_router(donations.router)
+app.include_router(jobs.router, prefix="/resume")
+app.include_router(profile.router, prefix="/resume")
+app.include_router(resume.router, prefix="/resume")
+app.include_router(users.router, prefix="/resume")
+app.include_router(donations.router, prefix="/resume")
+
 
 # Convenience root
 @app.get("/")
