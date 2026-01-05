@@ -8,10 +8,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import Confetti from 'react-confetti';
 import { useI18n } from '../i18n';
 import { authStateListener } from '../services/firebase';
-
-// Initialize Stripe
-const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
-const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
+import { getStripe } from '../services/stripe';
 
 const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
@@ -20,12 +17,17 @@ export function Donate() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientSecret, setClientSecret] = useState<string | null>(searchParams.get('client_secret'));
+  const [stripePromise, setStripePromise] = useState<Promise<any> | null>(null);
   const [amount, setAmount] = useState(5);
   const [reason, setReason] = useState<'support' | 'job'>('support');
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
+
+  useEffect(() => {
+    setStripePromise(getStripe());
+  }, []);
 
   useEffect(() => {
     const unsub = authStateListener(user => {
@@ -121,8 +123,8 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
                 <EmbeddedCheckout />
               </EmbeddedCheckoutProvider>
             ) : (
-              <div className="p-8 text-center text-red-500">
-                Stripe configuration missing.
+              <div className="p-8 text-center text-neutral-500">
+                Loading payment...
               </div>
             )}
           </div>

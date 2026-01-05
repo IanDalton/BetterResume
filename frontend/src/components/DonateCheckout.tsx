@@ -4,18 +4,14 @@ import {
   EmbeddedCheckoutProvider,
   EmbeddedCheckout
 } from '@stripe/react-stripe-js';
-
-// Initialize Stripe outside of component to avoid recreating stripe object on every render
-const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
-const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
+import { getStripe } from '../services/stripe';
 
 export function DonateCheckout() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [stripePromise, setStripePromise] = useState<Promise<any> | null>(null);
 
   useEffect(() => {
-    if (!STRIPE_KEY) {
-      console.error('Stripe public key is missing');
-    }
+    setStripePromise(getStripe());
   }, []);
 
   useEffect(() => {
@@ -64,8 +60,8 @@ export function DonateCheckout() {
               <EmbeddedCheckout />
             </EmbeddedCheckoutProvider>
           ) : (
-            <div className="p-8 text-center text-red-500">
-              {!STRIPE_KEY ? 'Stripe configuration missing.' : 'Loading payment...'}
+            <div className="p-8 text-center text-neutral-500">
+              Loading payment...
             </div>
           )}
         </div>

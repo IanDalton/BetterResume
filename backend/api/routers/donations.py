@@ -16,6 +16,13 @@ if not STRIPE_SECRET_KEY:
     logger.warning("STRIPE_SECRET_KEY not set in environment")
 stripe.api_key = STRIPE_SECRET_KEY
 
+STRIPE_PUBLIC_KEY = os.getenv('STRIPE_PUBLIC_KEY')
+
+@router.get("/stripe-config")
+async def get_stripe_config():
+    """Return the Stripe public key for frontend initialization"""
+    return {"publicKey": STRIPE_PUBLIC_KEY}
+
 
 @router.post("/create-donation-session")
 async def create_donation_session(request: Request):
