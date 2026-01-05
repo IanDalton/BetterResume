@@ -495,6 +495,9 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
             />
             <span className={!imageUrl ? 'text-neutral-400 dark:text-neutral-600' : ''}>{t('profile.toggle')}</span>
           </label>
+          <p className="text-[10px] text-amber-600 dark:text-amber-500 italic max-w-xs leading-tight">
+            {t('profile.warning')}
+          </p>
           {!imageUrl && (
             <p className="text-xs text-neutral-500 dark:text-neutral-500">{t('profile.toggle.disabled')}</p>
           )}

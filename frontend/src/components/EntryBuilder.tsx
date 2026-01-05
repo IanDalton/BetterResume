@@ -69,7 +69,7 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
         {showRoleDesc && <TextareaField label={t('field.extraDetails')} value={form.role_description||''} onChange={v=>setField('role_description',v)} placeholder={t('placeholder.extraDetails')} className="md:col-span-2 lg:col-span-3" />}
         <div className="md:col-span-2 lg:col-span-3 flex justify-end gap-3 pt-2">
           {editing != null && <button type="button" onClick={reset} className="btn-secondary">{t('button.cancel')}</button>}
-          <button type="submit" className="btn-primary">{editing == null ? t('button.addEntry') : t('button.updateEntry')}</button>
+          <button type="submit" className="btn-secondary">{editing == null ? t('button.addEntry') : t('button.updateEntry')}</button>
         </div>
       </form>
       <EntriesList entries={entries} onEdit={startEdit} onRemove={onRemove} />

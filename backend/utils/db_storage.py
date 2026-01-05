@@ -167,3 +167,54 @@ class DBStorage:
         except Exception as e:
             self.logger.exception("Failed to insert resume request: %s", e)
             raise
+
+    def _ensure_donations_table(self):
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS donations (
+                            id BIGSERIAL PRIMARY KEY,
+                            user_id TEXT,
+                            amount INTEGER NOT NULL,
+                            currency TEXT NOT NULL,
+                            reason TEXT NOT NULL,
+                            stripe_session_id TEXT UNIQUE,
+                            status TEXT DEFAULT 'completed',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+        except Exception as e:
+            self.logger.exception("Failed to ensure donations table: %s", e)
+
+    def record_donation(self, user_id: Optional[str], amount: int, currency: str, reason: str, stripe_session_id: str, status: str = 'completed'):
+        try:
+            self._ensure_donations_table()
+            if user_id:
+                self._ensure_user(user_id)
+            
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO donations (user_id, amount, currency, reason, stripe_session_id, status)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (stripe_session_id) DO NOTHING
+                        """,
+                        (user_id, amount, currency, reason, stripe_session_id, status)
+                    )
+            self.logger.info("Recorded donation: user=%s amount=%d %s reason=%s", user_id, amount, currency, reason)
+        except Exception as e:
+            self.logger.exception("Failed to record donation: %s", e)
+
+    def get_job_success_count(self) -> int:
+        try:
+            self._ensure_donations_table()
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM donations WHERE reason = 'job' AND status = 'completed'")
+                    row = cur.fetchone()
+                    return row[0] if row else 0
+        except Exception as e:
+            self.logger.exception("Failed to get job success count: %s", e)
+            return 0

@@ -27,6 +27,11 @@ export function Footer({ geoLocation, onDonateClick }: { geoLocation: { isArgent
         </a>
 
         <span className="hidden sm:inline">•</span>
+        
+        <span className="hidden md:inline text-green-600 dark:text-green-400 font-medium">
+          {t('footer.gotJob')}
+        </span>
+
         {!geoLocation || !geoLocation.isArgentina ? (
               <button onClick={() => { navigate('/donate'); setShowDonate(false); }} className="btn-primary">{t('donate.cta')}</button>
             ) : (

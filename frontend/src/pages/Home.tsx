@@ -76,11 +76,7 @@ export function Home() {
   });
   const handleProfileUploaded = useCallback((url: string | null) => {
     setProfilePictureUrl(url);
-    if (url) {
-      if (!includeProfilePicture) {
-        setIncludeProfilePicture(true);
-      }
-    } else if (includeProfilePicture) {
+    if (!url && includeProfilePicture) {
       setIncludeProfilePicture(false);
     }
   }, [includeProfilePicture]);
