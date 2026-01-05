@@ -17,6 +17,88 @@ class DBStorage:
     def _get_conn(self):
         return psycopg.connect(self.db_url, autocommit=True)
 
+    def init_schema(self):
+        """Initialize database schema if not exists."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    # Create extension
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+                    
+                    # Create users table first as others depend on it
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS users (
+                          user_id TEXT PRIMARY KEY,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+                    
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS resume_vectors (
+                          id TEXT PRIMARY KEY,
+                          user_id TEXT NOT NULL,
+                          content TEXT,
+                          embedding vector(768)
+                        );
+                    """)
+                    
+                    cur.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_resume_vectors_embedding
+                        ON resume_vectors USING ivfflat (embedding) WITH (lists = 100);
+                    """)
+                    
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS resume_requests (
+                          id BIGSERIAL PRIMARY KEY,
+                          user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                          job_posting TEXT NOT NULL,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+                    
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS job_experiences (
+                          id BIGSERIAL PRIMARY KEY,
+                          user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                          company TEXT NOT NULL,
+                          description TEXT NOT NULL,
+                          type TEXT NOT NULL,
+                          role TEXT,
+                          location TEXT,
+                          start_date TEXT,
+                          end_date TEXT,
+                          raw JSONB,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+                    
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS user_files (
+                            user_id TEXT NOT NULL,
+                            file_type TEXT NOT NULL,
+                            filename TEXT NOT NULL,
+                            content BYTEA,
+                            mime_type TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (user_id, file_type)
+                        );
+                    """)
+                    
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS resume_generation_cache (
+                            user_id TEXT NOT NULL,
+                            cache_key TEXT NOT NULL,
+                            data JSONB NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (user_id, cache_key)
+                        );
+                    """)
+                    self.logger.info("Database schema initialized successfully")
+        except Exception as e:
+            self.logger.error("Failed to initialize database schema: %s", e)
+            # Don't raise here, let the app try to run, maybe tables exist but something else failed
+
     def _ensure_user(self, user_id: str):
         try:
             with self._get_conn() as conn:

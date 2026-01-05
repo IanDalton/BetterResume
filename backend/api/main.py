@@ -1,15 +1,27 @@
 import logging
 import time
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from utils.logging_utils import setup_logging, new_request_id, clear_request_id
+from utils.db_storage import DBStorage
 from api.routers import health, jobs, profile, resume, users, donations
 
 setup_logging()
-app = FastAPI(title="BetterResume API", version="0.1.0")
 # Module logger (relies on configured handlers)
 logger = logging.getLogger("betterresume.api")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing database schema...")
+    try:
+        DBStorage().init_schema()
+    except Exception as e:
+        logger.error("Startup schema initialization failed: %s", e)
+    yield
+
+app = FastAPI(title="BetterResume API", version="0.1.0", lifespan=lifespan)
 
 # Firebase auth disabled for now
 app.add_middleware(
