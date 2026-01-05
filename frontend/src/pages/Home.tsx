@@ -563,12 +563,14 @@ export function Home() {
           <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
             {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
           </div>
+          {geoLocation?.isArgentina && (
           <div className="mt-2">
             <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
             <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
               <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
             </a>
           </div>
+          )}
         </div>
       </div>
     )}
@@ -615,15 +617,20 @@ export function Home() {
         if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
       }
     }, [])} />
-    <div className="max-w-5xl mx-auto pointer-events-auto">
-      <AdBanner
-        lightSrc="/Lannis banner - light.png"
-        darkSrc="/Lannis banner - dark.png"
-        alt="Lannis"
-        href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume"
-        className="shadow-lg"
-      />
-    </div>
+    {
+      geoLocation?.isArgentina && (
+      <div className="max-w-5xl mx-auto pointer-events-auto">
+        <AdBanner
+          lightSrc="/Lannis banner - light.png"
+          darkSrc="/Lannis banner - dark.png"
+          alt="Lannis"
+          href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume"
+          className="shadow-lg"
+        />
+      </div>
+      )
+    }
+      
   <Footer geoLocation={geoLocation} onDonateClick={setShowDonate} />
   </div>
   );
