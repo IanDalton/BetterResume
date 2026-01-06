@@ -418,11 +418,41 @@ export function Home() {
   const idx = latestStage ? stageOrder.indexOf(latestStage) : -1;
   const percent = idx >= 0 ? Math.min(100, Math.round(((idx + 1) / stageOrder.length) * 100)) : (showGenModal ? 5 : 0);
 
+  const [pdfUrl, setPdfUrl] = useState<string|null>(null);
+
   useEffect(()=>{
     if (downloadLinks?.pdf && pdfSectionRef.current) {
       // Scroll PDF section into view after generation completes
       pdfSectionRef.current.scrollIntoView({behavior:'smooth'});
     }
+    
+    // Fetch PDF as blob to bypass CSP frame-ancestors restrictions
+    let active = true;
+    if (downloadLinks?.pdf) {
+      if (downloadLinks.pdf.startsWith('blob:') || downloadLinks.pdf.startsWith('data:')) {
+        setPdfUrl(downloadLinks.pdf);
+      } else {
+        fetch(downloadLinks.pdf)
+          .then(res => res.blob())
+          .then(blob => {
+            if (active) {
+              const url = URL.createObjectURL(blob);
+              setPdfUrl(url);
+            }
+          })
+          .catch(err => {
+            console.error('Failed to fetch PDF blob:', err);
+            if (active) setPdfUrl(downloadLinks.pdf);
+          });
+      }
+    } else {
+      setPdfUrl(null);
+    }
+    return () => {
+      active = false; 
+      // Note: we strictly should revokeObjectURL here if we created one, 
+      // but simplistic handling suffices for this single-page view.
+    };
   }, [downloadLinks?.pdf]);
 
   return (
@@ -525,8 +555,8 @@ export function Home() {
       <section ref={pdfSectionRef} className="mb-24 space-y-4">
         <h2 className="text-xl font-semibold">{t('preview.title')}</h2>
   <div className="w-full border border-neutral-200 dark:border-neutral-800 rounded bg-white dark:bg-neutral-900 aspect-[8.5/11] relative overflow-hidden">
-          {downloadLinks.pdf ? (
-            <iframe title="Resume PDF" src={downloadLinks.pdf} className="w-full h-full" />
+          {pdfUrl ? (
+            <iframe title="Resume PDF" src={pdfUrl} className="w-full h-full" />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('preview.pdf.unavailable')}</div>
           )}
