@@ -18,3 +18,4 @@ python-multipart
 langchain
 
 stripe
+psycopg-pool

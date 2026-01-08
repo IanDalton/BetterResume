@@ -5,13 +5,12 @@ from typing import Annotated, Any, List, Optional
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import InjectedState
 
-import psycopg
-from pgvector.psycopg import register_vector_async
 from pgvector import Vector
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain.tools import BaseTool
 from pydantic import Field, PrivateAttr
 from llm.state import State
+from utils.db_storage import get_async_pool
 
 
 class PGVectorTool(BaseTool):
@@ -29,12 +28,12 @@ class PGVectorTool(BaseTool):
     db_url: str = Field(default="")
     user_id: Optional[str] = Field(default=None)
 
-    _conn: Any = PrivateAttr()
     _emb: OpenAIEmbeddings = PrivateAttr()
 
     def __init__(self, db_url: Optional[str] = "", table_name: Optional[str] = "resume_vectors", dim: Optional[int] = 768, user_id: Optional[str] = None):
         super().__init__()
         self._logger = logging.getLogger("betterresume.pgvector")
+        # Ensure we just checking/setting logic but likely ignoring for connection creation as we use global pool
         self.db_url =  os.getenv("DATABASE_URL",db_url)
         if self.db_url and self.db_url.startswith("postgresql+asyncpg://"):
             self.db_url = self.db_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -45,8 +44,6 @@ class PGVectorTool(BaseTool):
         if user_id:
             self.user_id = user_id
 
-        self._conn = None
-
         # Embedding provider
         self._emb = OpenAIEmbeddings(
             base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://nomic-embed:80/v1"),
@@ -54,27 +51,6 @@ class PGVectorTool(BaseTool):
             model="nomic-ai/nomic-embed-text-v1.5",
             chunk_size=8
         )
-
-    async def _ensure_connection(self):
-        if self._conn and not self._conn.closed:
-            return
-        self._conn = await psycopg.AsyncConnection.connect(self.db_url, autocommit=True)
-        await register_vector_async(self._conn)
-        async with self._conn.cursor() as cur:
-            await cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-            await cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.table_name} (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    content TEXT,
-                    embedding vector({self.dim})
-                );
-                """
-            )
-            await cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.table_name}_embedding ON {self.table_name} USING ivfflat (embedding) WITH (lists = 100);"
-            )
 
     def _run_sync(self, coro):
         """Run an async coroutine from sync context; raise if already in running loop."""
@@ -86,22 +62,27 @@ class PGVectorTool(BaseTool):
 
     async def aadd_documents(self, documents: List[str], ids: List[str], user_id: str):
         """Compute embeddings and upsert to Postgres for a user (async)."""
-        await self._ensure_connection()
+        pool = get_async_pool()
+        if not pool:
+            # Fallback or error? better error
+            raise RuntimeError("Database pool not initialized")
+            
         # Truncate documents to avoid token limit errors (256 tokens max for this model)
         # Using 1000 characters as a safe upper bound approximation
         truncated_docs = [doc[:1000] for doc in documents]
         try:
             embs = await self._emb.aembed_documents(truncated_docs)
-            async with self._conn.cursor() as cur:
-                for id_, doc, emb in zip(ids, documents, embs):
-                    await cur.execute(
-                        f"""
-                        INSERT INTO {self.table_name} (id, user_id, content, embedding)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, embedding = EXCLUDED.embedding;
-                        """,
-                        (id_, user_id, doc, Vector(emb)),
-                    )
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    for id_, doc, emb in zip(ids, documents, embs):
+                        await cur.execute(
+                            f"""
+                            INSERT INTO {self.table_name} (id, user_id, content, embedding)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, embedding = EXCLUDED.embedding;
+                            """,
+                            (id_, user_id, doc, Vector(emb)),
+                        )
             self._logger.info("Added %d documents user=%s", len(documents), user_id)
             return "Documents added successfully."
         except Exception as e:
@@ -112,10 +93,13 @@ class PGVectorTool(BaseTool):
         return self._run_sync(self.aadd_documents(documents, ids, user_id))
 
     async def adelete_user_documents(self, user_id: str):
-        await self._ensure_connection()
+        pool = get_async_pool()
+        if not pool:
+             raise RuntimeError("Database pool not initialized")
         try:
-            async with self._conn.cursor() as cur:
-                await cur.execute(f"DELETE FROM {self.table_name} WHERE user_id = %s", (user_id,))
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(f"DELETE FROM {self.table_name} WHERE user_id = %s", (user_id,))
             return "Deleted"
         except Exception as e:
             self._logger.exception("Error deleting user documents: %s", e)
@@ -135,25 +119,29 @@ class PGVectorTool(BaseTool):
 
     async def _arun(self, query: str,state:Annotated[State, InjectedState], n_results: int = 2, **kwargs):
         """Async query execution used by LangChain graphs."""
-        await self._ensure_connection()
+        pool = get_async_pool()
+        if not pool:
+             raise RuntimeError("Database pool not initialized")
+             
         user_id = state.get("user_id")
 
         if user_id is None:
             raise ValueError("user_id is required for pgvector queries")
         try:
             q_emb = await self._emb.aembed_query(query)
-            async with self._conn.cursor() as cur:
-                await cur.execute(
-                    f"""
-                    SELECT content, id, embedding <-> %s AS distance
-                    FROM {self.table_name}
-                    WHERE user_id = %s
-                    ORDER BY distance
-                    LIMIT %s;
-                    """,
-                    (Vector(q_emb), user_id, n_results),
-                )
-                rows = await cur.fetchall()
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"""
+                        SELECT content, id, embedding <-> %s AS distance
+                        FROM {self.table_name}
+                        WHERE user_id = %s
+                        ORDER BY distance
+                        LIMIT %s;
+                        """,
+                        (Vector(q_emb), user_id, n_results),
+                    )
+                    rows = await cur.fetchall()
             return list(zip([r[0] for r in rows], [r[2] for r in rows]))
         except Exception as e:
             self._logger.exception("Error querying: %s", e)

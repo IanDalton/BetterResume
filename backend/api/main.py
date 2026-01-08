@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from utils.logging_utils import setup_logging, new_request_id, clear_request_id
-from utils.db_storage import DBStorage
+from utils.db_storage import DBStorage, init_db_pool, close_db_pool, init_async_db_pool, close_async_db_pool
 from api.routers import health, jobs, profile, resume, users, donations
 
 setup_logging()
@@ -14,12 +14,22 @@ logger = logging.getLogger("betterresume.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Initializing database pools...")
+    init_db_pool()
+    
     logger.info("Initializing database schema...")
     try:
         DBStorage().init_schema()
     except Exception as e:
         logger.error("Startup schema initialization failed: %s", e)
+
+    # Initialize async pool after schema is ready (so vector extension exists)
+    await init_async_db_pool()
     yield
+    
+    logger.info("Closing database pools...")
+    await close_async_db_pool()
+    close_db_pool()
 
 app = FastAPI(title="BetterResume API", version="0.1.0", lifespan=lifespan)
 

@@ -2,7 +2,80 @@ import os
 import logging
 import json
 import psycopg
+from psycopg_pool import ConnectionPool, AsyncConnectionPool
+from pgvector.psycopg import register_vector, register_vector_async
 from typing import Optional, Dict, Any, Tuple, List
+
+# Global connection pools
+_pool: Optional[ConnectionPool] = None
+_async_pool: Optional[AsyncConnectionPool] = None
+
+def _configure_sync(conn):
+    try:
+        register_vector(conn)
+    except Exception as e:
+         logging.getLogger("betterresume.db_storage").warning("Failed to register vector in sync pool (maybe extension missing?): %s", e)
+
+async def _configure_async(conn):
+    try:
+        await register_vector_async(conn)
+    except Exception as e:
+         logging.getLogger("betterresume.db_storage").warning("Failed to register vector in async pool (maybe extension missing?): %s", e)
+
+def init_db_pool(db_url: Optional[str] = None):
+    """Initialize the global database connection pool."""
+    global _pool
+    if _pool is not None:
+        return
+
+    url = db_url or os.getenv("DATABASE_URL")
+    if url and url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://")
+    
+    if not url:
+        logging.getLogger("betterresume.db_storage").warning("No DATABASE_URL found, skipping pool initialization")
+        return
+
+    # Initialize pool with reasonable defaults
+    # max_size=20 helps prevent 'too many clients' errors
+    _pool = ConnectionPool(conninfo=url, min_size=1, max_size=20, kwargs={"autocommit": True}, configure=_configure_sync)
+    logging.getLogger("betterresume.db_storage").info("Database connection pool initialized")
+
+async def init_async_db_pool(db_url: Optional[str] = None):
+    """Initialize the global async database connection pool."""
+    global _async_pool
+    if _async_pool is not None:
+        return
+
+    url = db_url or os.getenv("DATABASE_URL")
+    if url and url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://")
+    
+    if not url:
+        logging.getLogger("betterresume.db_storage").warning("No DATABASE_URL found, skipping async pool initialization")
+        return
+
+    _async_pool = AsyncConnectionPool(conninfo=url, min_size=1, max_size=20, kwargs={"autocommit": True}, configure=_configure_async)
+    logging.getLogger("betterresume.db_storage").info("Async database connection pool initialized")
+
+def close_db_pool():
+    """Close the global database connection pool."""
+    global _pool
+    if _pool:
+        _pool.close()
+        _pool = None
+        logging.getLogger("betterresume.db_storage").info("Database connection pool closed")
+
+async def close_async_db_pool():
+    """Close the global async database connection pool."""
+    global _async_pool
+    if _async_pool:
+        await _async_pool.close()
+        _async_pool = None
+        logging.getLogger("betterresume.db_storage").info("Async database connection pool closed")
+
+def get_async_pool() -> Optional[AsyncConnectionPool]:
+    return _async_pool
 
 class DBStorage:
     """
@@ -15,6 +88,22 @@ class DBStorage:
         self.logger = logging.getLogger("betterresume.db_storage")
 
     def _get_conn(self):
+        """
+        Returns a context manager that yields a connection.
+        Uses the global pool if available and matching configuration,
+        otherwise creates a dedicated connection (and logs a warning if appropriate).
+        """
+        global _pool
+        
+        # Check if we can use the global pool
+        # We assume if self.db_url matches the one used for init_db_pool (implicitly), we use the pool.
+        # Since we don't store the pool's URL, we'll assume if _pool exists, it's the right one 
+        # for standard app usage.
+        if _pool:
+            return _pool.connection()
+            
+        # Fallback to creating a new connection
+        # self.logger.debug("Creating new connection (no pool available)")
         return psycopg.connect(self.db_url, autocommit=True)
 
     def init_schema(self):
