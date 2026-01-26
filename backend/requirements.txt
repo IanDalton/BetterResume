@@ -19,3 +19,4 @@ langchain
 
 stripe
 psycopg-pool
+firebase-admin

@@ -126,8 +126,24 @@ class DBStorage:
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS users (
                           user_id TEXT PRIMARY KEY,
-                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          email TEXT,
+                          is_admin BOOLEAN DEFAULT FALSE
                         );
+                    """)
+                    
+                    # Migration: Add email and is_admin if they don't exist
+                    cur.execute("""
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='email') THEN
+                                ALTER TABLE users ADD COLUMN email TEXT;
+                            END IF;
+                            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='is_admin') THEN
+                                ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;
+                            END IF;
+                        END
+                        $$;
                     """)
                     
                     cur.execute("""
@@ -196,17 +212,48 @@ class DBStorage:
             self.logger.error("Failed to initialize database schema: %s", e)
             # Don't raise here, let the app try to run, maybe tables exist but something else failed
 
-    def _ensure_user(self, user_id: str):
+    def _ensure_user(self, user_id: str, email: Optional[str] = None):
         try:
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
-                        (user_id,),
-                    )
+                    if email:
+                        cur.execute(
+                            """
+                            INSERT INTO users (user_id, email) VALUES (%s, %s) 
+                            ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email
+                            """,
+                            (user_id, email),
+                        )
+                    else:
+                        cur.execute(
+                            "INSERT INTO users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING",
+                            (user_id,),
+                        )
         except Exception as e:
             self.logger.exception("Failed to ensure user exists: %s", e)
             raise
+    
+    def is_admin(self, user_id: str) -> bool:
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
+                    row = cur.fetchone()
+                    return row[0] if row else False
+        except Exception as e:
+            self.logger.exception("Failed to check admin status: %s", e)
+            return False
+
+    def set_admin(self, user_id: str, is_admin: bool):
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                     cur.execute(
+                        "UPDATE users SET is_admin = %s WHERE user_id = %s",
+                        (is_admin, user_id)
+                     )
+        except Exception as e:
+            self.logger.exception("Failed to set admin status: %s", e)
 
     def save_file(self, user_id: str, file_type: str, content: bytes, filename: str, mime_type: Optional[str] = None):
         """Upsert a file for a user."""

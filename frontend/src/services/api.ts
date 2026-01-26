@@ -140,3 +140,33 @@ export async function resolveProfilePictureUrl(userId: string): Promise<string |
     return null;
   }
 }
+
+export async function getAdminStats() {
+  // Try to determine the root API url by stripping /resume from the configured base
+  // This is a bit hacky but safer than assuming localhost:8000
+  const rootUrl = API_BASE.endsWith('/resume') 
+    ? API_BASE.substring(0, API_BASE.length - '/resume'.length) 
+    : API_BASE;
+  
+  // Get Firebase token
+  // We assume firebase is initialized if we are calling this
+  let token = "";
+  try {
+     const { getFirebaseAuth } = await import('./firebase');
+     const user = getFirebaseAuth().currentUser;
+     if (user) {
+         token = await user.getIdToken();
+     }
+  } catch (e) {
+      console.warn("Failed to get auth token for stats", e);
+  }
+
+  const headers: Record<string,string> = {};
+  if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+  }
+    
+  const res = await fetch(`${rootUrl}/admin/stats`, { headers });
+  if (!res.ok) throw new Error("Failed to fetch stats: " + res.status);
+  return res.json();
+}

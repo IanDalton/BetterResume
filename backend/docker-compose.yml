@@ -46,6 +46,7 @@ services:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password}@postgres-br:5432/${DB_NAME:-better_resume}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      ADMIN_EMAILS: "daltioan@gmail.com"
     depends_on:
       postgres-br:
         condition: service_healthy

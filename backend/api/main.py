@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from utils.logging_utils import setup_logging, new_request_id, clear_request_id
 from utils.db_storage import DBStorage, init_db_pool, close_db_pool, init_async_db_pool, close_async_db_pool
-from api.routers import health, jobs, profile, resume, users, donations
+from api.routers import health, jobs, profile, resume, users, donations, admin
 
 setup_logging()
 # Module logger (relies on configured handlers)
@@ -71,6 +71,7 @@ app.include_router(profile.router, prefix="/resume")
 app.include_router(resume.router, prefix="/resume")
 app.include_router(users.router, prefix="/resume")
 app.include_router(donations.router, prefix="/resume")
+app.include_router(admin.router, prefix="/admin")
 
 
 # Convenience root

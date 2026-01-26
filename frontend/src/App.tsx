@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Home } from './pages/Home';
 import { Donate } from './pages/Donate';
 import { ThankYou } from './pages/ThankYou';
+import { AdminDashboard } from './pages/AdminDashboard';
+
 
 export default function App() {
   return (
@@ -13,6 +15,7 @@ export default function App() {
         <Route path="/donate-checkout" element={<Donate />} />
         <Route path="/thank-you" element={<ThankYou />} />
         <Route path="/donate-success" element={<ThankYou />} />
+        <Route path="/admin" element={<AdminDashboard />} />
       </Routes>
     </BrowserRouter>
   );
