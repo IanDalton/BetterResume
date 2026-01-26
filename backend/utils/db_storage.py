@@ -1,6 +1,7 @@
 import os
 import logging
 import json
+import contextlib
 import psycopg
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
 from pgvector.psycopg import register_vector, register_vector_async
@@ -87,6 +88,7 @@ class DBStorage:
             self.db_url = self.db_url.replace("postgresql+asyncpg://", "postgresql://")
         self.logger = logging.getLogger("betterresume.db_storage")
 
+    @contextlib.contextmanager
     def _get_conn(self):
         """
         Returns a context manager that yields a connection.
@@ -95,16 +97,22 @@ class DBStorage:
         """
         global _pool
         
+        if _pool is None:
+             init_db_pool(self.db_url)
+        
         # Check if we can use the global pool
         # We assume if self.db_url matches the one used for init_db_pool (implicitly), we use the pool.
         # Since we don't store the pool's URL, we'll assume if _pool exists, it's the right one 
         # for standard app usage.
         if _pool:
-            return _pool.connection()
-            
+            with _pool.connection() as conn:
+                yield conn
+            return
+
         # Fallback to creating a new connection
-        # self.logger.debug("Creating new connection (no pool available)")
-        return psycopg.connect(self.db_url, autocommit=True)
+        self.logger.warning("Creating new connection (no pool available)")
+        with psycopg.connect(self.db_url, autocommit=True) as conn:
+            yield conn
 
     def init_schema(self):
         """Initialize database schema if not exists."""

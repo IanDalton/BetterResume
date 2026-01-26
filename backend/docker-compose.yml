@@ -1,7 +1,7 @@
 services:
-  postgres:
+  postgres-br:
     image: pgvector/pgvector:0.8.1-pg18-trixie
-    container_name: better-resume-db
+    container_name: better-resume-db-dev
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
@@ -17,10 +17,10 @@ services:
       timeout: 5s
       retries: 5
 
-  embedding-service:
+  embedding-service-br:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
     platform: linux/amd64
-    container_name: nomic-embed
+    container_name: nomic-embed-dev
     restart: unless-stopped
     # Mount a volume so the model downloads only once
     volumes:
@@ -39,15 +39,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: better-resume-backend
+    container_name: better-resume-backend-dev
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-better_resume}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password}@postgres-br:5432/${DB_NAME:-better_resume}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
     depends_on:
-      postgres:
+      postgres-br:
         condition: service_healthy
     volumes:
       - .:/app
