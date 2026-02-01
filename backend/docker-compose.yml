@@ -47,6 +47,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       ADMIN_EMAILS: "daltioan@gmail.com"
+      GOOGLE_CLOUD_PROJECT: "missingtrex"
     depends_on:
       postgres-br:
         condition: service_healthy
