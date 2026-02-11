@@ -2,6 +2,7 @@ import os
 import logging
 import json
 import contextlib
+import math
 import psycopg
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
 from pgvector.psycopg import register_vector, register_vector_async
@@ -21,6 +22,15 @@ def _read_int_env(name: str, default: int, min_value: int = 1) -> int:
         logging.getLogger("betterresume.db_storage").warning("Invalid %s=%r; using %d", name, raw, default)
         return default
     return max(min_value, value)
+
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _sanitize_json_value(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json_value(val) for val in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 def _get_pool_sizes() -> Tuple[int, int, int, int]:
     sync_min = _read_int_env("DB_POOL_MIN_SIZE", 1)
@@ -365,6 +375,7 @@ class DBStorage:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM job_experiences WHERE user_id = %s", (user_id,))
                     for rec in records:
+                        clean_rec = _sanitize_json_value(rec) if isinstance(rec, dict) else rec
                         cur.execute(
                             """
                             INSERT INTO job_experiences (
@@ -373,14 +384,14 @@ class DBStorage:
                             """,
                             (
                                 user_id,
-                                rec.get("company", ""),
-                                rec.get("description", ""),
-                                rec.get("type", ""),
-                                rec.get("role"),
-                                rec.get("location"),
-                                rec.get("start_date"),
-                                rec.get("end_date"),
-                                json.dumps(rec),
+                                clean_rec.get("company", ""),
+                                clean_rec.get("description", ""),
+                                clean_rec.get("type", ""),
+                                clean_rec.get("role"),
+                                clean_rec.get("location"),
+                                clean_rec.get("start_date"),
+                                clean_rec.get("end_date"),
+                                json.dumps(clean_rec, allow_nan=False),
                             ),
                         )
             self.logger.info("Replaced %d job experience rows for user=%s", len(records), user_id)
