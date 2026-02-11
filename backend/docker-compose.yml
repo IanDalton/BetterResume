@@ -1,6 +1,8 @@
 services:
   postgres-br:
     image: pgvector/pgvector:0.8.1-pg18-trixie
+    env_file:
+      - .env
     container_name: better-resume-db-dev
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
@@ -12,7 +14,7 @@ services:
       - postgres_data:/var/lib/postgresql
       - ./docker-initdb.d:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-better_resume}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,6 +22,8 @@ services:
   embedding-service-br:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
     platform: linux/amd64
+    env_file:
+      - .env
     container_name: nomic-embed-dev
     restart: unless-stopped
     # Mount a volume so the model downloads only once
@@ -40,6 +44,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: better-resume-backend-dev
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     environment:
