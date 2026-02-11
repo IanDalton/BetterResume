@@ -11,6 +11,29 @@ from typing import Optional, Dict, Any, Tuple, List
 _pool: Optional[ConnectionPool] = None
 _async_pool: Optional[AsyncConnectionPool] = None
 
+def _read_int_env(name: str, default: int, min_value: int = 1) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logging.getLogger("betterresume.db_storage").warning("Invalid %s=%r; using %d", name, raw, default)
+        return default
+    return max(min_value, value)
+
+def _get_pool_sizes() -> Tuple[int, int, int, int]:
+    sync_min = _read_int_env("DB_POOL_MIN_SIZE", 1)
+    sync_max = _read_int_env("DB_POOL_MAX_SIZE", 5)
+    async_min = _read_int_env("ASYNC_DB_POOL_MIN_SIZE", sync_min)
+    async_max = _read_int_env("ASYNC_DB_POOL_MAX_SIZE", sync_max)
+
+    if sync_min > sync_max:
+        sync_min = sync_max
+    if async_min > async_max:
+        async_min = async_max
+    return sync_min, sync_max, async_min, async_max
+
 def _configure_sync(conn):
     try:
         register_vector(conn)
@@ -37,9 +60,21 @@ def init_db_pool(db_url: Optional[str] = None):
         logging.getLogger("betterresume.db_storage").warning("No DATABASE_URL found, skipping pool initialization")
         return
 
-    # Initialize pool with reasonable defaults
-    # max_size=20 helps prevent 'too many clients' errors
-    _pool = ConnectionPool(conninfo=url, min_size=1, max_size=20, kwargs={"autocommit": True}, configure=_configure_sync)
+    sync_min, sync_max, _, _ = _get_pool_sizes()
+    logging.getLogger("betterresume.db_storage").info(
+        "Initializing sync DB pool min=%d max=%d",
+        sync_min,
+        sync_max,
+    )
+
+    # Initialize pool with conservative defaults to avoid exhausting Postgres connections
+    _pool = ConnectionPool(
+        conninfo=url,
+        min_size=sync_min,
+        max_size=sync_max,
+        kwargs={"autocommit": True},
+        configure=_configure_sync,
+    )
     logging.getLogger("betterresume.db_storage").info("Database connection pool initialized")
 
 async def init_async_db_pool(db_url: Optional[str] = None):
@@ -56,7 +91,20 @@ async def init_async_db_pool(db_url: Optional[str] = None):
         logging.getLogger("betterresume.db_storage").warning("No DATABASE_URL found, skipping async pool initialization")
         return
 
-    _async_pool = AsyncConnectionPool(conninfo=url, min_size=1, max_size=20, kwargs={"autocommit": True}, configure=_configure_async)
+    _, _, async_min, async_max = _get_pool_sizes()
+    logging.getLogger("betterresume.db_storage").info(
+        "Initializing async DB pool min=%d max=%d",
+        async_min,
+        async_max,
+    )
+
+    _async_pool = AsyncConnectionPool(
+        conninfo=url,
+        min_size=async_min,
+        max_size=async_max,
+        kwargs={"autocommit": True},
+        configure=_configure_async,
+    )
     logging.getLogger("betterresume.db_storage").info("Async database connection pool initialized")
 
 def close_db_pool():
@@ -105,14 +153,21 @@ class DBStorage:
         # Since we don't store the pool's URL, we'll assume if _pool exists, it's the right one 
         # for standard app usage.
         if _pool:
+            self.logger.debug("Using pooled DB connection")
             with _pool.connection() as conn:
                 yield conn
             return
 
         # Fallback to creating a new connection
         self.logger.warning("Creating new connection (no pool available)")
-        with psycopg.connect(self.db_url, autocommit=True) as conn:
+        conn = psycopg.connect(self.db_url, autocommit=True)
+        try:
             yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def init_schema(self):
         """Initialize database schema if not exists."""
