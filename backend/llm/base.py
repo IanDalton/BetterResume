@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Type, Union
-from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
 from utils.file_io import load_prompt
 from pydantic import BaseModel
 from langchain_core.messages import BaseMessage
 from llm.state import State
-from langchain.agents.structured_output import ToolStrategy
 class BaseLLM(ABC):
     """BaseLLM is an abstract base class that serves as a blueprint for creating adapters for 
     Large Language Models (LLMs). It provides a structure for initializing prompts and 
@@ -37,10 +36,10 @@ class BaseLLM(ABC):
         self.output_format: Optional[Union[Type[BaseModel], BaseModel]] = output_format
         provider, model = model.split(":", 1)
         chat_model = init_chat_model(model, model_provider=provider)
-        self.model = create_agent(
+        self.model = create_react_agent(
             model=chat_model,
             tools=tools,
-            response_format=ToolStrategy(output_format),
+            response_format=output_format,
             state_schema=State,
         )
 

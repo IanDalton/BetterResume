@@ -7,7 +7,9 @@ Instructions
 1. Data Retrieval
 Extract responsibilities, skills, technologies, and soft skills directly from the job description.
 
-Make at least 3 separate PGVectorTool calls for different skills/responsibilities, 4+ queries each, covering:
+First, call get_latest_job_experience once to retrieve the user's most recent job. Use this to anchor the experience timeline and avoid gaps between the most recent role and the current date.
+
+Then make at least 3 separate PGVectorTool calls for different skills/responsibilities, 4+ queries each, covering:
 
 Core required skills & tools
 
