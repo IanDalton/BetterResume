@@ -24,4 +24,3 @@ async def ingest_jobs_csv_async(path: str, tool: PGVectorTool, user_id: str) -> 
 def ingest_jobs_csv(path: str, tool: PGVectorTool, user_id: str) -> int:
     """Synchronous wrapper around ingest_jobs_csv_async for CLI/legacy callers."""
     return asyncio.run(ingest_jobs_csv_async(path, tool, user_id))
-    return len(data)

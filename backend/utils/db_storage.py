@@ -114,7 +114,9 @@ async def init_async_db_pool(db_url: Optional[str] = None):
         max_size=async_max,
         kwargs={"autocommit": True},
         configure=_configure_async,
+        open=False,
     )
+    await _async_pool.open()
     logging.getLogger("betterresume.db_storage").info("Async database connection pool initialized")
 
 def close_db_pool():
