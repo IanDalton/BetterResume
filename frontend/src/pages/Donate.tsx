@@ -88,7 +88,7 @@ export function Donate() {
       setIsLoading(false);
     }
   };
-const handleReasonChange = (newReason: 'support' | 'job') => {
+  const handleReasonChange = (newReason: 'support' | 'job') => {
     setReason(newReason);
     if (newReason === 'job') {
       setAmount(25);
@@ -98,7 +98,7 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
     }
   };
 
-  
+
   if (clientSecret) {
     return (
       <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 py-12 px-4 sm:px-6 lg:px-8">
@@ -111,7 +111,7 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
               {t('donate.changeAmount')}
             </Link>
           </div>
-          
+
           <div className="bg-white dark:bg-neutral-800 rounded-xl shadow-lg overflow-hidden">
             {stripePromise ? (
               <EmbeddedCheckoutProvider
@@ -129,7 +129,7 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
 
           <div className="mt-8 text-center">
             <Link to="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
-      {showConfetti && <Confetti recycle={false} numberOfPieces={500} />}
+              {showConfetti && <Confetti recycle={false} numberOfPieces={500} />}
               {t('donate.back')}
             </Link>
           </div>
@@ -158,7 +158,7 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
         </div>
 
         <div className="space-y-6">
-          
+
           <div className="mb-6">
             <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
               {t('donate.reason.label')}
@@ -166,21 +166,19 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
             <div className="flex space-x-4">
               <button
                 onClick={() => handleReasonChange('support')}
-                className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${
-                  reason === 'support'
+                className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${reason === 'support'
                     ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
                     : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
-                }`}
+                  }`}
               >
                 {t('donate.reason.support')}
               </button>
               <button
                 onClick={() => handleReasonChange('job')}
-                className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${
-                  reason === 'job'
+                className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${reason === 'job'
                     ? 'border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
                     : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
-                }`}
+                  }`}
               >
                 {t('donate.reason.job')}
               </button>
@@ -207,11 +205,10 @@ const handleReasonChange = (newReason: 'support' | 'job') => {
                 <button
                   key={val}
                   onClick={() => setAmount(val)}
-                  className={`py-2 px-4 rounded-lg border ${
-                    amount === val
+                  className={`py-2 px-4 rounded-lg border ${amount === val
                       ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:border-blue-400 dark:text-blue-300'
                       : 'border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-700'
-                  }`}
+                    }`}
                 >
                   ${val}
                 </button>

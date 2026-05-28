@@ -10,7 +10,7 @@ interface ResumeRequestPayload {
   include_profile_picture?: boolean;
 }
 
-export async function uploadJobsJson(userId: string, jobs: Array<{type:string; company:string; description:string; role?:string; location?:string; start_date?:string; end_date?:string}>) {
+export async function uploadJobsJson(userId: string, jobs: Array<{ type: string; company: string; description: string; role?: string; location?: string; start_date?: string; end_date?: string }>) {
   const res = await fetch(`${API_BASE}/upload-jobs/${encodeURIComponent(userId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -21,7 +21,7 @@ export async function uploadJobsJson(userId: string, jobs: Array<{type:string; c
     try {
       const data = await res.json();
       if (data?.detail) message = data.detail;
-    } catch {}
+    } catch { }
     throw new Error(message);
   }
   return res.json();
@@ -34,9 +34,9 @@ export async function generateResume(userId: string, payload: ResumeRequestPaylo
     body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
-  const data = await res.json() as {result:any; files:{pdf:string; source:string}};
+  const data = await res.json() as { result: any; files: { pdf: string; source: string } };
   if (data.files) {
-    const fix = (p:string) => {
+    const fix = (p: string) => {
       if (!p) return p;
       if (p.startsWith('http')) return p;
       // If already has /download/ assume correct relative path
@@ -49,12 +49,12 @@ export async function generateResume(userId: string, payload: ResumeRequestPaylo
   return data;
 }
 
-export function generateResumeStream(userId: string, payload: ResumeRequestPayload, onEvent: (evt: any)=>void): Promise<{result:any; files?:{pdf:string; source:string}}> {
+export function generateResumeStream(userId: string, payload: ResumeRequestPayload, onEvent: (evt: any) => void): Promise<{ result: any; files?: { pdf: string; source: string } }> {
   // Returns a promise resolving to final result while invoking onEvent per progress event.
   return new Promise((resolve, reject) => {
     // We POST first to initiate SSE because EventSource only supports GET natively; we fallback to fetch+ReadableStream poly.
     // Simpler approach: create a fetch POST to the stream endpoint and manually parse SSE lines.
-  fetch(`${API_BASE}/generate-resume-stream/${encodeURIComponent(userId)}`, {
+    fetch(`${API_BASE}/generate-resume-stream/${encodeURIComponent(userId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -64,37 +64,37 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
       const decoder = new TextDecoder();
       let buffer = '';
       function pump(): any {
-        reader.read().then(({done, value}) => {
+        reader.read().then(({ done, value }) => {
           if (done) { return; }
-          buffer += decoder.decode(value, {stream: true});
+          buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
-            for (let i=0;i<parts.length-1;i++) {
-              const line = parts[i].trim();
-              if (line.startsWith('data:')) {
-                try {
-                  const json = JSON.parse(line.slice(5).trim());
-                  onEvent(json);
-                  if (json.stage === 'done') {
-                    // Normalize relative file links to absolute
-                    let files = json.files;
-                    if (files) {
-                      const toAbs = (p: string) => {
-                        if (!p) return p;
-                        if (p.startsWith('http')) return p;
-                        if (p.includes('/download/')) return API_BASE.replace(/\/$/, '') + p; // relative download path
-                        // bare filename
-                        return API_BASE.replace(/\/$/, '') + `/download/${encodeURIComponent(userId)}/${p}`;
-                      };
-                      files = { pdf: toAbs(files.pdf), source: toAbs(files.source) };
-                    }
-                    resolve({result: json.result, files});
-                  } else if (json.stage === 'error') {
-                    reject(new Error(json.message||'Error'));
+          for (let i = 0; i < parts.length - 1; i++) {
+            const line = parts[i].trim();
+            if (line.startsWith('data:')) {
+              try {
+                const json = JSON.parse(line.slice(5).trim());
+                onEvent(json);
+                if (json.stage === 'done') {
+                  // Normalize relative file links to absolute
+                  let files = json.files;
+                  if (files) {
+                    const toAbs = (p: string) => {
+                      if (!p) return p;
+                      if (p.startsWith('http')) return p;
+                      if (p.includes('/download/')) return API_BASE.replace(/\/$/, '') + p; // relative download path
+                      // bare filename
+                      return API_BASE.replace(/\/$/, '') + `/download/${encodeURIComponent(userId)}/${p}`;
+                    };
+                    files = { pdf: toAbs(files.pdf), source: toAbs(files.source) };
                   }
-                } catch (e) { /* ignore parse errors */ }
-              }
+                  resolve({ result: json.result, files });
+                } else if (json.stage === 'error') {
+                  reject(new Error(json.message || 'Error'));
+                }
+              } catch (e) { /* ignore parse errors */ }
             }
-            buffer = parts[parts.length-1];
+          }
+          buffer = parts[parts.length - 1];
           pump();
         }).catch(err => reject(err));
       }
@@ -116,7 +116,7 @@ export async function uploadProfilePicture(userId: string, file: File) {
       const data = await res.json();
       if (data?.detail) message = data.detail;
     } catch {
-      const text = await res.text().catch(()=> '');
+      const text = await res.text().catch(() => '');
       if (text) message = text;
     }
     throw new Error(message);
@@ -134,7 +134,7 @@ export async function resolveProfilePictureUrl(userId: string): Promise<string |
       const getRes = await fetch(url, { method: 'GET' });
       if (!getRes.ok) return null;
       // Consume body to avoid locking resources
-      try { await getRes.arrayBuffer(); } catch {}
+      try { await getRes.arrayBuffer(); } catch { }
       return url;
     }
     return null;
