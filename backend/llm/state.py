@@ -1,4 +1,4 @@
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 from langgraph.graph.message import add_messages
 from typing import Annotated
 from models.resume import ResumeOutputFormat
@@ -9,3 +9,4 @@ class State(TypedDict):
     user_id: str
     structured_response: ResumeOutputFormat
     remaining_steps: int
+    require_tool_call: NotRequired[bool]

@@ -134,6 +134,7 @@ class Bot:
         res = await self.llm.ainvoke({
             "messages": [SystemMessage(self.llm.JOB_PROMPT), HumanMessage(jd)],
             "user_id": self.user_id,
+            "require_tool_call": True,
         })
         self.logger.info("Graph returned; messages=%d", len(res.get("messages", [])))
         resume:ResumeOutputFormat = res["structured_response"]
@@ -165,6 +166,7 @@ class Bot:
         res = await self.llm.ainvoke({
             "messages": [SystemMessage(self.llm.JOB_PROMPT), HumanMessage(jd)],
             "user_id": self.user_id,
+            "require_tool_call": True,
         })
         self.logger.info("Streaming: LLM complete; messages=%d", len(res.get("messages", [])))
         resume: ResumeOutputFormat = res["structured_response"]
