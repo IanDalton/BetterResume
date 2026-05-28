@@ -9,9 +9,7 @@ import Confetti from 'react-confetti';
 import { useI18n } from '../i18n';
 import { authStateListener } from '../services/firebase';
 import { getStripe } from '../services/stripe';
-
-const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
-const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
+import { API_BASE } from '../services/api';
 
 export function Donate() {
   const { t } = useI18n();

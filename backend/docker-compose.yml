@@ -14,7 +14,11 @@ services:
       - postgres_data:/var/lib/postgresql
       - ./docker-initdb.d:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-better_resume}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-better_resume}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,15 +34,16 @@ services:
     volumes:
       - ./embeddings:/data
     # Shared memory size might need increasing for large batches
-    shm_size: 1g 
+    shm_size: 1g
     ports:
       - "80:80"
     command: >
-      --model-id nomic-ai/nomic-embed-text-v1.5
+      --model-id BAAI/bge-base-en-v1.5
       --revision main
       --port 80
       --max-client-batch-size 8
       --max-batch-requests 8
+      --auto-truncate
   backend:
     build:
       context: .
@@ -57,8 +62,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
-      
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   postgres_data:

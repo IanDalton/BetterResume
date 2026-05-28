@@ -46,9 +46,9 @@ class PGVectorTool(BaseTool):
 
         # Embedding provider
         self._emb = OpenAIEmbeddings(
-            base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://nomic-embed:80/v1"),
+            base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://embedding-service-br:80/v1"),
             api_key="asdsad",
-            model="nomic-ai/nomic-embed-text-v1.5",
+            model="sentence-transformers/all-mpnet-base-v2",
             chunk_size=8
         )
 
@@ -67,9 +67,9 @@ class PGVectorTool(BaseTool):
             # Fallback or error? better error
             raise RuntimeError("Database pool not initialized")
             
-        # Truncate documents to avoid token limit errors (256 tokens max for this model)
-        # Using 1000 characters as a safe upper bound approximation
-        truncated_docs = [doc[:1000] for doc in documents]
+        # Truncate documents to avoid token limit errors (512 tokens max for bge-base-en-v1.5)
+        # ~500 chars is conservative given the model's ~1.85 chars/token ratio for dense text
+        truncated_docs = [doc[:500] for doc in documents]
         try:
             embs = await self._emb.aembed_documents(truncated_docs)
             async with pool.connection() as conn:
@@ -109,15 +109,15 @@ class PGVectorTool(BaseTool):
         return self._run_sync(self.adelete_user_documents(user_id))
 
     def _run(
-        self, 
+        self,
         query: str,
         state: Annotated[State, InjectedState],
-        n_results: int = 2,
+        n_results: int = 10,
         **kwargs
     ):
         return self._run_sync(self._arun(query, state=state, n_results=n_results, **kwargs))
 
-    async def _arun(self, query: str,state:Annotated[State, InjectedState], n_results: int = 2, **kwargs):
+    async def _arun(self, query: str,state:Annotated[State, InjectedState], n_results: int = 10, **kwargs):
         """Async query execution used by LangChain graphs."""
         pool = get_async_pool()
         if not pool:

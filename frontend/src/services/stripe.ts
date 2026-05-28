@@ -1,4 +1,5 @@
 import { loadStripe, Stripe } from '@stripe/stripe-js';
+import { API_BASE } from './api';
 
 let stripePromise: Promise<Stripe | null> | null = null;
 
@@ -14,9 +15,6 @@ export const getStripe = async (): Promise<Stripe | null> => {
 
   // Fetch from backend (runtime)
   try {
-    const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
-    const API_BASE = API_BASE_RAW.replace(/\/+$/, '');
-    
     const res = await fetch(`${API_BASE}/stripe-config`);
     if (res.ok) {
       const { publicKey } = await res.json();

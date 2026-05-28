@@ -27,7 +27,7 @@ class GeminiAgent(BaseLLM):
         invoke(messages: list[BaseMessage]) -> BaseMessage:
             Sends a list of messages to the ChatGemini client and returns the response.
     """
-    def __init__(self, tools, output_format:BaseModel = None, model: str = "google_genai:gemini-2.5-flash-lite"):
+    def __init__(self, tools, output_format:BaseModel = None, model: str = "google_genai:gemini-3.1-flash-lite"):
         tools_list = tools if isinstance(tools, list) else [tools]
         super().__init__(tools_list, model=model, output_format=output_format)
     def invoke(self, inputs: dict):

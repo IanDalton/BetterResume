@@ -21,6 +21,7 @@ async def upload_jobs(user_id: str, payload: JobUploadRequest):
     _validate_user_id(user_id)
     set_user_context(user_id)
     storage = DBStorage()
+    storage._ensure_user(user_id)
     tool = get_user_tool(user_id)
     try:
         import pandas as pd

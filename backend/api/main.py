@@ -72,6 +72,13 @@ app.include_router(resume.router, prefix="/resume")
 app.include_router(users.router, prefix="/resume")
 app.include_router(donations.router, prefix="/resume")
 
+app.add_api_route(
+    "/upload-jobs/{user_id}",
+    jobs.upload_jobs,
+    methods=["POST"],
+    include_in_schema=False,
+)
+
 
 # Convenience root
 @app.get("/")
