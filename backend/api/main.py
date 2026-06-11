@@ -1,12 +1,17 @@
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+# pydantic-ai's Google provider reads GOOGLE_API_KEY; bridge from GEMINI_API_KEY
+if not os.environ.get("GOOGLE_API_KEY") and os.environ.get("GEMINI_API_KEY"):
+    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+
 from utils.logging_utils import setup_logging, new_request_id, clear_request_id
 from utils.db_storage import DBStorage, init_db_pool, close_db_pool, init_async_db_pool, close_async_db_pool
-from api.routers import health, jobs, profile, resume, users, donations
+from api.routers import admin, health, jobs, profile, resume, users, donations
 
 setup_logging()
 # Module logger (relies on configured handlers)
@@ -71,6 +76,7 @@ app.include_router(profile.router, prefix="/resume")
 app.include_router(resume.router, prefix="/resume")
 app.include_router(users.router, prefix="/resume")
 app.include_router(donations.router, prefix="/resume")
+app.include_router(admin.router, prefix="/resume")
 
 app.add_api_route(
     "/upload-jobs/{user_id}",

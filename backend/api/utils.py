@@ -19,8 +19,8 @@ from api.config import (
     ALLOWED_PROFILE_IMAGE_TYPES,
     OUTPUTS_BASE
 )
-from api.state import USER_TOOLS
-from llm.pg_vector_tool import PGVectorTool
+from api.state import USER_STORES
+from llm.vector_store import PGVectorStore
 from utils.db_storage import DBStorage
 
 logger = logging.getLogger("betterresume.api.utils")
@@ -204,20 +204,15 @@ def _build_signed_files(user_id: str, fmt: str, out_dir: str) -> Dict[str, str]:
         files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
     return files
 
-def get_user_tool(user_id: str) -> PGVectorTool:
-    tool = USER_TOOLS.get(user_id)
-    if tool is None:
-        # Create a per-user PGVectorTool instance (user isolation via user_id column)
-        tool = PGVectorTool(db_url=os.getenv("DATABASE_URL"), user_id=user_id)
-        USER_TOOLS[user_id] = tool
-    else:
-        # Ensure user_id is set on existing tool
-        try:
-            if getattr(tool, "user_id", None) != user_id:
-                tool.user_id = user_id
-        except Exception:
-            pass
-    return tool
+def get_user_store(user_id: str) -> PGVectorStore:
+    store = USER_STORES.get(user_id)
+    if store is None:
+        # Create a per-user PGVectorStore instance (user isolation via user_id column)
+        store = PGVectorStore(db_url=os.getenv("DATABASE_URL"), user_id=user_id)
+        USER_STORES[user_id] = store
+    elif getattr(store, "user_id", None) != user_id:
+        store.user_id = user_id
+    return store
 
 def _validate_user_id(user_id: str):
     """Basic server-side guard to avoid shared/guessable collections."""

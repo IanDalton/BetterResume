@@ -1,56 +1,37 @@
 import asyncio
-import os
 import logging
-from typing import Annotated, Any, List, Optional
-from langchain_core.runnables import RunnableConfig
-from langgraph.prebuilt import InjectedState
+import os
+from typing import List, Optional, Tuple
 
 from pgvector import Vector
-from langchain_openai.embeddings import OpenAIEmbeddings
-from langchain.tools import BaseTool
-from pydantic import Field, PrivateAttr
-from llm.state import State
+
+from llm.embeddings import EmbeddingClient
 from utils.db_storage import get_async_pool
 
 
-class PGVectorTool(BaseTool):
-    """PGVectorTool implements a LangChain-compatible tool backed by Postgres + pgvector.
+class PGVectorStore:
+    """Postgres + pgvector backed semantic store for user experience documents.
 
-    - Uses OpenAIEmbeddings by default (swap provider if needed)
-    - Methods: add_documents, delete_user_documents, _run/_arun for querying
+    Plain class (no framework base) — the pydantic-ai agent exposes this through
+    its `search_experience` tool.
     """
 
-    name: str = "PGVectorTool"
-    description: str = "Store and query document embeddings in Postgres (pgvector)."
-
-    table_name: str = Field(default="resume_vectors")
-    dim: int = Field(default=1536)
-    db_url: str = Field(default="")
-    user_id: Optional[str] = Field(default=None)
-
-    _emb: OpenAIEmbeddings = PrivateAttr()
-
-    def __init__(self, db_url: Optional[str] = "", table_name: Optional[str] = "resume_vectors", dim: Optional[int] = 768, user_id: Optional[str] = None):
-        super().__init__()
+    def __init__(
+        self,
+        db_url: Optional[str] = "",
+        table_name: str = "resume_vectors",
+        dim: int = 768,
+        user_id: Optional[str] = None,
+        embeddings: Optional[EmbeddingClient] = None,
+    ):
         self._logger = logging.getLogger("betterresume.pgvector")
-        # Ensure we just checking/setting logic but likely ignoring for connection creation as we use global pool
-        self.db_url =  os.getenv("DATABASE_URL",db_url)
+        self.db_url = os.getenv("DATABASE_URL", db_url)
         if self.db_url and self.db_url.startswith("postgresql+asyncpg://"):
             self.db_url = self.db_url.replace("postgresql+asyncpg://", "postgresql://")
-        if table_name:
-            self.table_name = table_name
-        if dim:
-            self.dim = dim
-        if user_id:
-            self.user_id = user_id
-
-        # Embedding provider
-        self._emb = OpenAIEmbeddings(
-            base_url=os.getenv("EMBEDDING_SERVICE_URL", "http://embedding-service-br:80/v1"),
-            api_key="asdsad",
-            model="sentence-transformers/all-mpnet-base-v2",
-            chunk_size=8
-        )
+        self.table_name = table_name
+        self.dim = dim
+        self.user_id = user_id
+        self._emb = embeddings or EmbeddingClient(chunk_size=8)
 
     def _run_sync(self, coro):
         """Run an async coroutine from sync context; raise if already in running loop."""
@@ -58,17 +39,16 @@ class PGVectorTool(BaseTool):
             asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(coro)
-        raise RuntimeError("Cannot call sync PGVectorTool method while an event loop is running; use the async variant instead.")
+        coro.close()
+        raise RuntimeError("Cannot call sync PGVectorStore method while an event loop is running; use the async variant instead.")
 
     async def aadd_documents(self, documents: List[str], ids: List[str], user_id: str):
         """Compute embeddings and upsert to Postgres for a user (async)."""
         pool = get_async_pool()
         if not pool:
-            # Fallback or error? better error
             raise RuntimeError("Database pool not initialized")
-            
-        # Truncate documents to avoid token limit errors (512 tokens max for bge-base-en-v1.5)
-        # ~500 chars is conservative given the model's ~1.85 chars/token ratio for dense text
+
+        # Truncate documents to avoid token limit errors (512 tokens max for the embedding model)
         truncated_docs = [doc[:500] for doc in documents]
         try:
             embs = await self._emb.aembed_documents(truncated_docs)
@@ -95,7 +75,7 @@ class PGVectorTool(BaseTool):
     async def adelete_user_documents(self, user_id: str):
         pool = get_async_pool()
         if not pool:
-             raise RuntimeError("Database pool not initialized")
+            raise RuntimeError("Database pool not initialized")
         try:
             async with pool.connection() as conn:
                 async with conn.cursor() as cur:
@@ -108,22 +88,21 @@ class PGVectorTool(BaseTool):
     def delete_user_documents(self, user_id: str):
         return self._run_sync(self.adelete_user_documents(user_id))
 
-    def _run(
-        self,
-        query: str,
-        state: Annotated[State, InjectedState],
-        n_results: int = 10,
-        **kwargs
-    ):
-        return self._run_sync(self._arun(query, state=state, n_results=n_results, **kwargs))
-
-    async def _arun(self, query: str,state:Annotated[State, InjectedState], n_results: int = 10, **kwargs):
-        """Async query execution used by LangChain graphs."""
+    async def acount_user_documents(self, user_id: str) -> int:
         pool = get_async_pool()
         if not pool:
-             raise RuntimeError("Database pool not initialized")
-             
-        user_id = state.get("user_id")
+            raise RuntimeError("Database pool not initialized")
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(f"SELECT COUNT(*) FROM {self.table_name} WHERE user_id = %s", (user_id,))
+                row = await cur.fetchone()
+                return row[0] if row else 0
+
+    async def aquery(self, query: str, user_id: Optional[str], n_results: int = 10) -> List[Tuple[str, float]]:
+        """Return (content, distance) tuples for the closest documents of a user."""
+        pool = get_async_pool()
+        if not pool:
+            raise RuntimeError("Database pool not initialized")
 
         if user_id is None:
             raise ValueError("user_id is required for pgvector queries")

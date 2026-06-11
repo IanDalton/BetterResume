@@ -19,7 +19,7 @@ from api.utils import (
     _build_signed_files,
     clean_output_dir,
     _save_resume_cache,
-    get_user_tool,
+    get_user_store,
     sse_event,
     _hmac_sign
 )
@@ -29,11 +29,26 @@ from utils.db_storage import DBStorage
 from bot import Bot
 from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
-from llm.gemini_agent import GeminiAgent
-from llm.job_experience_tool import GetLatestJobExperienceTool
+from llm.agent import ResumeAgent
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
+
+
+def _record_generation(user_id, agent, fmt, language, started_at, status, error=None):
+    """Persist a generation event for admin statistics; never raises."""
+    try:
+        DBStorage().record_generation_event(
+            user_id=user_id,
+            model=str(getattr(agent, "model", "")),
+            format=fmt,
+            language=language,
+            duration_ms=int((time.time() - started_at) * 1000),
+            status=status,
+            error=error,
+        )
+    except Exception:
+        logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
 
 @router.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
@@ -119,21 +134,27 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         if fmt == "latex"
         else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
     )
-    tool = get_user_tool(user_id)
-    latest_job_tool = GetLatestJobExperienceTool(user_id=user_id)
+    store = get_user_store(user_id)
     clean_output_dir(out_dir)
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
+    agent = ResumeAgent(vector_store=store)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(tools=[tool, latest_job_tool], output_format=ResumeOutputFormat),
-        tool=tool,
+        agent=agent,
+        vector_store=store,
         user_id=user_id,
         auto_ingest=True,
         jobs_csv=csv_path,
     )
     # Important: use absolute output base to avoid races due to process cwd changes
     abs_base = os.path.join(out_dir, "resume")
-    result = await bot.generate_resume(req.job_description, output_basename=abs_base)
+    gen_start = time.time()
+    try:
+        result = await bot.generate_resume(req.job_description, output_basename=abs_base)
+    except Exception as exc:
+        _record_generation(user_id, agent, fmt, None, gen_start, "error", str(exc))
+        raise
+    _record_generation(user_id, agent, fmt, result.language, gen_start, "success")
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
         result.language,
@@ -185,7 +206,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
     signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
-    tool = get_user_tool(user_id)
+    store = get_user_store(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
@@ -219,8 +240,8 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
             headers=early_headers,
         )
     try:
-        collection = tool.collection_name
-        col_docs = tool._collection.count()
+        collection = store.table_name
+        col_docs = await store.acount_user_documents(user_id)
     except Exception:
         pass
 
@@ -313,17 +334,18 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     )
     clean_output_dir(out_dir)
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
-    latest_job_tool = GetLatestJobExperienceTool(user_id=user_id)
+    agent = ResumeAgent(vector_store=store)
     bot = Bot(
         writer=writer,
-        llm=GeminiAgent(tools=[tool, latest_job_tool], output_format=ResumeOutputFormat),
-        tool=tool,
+        agent=agent,
+        vector_store=store,
         user_id=user_id,
         auto_ingest=True,
         jobs_csv=csv_path,
     )
 
     async def event_generator():
+        gen_start = time.time()
         try:
             # Send initial CSV info event
             yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
@@ -334,6 +356,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                     output_name = f"{abs_base}{writer.file_ending}"
                     try:
                         result_obj = event.get("result")
+                        _record_generation(
+                            user_id, agent, fmt,
+                            getattr(result_obj, "language", None), gen_start, "success",
+                        )
                         writer.write(result_obj, output=output_name, to_pdf=True)
                         files = _build_signed_files(user_id, fmt, out_dir)
                         event["files"] = files
@@ -362,6 +388,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")
+            _record_generation(user_id, agent, fmt, None, gen_start, "error", str(e))
             yield sse_event({"stage": "error", "message": str(e)})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)

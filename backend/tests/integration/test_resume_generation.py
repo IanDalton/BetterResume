@@ -9,21 +9,21 @@ from tests.fixtures.job_descriptions import ALL_JDS, JD_SOFTWARE_ENGINEER_SENIOR
 pytestmark = pytest.mark.timeout(180)
 
 
-def _build_bot(mock_pg_vector_tool, model: str = "google_genai:gemini-2.5-flash-lite"):
-    """Lazy-import Bot/GeminiAgent so collection works without the full Docker env."""
-    from bot import Bot
-    from llm.gemini_agent import GeminiAgent
-    from models.resume import ResumeOutputFormat
+class _NoEducationDB:
+    def get_job_experiences(self, user_id, type_filter=None):
+        return []
 
-    agent = GeminiAgent(
-        tools=[mock_pg_vector_tool],
-        output_format=ResumeOutputFormat,
-        model=model,
-    )
+
+def _build_bot(stub_vector_store, model: str = "google-gla:gemini-2.5-flash-lite"):
+    """Lazy-import Bot/ResumeAgent so collection works without the full Docker env."""
+    from bot import Bot
+    from llm.agent import ResumeAgent
+
+    agent = ResumeAgent(model=model, vector_store=stub_vector_store, db=_NoEducationDB())
     bot = Bot(
         writer=MagicMock(),
-        llm=agent,
-        tool=mock_pg_vector_tool,
+        agent=agent,
+        vector_store=stub_vector_store,
         user_id="test_user_001",
         auto_ingest=False,
     )
@@ -31,11 +31,11 @@ def _build_bot(mock_pg_vector_tool, model: str = "google_genai:gemini-2.5-flash-
 
 
 @pytest.mark.real_ai
-async def test_generate_resume_schema_valid(mock_pg_vector_tool):
+async def test_generate_resume_schema_valid(stub_vector_store):
     """Full pipeline: real Gemini call → output must pass schema validation."""
     from models.resume import ResumeOutputFormat
 
-    bot = _build_bot(mock_pg_vector_tool)
+    bot = _build_bot(stub_vector_store)
     resume = await bot.generate_resume(JD_SOFTWARE_ENGINEER_SENIOR)
 
     assert isinstance(resume, ResumeOutputFormat)
@@ -43,7 +43,7 @@ async def test_generate_resume_schema_valid(mock_pg_vector_tool):
     schema = SchemaEvaluator().evaluate(resume)
     ats = ATSEvaluator().evaluate(resume, JD_SOFTWARE_ENGINEER_SENIOR)
     report = ResumeEvaluationReport(
-        model="google_genai:gemini-2.5-flash-lite",
+        model="google-gla:gemini-2.5-flash-lite",
         jd_name="senior_swe",
         schema=schema,
         ats=ats,
@@ -56,11 +56,11 @@ async def test_generate_resume_schema_valid(mock_pg_vector_tool):
 
 @pytest.mark.real_ai
 @pytest.mark.parametrize("jd_name,jd_text", list(ALL_JDS.items()))
-async def test_schema_compliance_across_jds(mock_pg_vector_tool, jd_name, jd_text):
+async def test_schema_compliance_across_jds(stub_vector_store, jd_name, jd_text):
     """Each job description variant produces a structurally valid resume."""
     from pydantic import ValidationError
 
-    bot = _build_bot(mock_pg_vector_tool)
+    bot = _build_bot(stub_vector_store)
     try:
         resume = await bot.generate_resume(jd_text)
     except ValidationError as e:
@@ -71,11 +71,11 @@ async def test_schema_compliance_across_jds(mock_pg_vector_tool, jd_name, jd_tex
 
 
 @pytest.mark.real_ai
-async def test_resume_language_detected(mock_pg_vector_tool):
+async def test_resume_language_detected(stub_vector_store):
     """Spanish JD should produce a resume where language is set."""
     from models.resume import ResumeOutputFormat
 
-    bot = _build_bot(mock_pg_vector_tool)
+    bot = _build_bot(stub_vector_store)
     resume = await bot.generate_resume(JD_SPANISH_LANGUAGE)
 
     assert isinstance(resume, ResumeOutputFormat)
