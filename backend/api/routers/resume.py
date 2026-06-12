@@ -29,18 +29,25 @@ from utils.db_storage import DBStorage
 from bot import Bot
 from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
-from llm.agent import ResumeAgent
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
 
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "*",
+    "Access-Control-Allow-Methods": "*",
+}
 
-def _record_generation(user_id, agent, fmt, language, started_at, status, error=None):
+
+def _record_generation(user_id, model, fmt, language, started_at, status, error=None):
     """Persist a generation event for admin statistics; never raises."""
     try:
         DBStorage().record_generation_event(
             user_id=user_id,
-            model=str(getattr(agent, "model", "")),
+            model=str(model or ""),
             format=fmt,
             language=language,
             duration_ms=int((time.time() - started_at) * 1000),
@@ -50,6 +57,50 @@ def _record_generation(user_id, agent, fmt, language, started_at, status, error=
     except Exception:
         logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
 
+
+def _make_writer(fmt: str, csv_path: str, profile_path):
+    writer_cls = LatexResumeWriter if fmt == "latex" else WordResumeWriter
+    return writer_cls(csv_location=csv_path, profile_image_path=profile_path)
+
+
+def _count_csv_rows(csv_path: str):
+    try:
+        import pandas as pd
+        return len(pd.read_csv(csv_path))
+    except Exception:
+        return None
+
+
+def _as_resume(result) -> ResumeOutputFormat:
+    return result if isinstance(result, ResumeOutputFormat) else ResumeOutputFormat.model_validate(result)
+
+
+def _serialize_result(result):
+    return result.model_dump() if hasattr(result, "model_dump") else result
+
+
+def _cache_payload(req: ResumeRequest, fmt, result, signature, result_signature, csv_hash, profile_hash, job_hash):
+    return {
+        "render_signature": signature,
+        "result_signature": result_signature,
+        "result": _serialize_result(result),
+        "format": fmt,
+        "model": req.model,
+        "include_profile_picture": bool(req.include_profile_picture),
+        "csv_hash": csv_hash,
+        "profile_hash": profile_hash,
+        "job_description_hash": job_hash,
+        "generated_at": int(time.time()),
+    }
+
+
+def _record_resume_request(user_id: str, job_description: str):
+    try:
+        DBStorage().insert_resume_request(user_id, job_description)
+    except Exception:
+        logger.warning("Failed to record resume request for user_id=%s", user_id, exc_info=True)
+
+
 @router.post("/generate-resume/{user_id}")
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
@@ -57,13 +108,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     logger.info("Generate resume requested; format=%s model=%s", req.format, req.model)
     csv_path = _resolve_user_jobs_csv(user_id)
     logger.info("Resolved jobs CSV for user_id=%s at %s", user_id, csv_path)
-    # Row count for response metadata
-    row_count = None
-    try:
-        import pandas as pd
-        row_count = len(pd.read_csv(csv_path))
-    except Exception:
-        pass
+    row_count = _count_csv_rows(csv_path)
     if not row_count:
         raise HTTPException(status_code=400, detail="No jobs found. Please upload your entries before generating.")
     profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
@@ -71,10 +116,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         logger.info("Profile picture requested but none stored for user=%s", user_id)
     csv_hash = _file_sha256(csv_path)
     job_hash = _hash_text(req.job_description)
-    try:
-        DBStorage().insert_resume_request(user_id, req.job_description)
-    except Exception:
-        logger.warning("Failed to record resume request for user_id=%s", user_id, exc_info=True)
+    _record_resume_request(user_id, req.job_description)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
@@ -82,10 +124,8 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
-    cached_renders = cached.get("renders", {})
-    cached_results = cached.get("results", {})
-    render_entry = cached_renders.get(signature)
-    result_entry = cached_results.get(result_signature)
+    render_entry = cached.get("renders", {}).get(signature)
+    result_entry = cached.get("results", {}).get(result_signature)
     cached_result = result_entry.get("result") if result_entry else None
     files_from_cache = _build_signed_files(user_id, fmt, out_dir) if render_entry else {}
 
@@ -95,66 +135,34 @@ async def generate_resume(user_id: str, req: ResumeRequest):
 
     if cached_result is not None:
         logger.info("Reusing cached resume content for new render user_id=%s format=%s include_image=%s", user_id, fmt, req.include_profile_picture)
-        writer = (
-            LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-            if fmt == "latex"
-            else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-        )
+        writer = _make_writer(fmt, csv_path, profile_path)
         clean_output_dir(out_dir)
-        abs_base = os.path.join(out_dir, "resume")
-        output_name = f"{abs_base}{writer.file_ending}"
+        output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
         try:
-            typed_result = (
-                cached_result if isinstance(cached_result, ResumeOutputFormat)
-                else ResumeOutputFormat.model_validate(cached_result)
-            )
+            typed_result = _as_resume(cached_result)
             writer.write(typed_result, output=output_name, to_pdf=True)
         except Exception as exc:
             logger.exception("Failed rewriting resume from cache: %s", exc)
             raise HTTPException(status_code=500, detail="Failed to render cached resume")
         signed_files = _build_signed_files(user_id, fmt, out_dir)
         if signed_files.get("source"):
-            cache_payload = {
-                "render_signature": signature,
-                "result_signature": result_signature,
-                "result": (typed_result.model_dump() if isinstance(typed_result, ResumeOutputFormat) else cached_result),
-                "format": fmt,
-                "model": req.model,
-                "include_profile_picture": bool(req.include_profile_picture),
-                "csv_hash": csv_hash,
-                "profile_hash": profile_hash if req.include_profile_picture else None,
-                "job_description_hash": job_hash,
-                "generated_at": int(time.time()),
-            }
-            _save_resume_cache(out_dir, cache_payload)
+            _save_resume_cache(out_dir, _cache_payload(
+                req, fmt, typed_result, signature, result_signature, csv_hash, profile_hash, job_hash,
+            ))
         return JSONResponse(content={"result": cached_result, "files": signed_files, "rows": row_count})
 
-    writer = (
-        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-        if fmt == "latex"
-        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-    )
+    writer = _make_writer(fmt, csv_path, profile_path)
     store = get_user_store(user_id)
     clean_output_dir(out_dir)
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
-    agent = ResumeAgent(vector_store=store)
-    bot = Bot(
-        writer=writer,
-        agent=agent,
-        vector_store=store,
-        user_id=user_id,
-        auto_ingest=True,
-        jobs_csv=csv_path,
-    )
-    # Important: use absolute output base to avoid races due to process cwd changes
-    abs_base = os.path.join(out_dir, "resume")
+    bot = Bot(user_id=user_id, vector_store=store, jobs_csv=csv_path)
     gen_start = time.time()
     try:
-        result = await bot.generate_resume(req.job_description, output_basename=abs_base)
+        result = await bot.generate_resume(req.job_description)
     except Exception as exc:
-        _record_generation(user_id, agent, fmt, None, gen_start, "error", str(exc))
+        _record_generation(user_id, bot.model, fmt, None, gen_start, "error", str(exc))
         raise
-    _record_generation(user_id, agent, fmt, result.language, gen_start, "success")
+    _record_generation(user_id, bot.model, fmt, result.language, gen_start, "success")
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
         result.language,
@@ -162,7 +170,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         len(result.resume_section.experience),
     )
     # Write files in API layer for consistency
-    output_name = f"{abs_base}{writer.file_ending}"
+    output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
     try:
         writer.write(result, output=output_name, to_pdf=True)
     except Exception as exc:
@@ -170,38 +178,26 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         raise HTTPException(status_code=500, detail="Failed to render resume")
     signed_files = _build_signed_files(user_id, fmt, out_dir)
     if signed_files.get("source"):
-        cache_payload = {
-            "render_signature": signature,
-            "result_signature": result_signature,
-            "result": (result.model_dump() if hasattr(result, "model_dump") else result),
-            "format": fmt,
-            "model": req.model,
-            "include_profile_picture": bool(req.include_profile_picture),
-            "csv_hash": csv_hash,
-            "profile_hash": profile_hash,
-            "job_description_hash": job_hash,
-            "generated_at": int(time.time()),
-        }
-        _save_resume_cache(out_dir, cache_payload)
+        _save_resume_cache(out_dir, _cache_payload(
+            req, fmt, result, signature, result_signature, csv_hash, profile_hash, job_hash,
+        ))
     else:
         logger.warning("Resume generation completed but no source file found to cache for user_id=%s", user_id)
-    return JSONResponse(content={"result": (result.model_dump() if hasattr(result, "model_dump") else result), "files": signed_files, "rows": row_count})
+    return JSONResponse(content={"result": _serialize_result(result), "files": signed_files, "rows": row_count})
+
 
 @router.post("/generate-resume-stream/{user_id}")
 async def generate_resume_stream(user_id: str, req: ResumeRequest):
+    """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     _validate_user_id(user_id)
     set_user_context(user_id)
-    """Stream progress events for resume generation via Server-Sent Events (SSE)."""
     csv_path = _resolve_user_jobs_csv(user_id)
     profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
     csv_hash = _file_sha256(csv_path)
     job_hash = _hash_text(req.job_description)
-    try:
-        DBStorage().insert_resume_request(user_id, req.job_description)
-    except Exception:
-        logger.warning("Failed to record resume request for user_id=%s (stream)", user_id, exc_info=True)
+    _record_resume_request(user_id, req.job_description)
     profile_hash = _file_sha256(profile_path) if profile_path else None
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
@@ -210,55 +206,35 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
-    cached_renders = cached.get("renders", {})
-    cached_results = cached.get("results", {})
-    render_entry = cached_renders.get(signature)
-    result_entry = cached_results.get(result_signature)
+    render_entry = cached.get("renders", {}).get(signature)
+    result_entry = cached.get("results", {}).get(result_signature)
     cached_files = _build_signed_files(user_id, fmt, out_dir) if render_entry else {}
     cached_result = result_entry.get("result") if result_entry else None
-    # Pre-calc row count for early event
-    row_count = None
+
+    row_count = _count_csv_rows(csv_path)
+    if not row_count:
+        return StreamingResponse(
+            iter([sse_event({"stage": "error", "message": "No jobs found. Please upload your entries before generating."})]),
+            media_type="text/event-stream",
+            headers=SSE_HEADERS,
+        )
+
     collection = None
     col_docs = None
-    try:
-        import pandas as pd
-        row_count = len(pd.read_csv(csv_path))
-    except Exception:
-        pass
-    if not row_count:
-        # early SSE error with headers
-        early_headers = {
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Methods": "*",
-        }
-        return StreamingResponse(
-            iter([sse_event({"stage":"error","message":"No jobs found. Please upload your entries before generating."})]),
-            media_type="text/event-stream",
-            headers=early_headers,
-        )
     try:
         collection = store.table_name
         col_docs = await store.acount_user_documents(user_id)
     except Exception:
         pass
 
-    sse_headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "*",
-        "Access-Control-Allow-Methods": "*",
-    }
+    csv_info = {"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs}
 
     if render_entry and cached_result is not None and cached_files.get("source"):
         logger.info("Reusing cached streaming resume for user_id=%s format=%s", user_id, fmt)
 
         def cached_event_generator():
             try:
-                yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
+                yield sse_event(csv_info)
                 yield sse_event({"stage": "cached", "message": "Using cached resume output"})
                 yield sse_event({
                     "stage": "done",
@@ -270,51 +246,31 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 logger.exception("Failed while streaming cached resume: %s", exc)
                 yield sse_event({"stage": "error", "message": str(exc)})
 
-        return StreamingResponse(cached_event_generator(), media_type="text/event-stream", headers=sse_headers)
+        return StreamingResponse(cached_event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
 
     if cached_result is not None:
         logger.info(
             "Re-rendering cached resume content for stream user_id=%s format=%s include_image=%s",
-            user_id,
-            fmt,
-            req.include_profile_picture,
+            user_id, fmt, req.include_profile_picture,
         )
 
         def cached_rerender_generator():
             try:
-                yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
+                yield sse_event(csv_info)
                 yield sse_event({"stage": "cached", "message": "Reusing cached resume content"})
                 clean_output_dir(out_dir)
-                writer = (
-                    LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-                    if fmt == "latex"
-                    else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-                )
-                abs_base = os.path.join(out_dir, "resume")
-                output_name = f"{abs_base}{writer.file_ending}"
+                writer = _make_writer(fmt, csv_path, profile_path)
+                output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
                 try:
-                    typed_result = (
-                        cached_result if isinstance(cached_result, ResumeOutputFormat)
-                        else ResumeOutputFormat.model_validate(cached_result)
-                    )
+                    typed_result = _as_resume(cached_result)
                     writer.write(typed_result, output=output_name, to_pdf=True)
                 except Exception as exc:
                     raise RuntimeError(f"Failed to render cached resume: {exc}")
                 files = _build_signed_files(user_id, fmt, out_dir)
                 if files.get("source"):
-                    cache_payload = {
-                        "render_signature": signature,
-                        "result_signature": result_signature,
-                        "result": (typed_result.model_dump() if isinstance(typed_result, ResumeOutputFormat) else cached_result),
-                        "format": fmt,
-                        "model": req.model,
-                        "include_profile_picture": bool(req.include_profile_picture),
-                        "csv_hash": csv_hash,
-                        "profile_hash": profile_hash if req.include_profile_picture else None,
-                        "job_description_hash": job_hash,
-                        "generated_at": int(time.time()),
-                    }
-                    _save_resume_cache(out_dir, cache_payload)
+                    _save_resume_cache(out_dir, _cache_payload(
+                        req, fmt, typed_result, signature, result_signature, csv_hash, profile_hash, job_hash,
+                    ))
                 yield sse_event({
                     "stage": "done",
                     "message": "Resume generation complete",
@@ -325,61 +281,35 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 logger.exception("Failed while streaming cached resume rerender: %s", exc)
                 yield sse_event({"stage": "error", "message": str(exc)})
 
-        return StreamingResponse(cached_rerender_generator(), media_type="text/event-stream", headers=sse_headers)
+        return StreamingResponse(cached_rerender_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
 
-    writer = (
-        LatexResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-        if fmt == "latex"
-        else WordResumeWriter(csv_location=csv_path, profile_image_path=profile_path)
-    )
+    writer = _make_writer(fmt, csv_path, profile_path)
     clean_output_dir(out_dir)
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
-    agent = ResumeAgent(vector_store=store)
-    bot = Bot(
-        writer=writer,
-        agent=agent,
-        vector_store=store,
-        user_id=user_id,
-        auto_ingest=True,
-        jobs_csv=csv_path,
-    )
+    bot = Bot(user_id=user_id, vector_store=store, jobs_csv=csv_path)
 
     async def event_generator():
         gen_start = time.time()
         try:
-            # Send initial CSV info event
-            yield sse_event({"stage": "csv_info", "rows": row_count, "collection": collection, "docs": col_docs})
-            abs_base = os.path.join(out_dir, "resume")
+            yield sse_event(csv_info)
             async for event in bot.generate_resume_progress(req.job_description):
                 if event.get("stage") == "done":
                     # Write files here, based on final result
-                    output_name = f"{abs_base}{writer.file_ending}"
+                    output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
                     try:
                         result_obj = event.get("result")
                         _record_generation(
-                            user_id, agent, fmt,
+                            user_id, bot.model, fmt,
                             getattr(result_obj, "language", None), gen_start, "success",
                         )
                         writer.write(result_obj, output=output_name, to_pdf=True)
                         files = _build_signed_files(user_id, fmt, out_dir)
                         event["files"] = files
-                        # Serialize result for JSON encoding
-                        if hasattr(result_obj, "model_dump"):
-                            event["result"] = result_obj.model_dump()
+                        event["result"] = _serialize_result(result_obj)
                         if files.get("source"):
-                            cache_payload = {
-                                "render_signature": signature,
-                                "result_signature": result_signature,
-                                "result": (result_obj.model_dump() if hasattr(result_obj, "model_dump") else result_obj),
-                                "format": fmt,
-                                "model": req.model,
-                                "include_profile_picture": bool(req.include_profile_picture),
-                                "csv_hash": csv_hash,
-                                "profile_hash": profile_hash,
-                                "job_description_hash": job_hash,
-                                "generated_at": int(time.time()),
-                            }
-                            _save_resume_cache(out_dir, cache_payload)
+                            _save_resume_cache(out_dir, _cache_payload(
+                                req, fmt, result_obj, signature, result_signature, csv_hash, profile_hash, job_hash,
+                            ))
                         else:
                             logger.warning("Streaming generation done but source missing for caching user_id=%s", user_id)
                     except Exception as exc:
@@ -388,10 +318,11 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")
-            _record_generation(user_id, agent, fmt, None, gen_start, "error", str(e))
+            _record_generation(user_id, bot.model, fmt, None, gen_start, "error", str(e))
             yield sse_event({"stage": "error", "message": str(e)})
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
+
 
 @router.get("/download/{user_id}/{filename}")
 async def download_file(user_id: str, filename: str, request: Request):

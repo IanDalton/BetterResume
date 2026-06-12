@@ -11,7 +11,6 @@ Requires the corresponding API keys:
     ANTHROPIC_API_KEY                 for anthropic
 """
 import pytest
-from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.timeout(600)
 
@@ -38,18 +37,16 @@ async def test_multi_model_comparison(stub_vector_store, models_under_test):
     Score values are informational and guide model selection.
     """
     from bot import Bot
-    from llm.agent import ResumeAgent
 
     judge = LLMJudge()
     reports = []
 
     for model_string in models_under_test:
-        agent = ResumeAgent(model=model_string, vector_store=stub_vector_store, db=_NoEducationDB())
         bot = Bot(
-            writer=MagicMock(),
-            agent=agent,
-            vector_store=stub_vector_store,
             user_id="test_user_001",
+            vector_store=stub_vector_store,
+            model=model_string,
+            db=_NoEducationDB(),
             auto_ingest=False,
         )
 

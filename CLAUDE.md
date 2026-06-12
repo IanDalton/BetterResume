@@ -41,20 +41,20 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 
 **Entry points:**
 - `api/main.py` — FastAPI app, CORS, database connection pool lifecycle
-- `bot.py` — `Bot` class; orchestrates resume generation around a `ResumeAgent`
+- `bot.py` — `Bot` class; orchestrates resume generation around the `llm/agent.py` module agents
 
 **Request flow for resume generation:**
 1. Frontend POST `/resume/generate-resume/{user_id}` → `api/routers/resume.py`
-2. Router instantiates `Bot` with a `ResumeAgent` (pydantic-ai) and a per-user `PGVectorStore`
-3. The agent's `search_experience` tool does semantic search against the user's stored experience/skills in pgvector; `get_latest_job_experience` anchors the timeline
+2. Router instantiates `Bot(user_id, vector_store=...)` with a per-user `PGVectorStore`
+3. The generation agent's `search_experience` tool does semantic search against the user's stored experience/skills in pgvector; `get_latest_job_experience` anchors the timeline
 4. pydantic-ai calls Google Gemini (`google-gla:` provider) with retrieved context + job description, returning a validated `ResumeOutputFormat`
-5. `resume/writer.py` dispatches to `word_writer.py` or `latex_writer.py` to produce the output file
+5. The router renders the output file with `WordResumeWriter` or `LatexResumeWriter` from `resume/`
 
 **Key subsystems:**
-- `llm/agent.py` — `ResumeAgent`: two pydantic-ai Agents (generation with tools, translation without); retrieval forcing via output validator (`ModelRetry`)
+- `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service
-- `resume/` — Format-specific writers (Word, LaTeX), parser, base writer
+- `resume/` — Format-specific writers (Word, LaTeX) over a shared base writer
 - `models/` — Pydantic models for `Resume`, `JobExperience`, `Education`, `Skill`
 - `utils/db_storage.py` — PostgreSQL interaction (pgvector queries, user data, generation events, admin stats)
 - `api/auth.py` — Firebase ID-token verification (PyJWT against Google certs); `require_admin` dependency

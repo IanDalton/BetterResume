@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import MagicMock
 
 from tests.evaluators.ats_evaluator import ATSEvaluator
 from tests.evaluators.report import ResumeEvaluationReport
@@ -15,19 +14,16 @@ class _NoEducationDB:
 
 
 def _build_bot(stub_vector_store, model: str = "google-gla:gemini-2.5-flash-lite"):
-    """Lazy-import Bot/ResumeAgent so collection works without the full Docker env."""
+    """Lazy-import Bot so collection works without the full Docker env."""
     from bot import Bot
-    from llm.agent import ResumeAgent
 
-    agent = ResumeAgent(model=model, vector_store=stub_vector_store, db=_NoEducationDB())
-    bot = Bot(
-        writer=MagicMock(),
-        agent=agent,
-        vector_store=stub_vector_store,
+    return Bot(
         user_id="test_user_001",
+        vector_store=stub_vector_store,
+        model=model,
+        db=_NoEducationDB(),
         auto_ingest=False,
     )
-    return bot
 
 
 @pytest.mark.real_ai

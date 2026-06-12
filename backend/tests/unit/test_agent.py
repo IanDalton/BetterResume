@@ -1,4 +1,4 @@
-"""Tests for the pydantic-ai ResumeAgent.
+"""Tests for the module-level pydantic-ai agents in llm.agent.
 
 Uses TestModel/FunctionModel so no real API calls happen:
   - happy path: tools are exercised and structured output is returned
@@ -13,7 +13,8 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from llm.agent import DEFAULT_MODEL, ResumeAgent, normalize_model_name
+from llm import agent
+from llm.agent import DEFAULT_MODEL, JOB_PROMPT, TRANSLATION_PROMPT, normalize_model_name
 from models.resume import ResumeOutputFormat
 
 
@@ -58,9 +59,11 @@ def test_normalize_model_instance_passthrough():
 async def test_generate_returns_structured_resume(stub_vector_store, sample_resume_output):
     """TestModel calls every registered tool, then emits valid structured output."""
     model = TestModel(custom_output_args=sample_resume_output.model_dump())
-    agent = ResumeAgent(model=model, vector_store=stub_vector_store, db=FakeDB())
 
-    resume = await agent.generate("Senior Python engineer needed", user_id="u1")
+    resume = await agent.generate(
+        "Senior Python engineer needed",
+        user_id="u1", vector_store=stub_vector_store, db=FakeDB(), model=model,
+    )
 
     assert isinstance(resume, ResumeOutputFormat)
     assert resume.language == "en"
@@ -85,8 +88,11 @@ async def test_generate_forces_retrieval_when_model_skips_tools(stub_vector_stor
             return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"query": "python"})])
         return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args=resume_args)])
 
-    agent = ResumeAgent(model=FunctionModel(model_fn), vector_store=stub_vector_store, db=FakeDB())
-    resume = await agent.generate("Backend role", user_id="u1", require_tool_call=True)
+    resume = await agent.generate(
+        "Backend role",
+        user_id="u1", vector_store=stub_vector_store, db=FakeDB(),
+        model=FunctionModel(model_fn), require_tool_call=True,
+    )
 
     assert isinstance(resume, ResumeOutputFormat)
     assert calls["count"] == 3, "Model must be re-invoked after the rejected first answer"
@@ -101,8 +107,11 @@ async def test_generate_without_required_retrieval_allows_direct_answer(stub_vec
         output_tool = next(t.name for t in info.output_tools)
         return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args=resume_args)])
 
-    agent = ResumeAgent(model=FunctionModel(model_fn), vector_store=stub_vector_store, db=FakeDB())
-    resume = await agent.generate("Backend role", user_id="u1", require_tool_call=False)
+    resume = await agent.generate(
+        "Backend role",
+        user_id="u1", vector_store=stub_vector_store, db=FakeDB(),
+        model=FunctionModel(model_fn), require_tool_call=False,
+    )
 
     assert isinstance(resume, ResumeOutputFormat)
     assert stub_vector_store.queries == []
@@ -111,9 +120,8 @@ async def test_generate_without_required_retrieval_allows_direct_answer(stub_vec
 async def test_search_tool_without_store_returns_empty(sample_resume_output):
     """The search tool degrades gracefully when no vector store is wired in."""
     model = TestModel(custom_output_args=sample_resume_output.model_dump())
-    agent = ResumeAgent(model=model, vector_store=None, db=FakeDB())
 
-    resume = await agent.generate("Some role", user_id="u1")
+    resume = await agent.generate("Some role", user_id="u1", vector_store=None, db=FakeDB(), model=model)
     assert isinstance(resume, ResumeOutputFormat)
 
 
@@ -127,9 +135,7 @@ async def test_latest_job_tool_uses_db(stub_vector_store, sample_resume_output):
             return super().get_job_experiences(user_id, type_filter)
 
     model = TestModel(custom_output_args=sample_resume_output.model_dump())
-    agent = ResumeAgent(model=model, vector_store=stub_vector_store, db=RecordingDB())
-
-    await agent.generate("Role", user_id="user_42")
+    await agent.generate("Role", user_id="user_42", vector_store=stub_vector_store, db=RecordingDB(), model=model)
     assert seen.get("user_id") == "user_42"
 
 
@@ -142,16 +148,14 @@ async def test_translate_returns_structured_resume(stub_vector_store, sample_res
     translated = sample_resume_output.model_dump()
     translated["language"] = "es"
     model = TestModel(custom_output_args=translated)
-    agent = ResumeAgent(model=model, vector_store=stub_vector_store, db=FakeDB())
 
-    result = await agent.translate(sample_resume_output, "Descripción del puesto", user_id="u1")
+    result = await agent.translate(sample_resume_output, "Descripción del puesto", user_id="u1", model=model)
 
     assert isinstance(result, ResumeOutputFormat)
     assert result.language == "es"
     assert stub_vector_store.queries == []
 
 
-async def test_prompts_are_loaded():
-    agent = ResumeAgent(model=TestModel())
-    assert "search_experience" in agent.JOB_PROMPT
-    assert "translate" in agent.TRANSLATE_PROMPT.lower()
+def test_prompts_are_loaded():
+    assert "search_experience" in JOB_PROMPT
+    assert "translate" in TRANSLATION_PROMPT.lower()

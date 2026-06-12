@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 def load_prompt(name: str) -> str:

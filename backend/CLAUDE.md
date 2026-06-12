@@ -32,14 +32,14 @@ docker-compose up
 
 ### Resume Generation Flow
 1. `POST /resume/generate-resume/{user_id}` → `api/routers/resume.py`
-2. Router constructs a `Bot` with a `ResumeAgent` and per-user `PGVectorStore`, then calls `generate_resume(jd)` or `generate_resume_progress(jd)` (streaming)
+2. Router constructs a `Bot(user_id, vector_store=..., jobs_csv=...)` with a per-user `PGVectorStore`, then calls `generate_resume(jd)` or `generate_resume_progress(jd)` (streaming); both consume the same internal `_pipeline` generator
 3. The pydantic-ai generation agent calls `search_experience` (pgvector retrieval) and `get_latest_job_experience` tools
 4. The model (Google Gemini via `google-gla:` provider) returns a validated `ResumeOutputFormat`; non-English resumes go through the translation agent
-5. `resume/writer.py` dispatches to `WordWriter` or `LatexWriter` to produce the output file
+5. The router renders the output file via `WordResumeWriter` or `LatexResumeWriter` (`_make_writer`)
 6. Each generation is recorded in `generation_events` (model, format, language, duration, status) for the admin dashboard
 
 ### LLM / Agent Layer (`llm/`)
-- `agent.py` — `ResumeAgent`: builds two pydantic-ai `Agent`s (generation with tools + structured output, translation without tools). `ResumeDeps` dataclass carries user_id/vector_store/db into tools. Forced retrieval (the old `tool_choice="any"`) is an output validator that raises `ModelRetry` if `search_experience` was never called. `normalize_model_name` maps legacy `google_genai:` prefixes to `google-gla:`.
+- `agent.py` — module-level pydantic-ai `Agent` singletons: `generation_agent` (tools + structured output) and `translation_agent` (no tools). No model is bound at construction; the `generate()` / `translate()` module functions resolve one per run (default `DEFAULT_MODEL`), so importing never needs credentials. `ResumeDeps` dataclass carries user_id/vector_store/db into tools. Forced retrieval (the old `tool_choice="any"`) is an output validator that raises `ModelRetry` if `search_experience` was never called. `normalize_model_name` maps legacy `google_genai:` prefixes to `google-gla:`.
 - `vector_store.py` — `PGVectorStore`: pgvector similarity search / upsert / delete, async-first with sync wrappers
 - `embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding endpoint (`EMBEDDING_SERVICE_URL`)
 
@@ -62,8 +62,6 @@ docker-compose up
 - `base_writer.py` — Abstract base with shared formatting logic
 - `word_writer.py` — Produces `.docx` via `python-docx`
 - `latex_writer.py` — Produces `.tex` / `.pdf` via `pdflatex`
-- `writer.py` — Factory that dispatches to the correct writer based on requested format
-- `parser.py` — Parses CSV/JSON user data into Pydantic models
 
 ### Data Models (`models/`)
 Pydantic models: `Resume`, `JobExperience`, `Education`, `Skill`

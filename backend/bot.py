@@ -1,11 +1,17 @@
+"""Resume generation orchestrator.
+
+`Bot` drives the full pipeline around the module-level pydantic-ai agents in
+`llm.agent`: CSV ingest into the vector store, authoritative context building,
+generation, stored-language injection, education merge and translation.
+File rendering is the API layer's responsibility.
+"""
+
 import asyncio
-import json
 import logging
 import os
-from typing import Optional
+from typing import Any, AsyncIterator, Optional, Union
 
-from llm.agent import ResumeAgent
-from llm.vector_store import PGVectorStore
+from llm import agent
 from models.education import Education
 from models.language import Language
 from models.resume import ResumeOutputFormat
@@ -16,51 +22,46 @@ from utils.logging_utils import set_user_context
 
 
 class Bot:
-    """Orchestrates resume generation and translation with a pydantic-ai agent.
-
-    Attributes:
-        agent (ResumeAgent): pydantic-ai backed agent (generation + translation).
-        vector_store (PGVectorStore): per-user semantic store backing the agent's retrieval tool.
-        json_body (dict): The JSON representation of the generated resume.
-        writer (BaseWriter): An instance of a writer class for outputting resumes.
-    """
+    """Orchestrates resume generation and translation for one user."""
 
     def __init__(
         self,
-        writer,
-        agent: ResumeAgent,
-        vector_store: Optional[PGVectorStore] = None,
-        user_id: Optional[str] = None,
+        user_id: str,
+        vector_store: Any = None,
+        model: Union[str, Any, None] = None,
+        db: Any = None,
         auto_ingest: bool = True,
         jobs_csv: str = "jobs.csv",
     ):
         """Initialize Bot.
 
         Args:
-            writer: Concrete resume writer.
-            agent: ResumeAgent implementation.
-            vector_store: Optional existing PGVectorStore instance (reuse across calls, e.g., API).
+            user_id: Owner of the stored experience/skills; required.
+            vector_store: PGVectorStore (or compatible) backing the retrieval tool.
+            model: pydantic-ai model name or instance; defaults to `agent.DEFAULT_MODEL`.
+            db: Optional DB handle passed to the agent tools (defaults to DBStorage).
             auto_ingest: If True, loads jobs_csv into the store (if file exists).
             jobs_csv: Path to CSV to ingest.
         """
-        self.agent = agent
-        self.vector_store = vector_store or agent.vector_store
-        if self.vector_store is not None and agent.vector_store is None:
-            agent.vector_store = self.vector_store
-
+        if not user_id:
+            raise ValueError("user_id is required to generate a resume")
         self.user_id = user_id
+        self.vector_store = vector_store
+        self.model = agent.normalize_model_name(model)
+        self.db = db
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
             "Bot init model=%s has_store=%s auto_ingest=%s jobs_csv=%s user=%s",
-            getattr(agent, "model", None), bool(self.vector_store), auto_ingest, jobs_csv, user_id,
+            self.model, bool(vector_store), auto_ingest, jobs_csv, user_id,
         )
 
         self._auto_ingest_task = None
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             self._start_auto_ingest(jobs_csv)
 
-        self.json_body = None
-        self.writer = writer
+    # ------------------------------------------------------------------
+    # Ingest
+    # ------------------------------------------------------------------
 
     def _start_auto_ingest(self, jobs_csv: str):
         """Kick off auto-ingest synchronously or as a background task, depending on loop state."""
@@ -72,7 +73,6 @@ class Bot:
         except RuntimeError:
             # No running loop; run to completion.
             asyncio.run(self._auto_ingest_jobs(jobs_csv))
-            self._auto_ingest_task = None
             return
         # Running loop; schedule background task.
         self._auto_ingest_task = loop.create_task(self._auto_ingest_jobs(jobs_csv))
@@ -91,6 +91,10 @@ class Bot:
             await self.vector_store.aadd_documents(docs, ids, user_id=self.user_id)
         except Exception as e:
             self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
+
+    # ------------------------------------------------------------------
+    # Stored-data helpers
+    # ------------------------------------------------------------------
 
     def _fetch_generation_context(self) -> Optional[str]:
         """Build the authoritative context block (current date, computed years of
@@ -126,96 +130,88 @@ class Bot:
         except Exception as e:
             self.logger.warning("Could not inject stored languages: %s", e)
 
-    async def generate_resume(self, jd: str, output_basename: str = "resume") -> ResumeOutputFormat:
-        if self._auto_ingest_task:
-            await self._auto_ingest_task
-        if self.user_id:
-            set_user_context(self.user_id)
-        else:
-            raise ValueError("user_id is required to generate a resume")
-        self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
-        extra_context = self._fetch_generation_context()
-        resume = await self.agent.generate(
-            jd, user_id=self.user_id, require_tool_call=True, extra_context=extra_context
-        )
-        self.logger.info("Agent returned resume; language=%s", resume.language)
-        self._inject_stored_languages(resume)
-
-        if resume.language.lower() != "en":
-            resume = await self.translate_resume(resume, jd)
-            self.logger.info("Translation applied; language=%s", resume.language)
-
-        self.json_body = resume.model_dump()
-        return resume
-
-    async def generate_resume_progress(self, jd: str):
-        """Async generator yielding progress events; leaves file creation to API layer."""
-        # Ensure any background ingest completes
-        if self._auto_ingest_task:
-            try:
-                await self._auto_ingest_task
-            except Exception:
-                pass
-        if self.user_id:
-            set_user_context(self.user_id)
-        else:
-            raise ValueError("user_id is required to generate a resume")
-
-        self.logger.info("Streaming: invoking LLM")
-        yield {"stage": "invoking_llm", "message": "Invoking LLM"}
-        extra_context = self._fetch_generation_context()
-        resume = await self.agent.generate(
-            jd, user_id=self.user_id, require_tool_call=True, extra_context=extra_context
-        )
-        self.logger.info("Streaming: LLM complete; language=%s", resume.language)
-        self._inject_stored_languages(resume)
-        yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": getattr(resume, "language", None)}}
-
-        if (getattr(resume, "language", "") or "").lower() != "en":
-            self.logger.info("Streaming: translating non-EN -> EN")
-            yield {"stage": "translating", "message": "Translating resume"}
-            resume = await self.translate_resume(resume, jd)
-            yield {"stage": "translated", "message": "Translation complete", "data": {"language": getattr(resume, "language", None)}}
-
-        # Fetch education from DB
-        storage = DBStorage()
-        education_records = storage.get_job_experiences(self.user_id, type_filter="education")
-        self.logger.info("Fetched %d education records for user=%s", len(education_records), self.user_id)
+    def _fetch_education(self) -> list:
+        """Map stored education records (DB schema) onto the resume Education model."""
+        records = DBStorage().get_job_experiences(self.user_id, type_filter="education")
+        self.logger.info("Fetched %d education records for user=%s", len(records), self.user_id)
         education_list = []
-        for rec in education_records:
-            # Map DB record to Education model
+        for rec in records:
             # DB: type, company, description, role, location, start_date, end_date
             # Model: institution, degree, dates
             date_parts = [format_display_date(rec.get("start_date")), format_display_date(rec.get("end_date"))]
-            edu = Education(
+            education_list.append(Education(
                 institution=rec.get("company") or "",
                 degree=(rec.get("description") or "") or (rec.get("role") or ""),
                 dates=" - ".join(p for p in date_parts if p),
-            )
-            education_list.append(edu)
+            ))
+        return education_list
 
-        resume.resume_section.education = education_list
-        self.json_body = resume.model_dump()
-        self.logger.info("Streaming: done")
+    # ------------------------------------------------------------------
+    # Generation pipeline
+    # ------------------------------------------------------------------
+
+    async def _pipeline(self, jd: str, merge_education: bool) -> AsyncIterator[dict]:
+        """Single generation pipeline; both public entry points consume this."""
+        if self._auto_ingest_task:
+            await self._auto_ingest_task
+        set_user_context(self.user_id)
+
+        self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
+        yield {"stage": "invoking_llm", "message": "Invoking LLM"}
+        extra_context = self._fetch_generation_context()
+        resume = await agent.generate(
+            jd,
+            user_id=self.user_id,
+            vector_store=self.vector_store,
+            db=self.db,
+            model=self.model,
+            require_tool_call=True,
+            extra_context=extra_context,
+        )
+        self.logger.info("Agent returned resume; language=%s", resume.language)
+        self._inject_stored_languages(resume)
+        yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": resume.language}}
+
+        if (resume.language or "").lower() != "en":
+            yield {"stage": "translating", "message": "Translating resume"}
+            resume = await self.translate_resume(resume, jd)
+            self.logger.info("Translation applied; language=%s", resume.language)
+            yield {"stage": "translated", "message": "Translation complete", "data": {"language": resume.language}}
+
+        if merge_education:
+            resume.resume_section.education = self._fetch_education()
+
         yield {"stage": "done", "message": "Resume generation complete", "result": resume}
+
+    async def generate_resume(self, jd: str) -> ResumeOutputFormat:
+        resume = None
+        async for event in self._pipeline(jd, merge_education=False):
+            if event["stage"] == "done":
+                resume = event["result"]
+        return resume
+
+    async def generate_resume_progress(self, jd: str) -> AsyncIterator[dict]:
+        """Async generator yielding progress events; leaves file creation to API layer."""
+        async for event in self._pipeline(jd, merge_education=True):
+            yield event
 
     async def translate_resume(self, r: ResumeOutputFormat, original_jd: str) -> ResumeOutputFormat:
         if isinstance(r, dict):
             r = ResumeOutputFormat.model_validate(r)
-        return await self.agent.translate(r, original_jd, user_id=self.user_id)
+        return await agent.translate(r, original_jd, user_id=self.user_id, model=self.model)
 
 
 if __name__ == "__main__":
     import argparse
+    import json
 
-    from resume import WordResumeWriter
+    from llm.vector_store import PGVectorStore
 
     p = argparse.ArgumentParser()
     p.add_argument("--job", required=True)
     p.add_argument("--user", default="cli_user")
     a = p.parse_args()
     jd = open(a.job).read()
-    store = PGVectorStore()
-    b = Bot(writer=WordResumeWriter(), agent=ResumeAgent(vector_store=store), vector_store=store, user_id=a.user)
+    b = Bot(user_id=a.user, vector_store=PGVectorStore())
     out = asyncio.run(b.generate_resume(jd))
     print(json.dumps(out.model_dump(), indent=2, ensure_ascii=False))
