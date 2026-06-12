@@ -15,6 +15,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, List, Optional, Tuple, Union
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -94,6 +95,16 @@ class ResumeAgent:
             retries=retries,
         )
 
+        @self.generation_agent.instructions
+        def current_date_instructions(ctx: RunContext[ResumeDeps]) -> str:
+            today = date.today().strftime("%m/%Y")
+            return (
+                f"Today's date is {today}. A resume documents experience already acquired: "
+                f"never output a start or end date later than {today}, and label ongoing roles "
+                "with 'Present' as the end date. Copy dates exactly from the retrieved data; "
+                "never invent or shift them."
+            )
+
         @self.generation_agent.tool
         async def search_experience(ctx: RunContext[ResumeDeps], query: str, n_results: int = 10) -> List[Tuple[str, float]]:
             """Semantic search over the user's stored experience, skills, education and projects.
@@ -171,12 +182,25 @@ class ResumeAgent:
         except Exception:
             logger.debug("%s complete; usage unavailable", label)
 
-    async def generate(self, jd: str, user_id: str, require_tool_call: bool = True) -> ResumeOutputFormat:
-        """Generate a structured resume for a job description."""
+    async def generate(
+        self,
+        jd: str,
+        user_id: str,
+        require_tool_call: bool = True,
+        extra_context: Optional[str] = None,
+    ) -> ResumeOutputFormat:
+        """Generate a structured resume for a job description.
+
+        Args:
+            extra_context: Authoritative facts (current date, computed years of
+                experience, spoken languages) appended to the prompt so the model
+                stays consistent with the user's stored data.
+        """
         deps = self._make_deps(user_id, require_tool_call)
         start = time.monotonic()
         logger.info("Generation start user=%s model=%s jd_chars=%d", user_id, self.model, len(jd or ""))
-        result = await self.generation_agent.run(jd, deps=deps)
+        prompt = jd if not extra_context else f"{jd}\n\n{extra_context}"
+        result = await self.generation_agent.run(prompt, deps=deps)
         logger.info(
             "Generation finished user=%s in %dms; searches=%d",
             user_id, int((time.monotonic() - start) * 1000), deps.search_calls,

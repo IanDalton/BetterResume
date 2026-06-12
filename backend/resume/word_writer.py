@@ -293,6 +293,31 @@ class WordResumeWriter(BaseWriter):
                         continue
         except Exception as e:
             self._logger.debug("Skipping education due to missing data: %s", e)
+
+        # Languages
+        try:
+            languages = getattr(resume_section, 'languages', None)
+            if languages:
+                languages_heading = document.add_heading('LANGUAGES', level=0)
+                set_heading_font(languages_heading, font_name="Times New Roman", font_size=11)
+
+                for language in languages:
+                    try:
+                        p = document.add_paragraph()
+                        p.style = "List Bullet"
+                        set_paragraph_font(p)
+                        set_paragraph_format(p)
+                        if language.name:
+                            p.add_run(language.name).bold = True
+                        if language.proficiency:
+                            if language.name:
+                                p.add_run(f" - {language.proficiency}")
+                            else:
+                                p.add_run(language.proficiency)
+                    except Exception:
+                        continue
+        except Exception as e:
+            self._logger.debug("Skipping languages due to missing data: %s", e)
         if output:
             # Save the Word document
             document.save(output)

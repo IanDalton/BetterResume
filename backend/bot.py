@@ -7,8 +7,10 @@ from typing import Optional
 from llm.agent import ResumeAgent
 from llm.vector_store import PGVectorStore
 from models.education import Education
+from models.language import Language
 from models.resume import ResumeOutputFormat
 from utils.db_storage import DBStorage
+from utils.generation_context import build_generation_context, extract_languages, format_display_date
 from utils.ingest import load_csv_documents
 from utils.logging_utils import set_user_context
 
@@ -90,6 +92,40 @@ class Bot:
         except Exception as e:
             self.logger.warning("Auto-ingest failed for %s: %s", jobs_csv, e)
 
+    def _fetch_generation_context(self) -> Optional[str]:
+        """Build the authoritative context block (current date, computed years of
+        experience, spoken languages) from the user's stored records."""
+        try:
+            records = DBStorage().get_job_experiences(self.user_id)
+            context = build_generation_context(records)
+            self.logger.info("Generation context built from %d stored records", len(records))
+            return context
+        except Exception as e:
+            self.logger.warning("Could not build generation context: %s", e)
+            return None
+
+    def _fetch_stored_languages(self, storage: DBStorage) -> list:
+        records = storage.get_job_experiences(self.user_id, type_filter="language")
+        return [
+            Language(name=name, proficiency=proficiency)
+            for name, proficiency in extract_languages(records)
+        ]
+
+    def _inject_stored_languages(self, resume: ResumeOutputFormat) -> None:
+        """Fallback: if the model omitted the languages section despite the context
+        block, fill it from stored data. When the model did produce languages we keep
+        its output — it writes the names and proficiency levels in the resume's
+        language, which raw DB values are not guaranteed to be in."""
+        if resume.resume_section.languages:
+            return
+        try:
+            stored_languages = self._fetch_stored_languages(DBStorage())
+            if stored_languages:
+                resume.resume_section.languages = stored_languages
+                self.logger.info("Injected %d stored languages (model omitted them)", len(stored_languages))
+        except Exception as e:
+            self.logger.warning("Could not inject stored languages: %s", e)
+
     async def generate_resume(self, jd: str, output_basename: str = "resume") -> ResumeOutputFormat:
         if self._auto_ingest_task:
             await self._auto_ingest_task
@@ -98,8 +134,12 @@ class Bot:
         else:
             raise ValueError("user_id is required to generate a resume")
         self.logger.info("Generate resume start; jd_chars=%d", len(jd or ""))
-        resume = await self.agent.generate(jd, user_id=self.user_id, require_tool_call=True)
+        extra_context = self._fetch_generation_context()
+        resume = await self.agent.generate(
+            jd, user_id=self.user_id, require_tool_call=True, extra_context=extra_context
+        )
         self.logger.info("Agent returned resume; language=%s", resume.language)
+        self._inject_stored_languages(resume)
 
         if resume.language.lower() != "en":
             resume = await self.translate_resume(resume, jd)
@@ -123,8 +163,12 @@ class Bot:
 
         self.logger.info("Streaming: invoking LLM")
         yield {"stage": "invoking_llm", "message": "Invoking LLM"}
-        resume = await self.agent.generate(jd, user_id=self.user_id, require_tool_call=True)
+        extra_context = self._fetch_generation_context()
+        resume = await self.agent.generate(
+            jd, user_id=self.user_id, require_tool_call=True, extra_context=extra_context
+        )
         self.logger.info("Streaming: LLM complete; language=%s", resume.language)
+        self._inject_stored_languages(resume)
         yield {"stage": "parsed", "message": "Initial resume parsed", "data": {"language": getattr(resume, "language", None)}}
 
         if (getattr(resume, "language", "") or "").lower() != "en":
@@ -142,10 +186,11 @@ class Bot:
             # Map DB record to Education model
             # DB: type, company, description, role, location, start_date, end_date
             # Model: institution, degree, dates
+            date_parts = [format_display_date(rec.get("start_date")), format_display_date(rec.get("end_date"))]
             edu = Education(
                 institution=rec.get("company") or "",
                 degree=(rec.get("description") or "") or (rec.get("role") or ""),
-                dates=f"{rec.get('start_date') or ''} - {rec.get('end_date') or ''}"
+                dates=" - ".join(p for p in date_parts if p),
             )
             education_list.append(edu)
 

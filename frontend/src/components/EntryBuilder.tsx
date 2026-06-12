@@ -33,21 +33,32 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
     e.preventDefault();
     // Require role only for non-info entries (info role auto-populated)
     if (form.type !== 'info' && form.type !== 'education' && !form.role) return;
+    // Languages need an explicit proficiency level
+    if (form.type === 'language' && !form.description) return;
     editing == null ? onAdd(form) : onUpdate(editing, form);
     reset();
   };
 
   const startEdit = (i: number) => { setEditing(i); setForm(entries[i]); };
 
-  const showJobFields = form.type !== 'info';
+  const isLanguage = form.type === 'language';
+  const showJobFields = form.type !== 'info' && !isLanguage;
   const showRoleDesc = form.type === 'info' && form.role === 'website';
+
+  const proficiencyLevels: [string, string][] = [
+    ['Native', t('proficiency.native')],
+    ['Full professional proficiency (C2)', t('proficiency.c2')],
+    ['Advanced (C1)', t('proficiency.c1')],
+    ['Intermediate (B2)', t('proficiency.b2')],
+    ['Basic (A2/B1)', t('proficiency.basic')],
+  ];
 
   return (
     <section className="mb-12">
       <h2 className="text-xl font-semibold mb-4">{t('add.entry.section')}</h2>
   <form onSubmit={submit} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 bg-neutral-50 border border-neutral-200 rounded p-4 dark:bg-neutral-900/60 dark:border-neutral-800">
         <SelectField label={t('field.type')} value={form.type} onChange={v => setField('type', v as EntryType)} options={[
-          ['info',t('type.info')],['education',t('type.education')],['job',t('type.job')],['non-profit',t('type.non-profit')],['project',t('type.project')],['contract',t('type.contract')],['part-time',t('type.part-time')]
+          ['info',t('type.info')],['education',t('type.education')],['job',t('type.job')],['non-profit',t('type.non-profit')],['project',t('type.project')],['contract',t('type.contract')],['part-time',t('type.part-time')],['language',t('type.language')]
         ]} />
         {showJobFields && <InputField label={t('field.company')} value={form.company||''} onChange={v=>setField('company',v)} placeholder={t('placeholder.company')} />}
         {showJobFields && <InputField label={t('field.location')} value={form.location||''} onChange={v=>setField('location',v)} placeholder={t('placeholder.location')} />}
@@ -59,13 +70,15 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
                 {['name','email','phone','website','address'].map(r => <option key={r} value={r}>{t('field.personal.'+r)}</option>)}
               </select>
             ) : (
-              <input className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={t('placeholder.role')} />
+              <input className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={isLanguage ? t('placeholder.languageName') : t('placeholder.role')} />
             )}
           </div>
         )}
         {showJobFields && <InputField label={t('field.start')} value={form.start||''} onChange={v=>setField('start',v)} placeholder={t('placeholder.start')} />}
         {showJobFields && <InputField label={t('field.end')} value={form.end||''} onChange={v=>setField('end',v)} placeholder={t('placeholder.end')} />}
-  <TextareaField label={t('field.description')} value={form.description||''} onChange={v=>setField('description',v)} placeholder={t('placeholder.description')} className="md:col-span-2 lg:col-span-3" />
+  {isLanguage
+    ? <SelectField label={t('field.proficiency')} value={form.description||''} onChange={v=>setField('description',v)} options={[['', t('proficiency.select')], ...proficiencyLevels]} />
+    : <TextareaField label={t('field.description')} value={form.description||''} onChange={v=>setField('description',v)} placeholder={t('placeholder.description')} className="md:col-span-2 lg:col-span-3" />}
         {showRoleDesc && <TextareaField label={t('field.extraDetails')} value={form.role_description||''} onChange={v=>setField('role_description',v)} placeholder={t('placeholder.extraDetails')} className="md:col-span-2 lg:col-span-3" />}
         <div className="md:col-span-2 lg:col-span-3 flex justify-end gap-3 pt-2">
           {editing != null && <button type="button" onClick={reset} className="btn-secondary">{t('button.cancel')}</button>}

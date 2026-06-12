@@ -43,7 +43,7 @@ export function buildCsvFromEntries(entries: ResumeEntry[]): string {
         '',
         (e.description || '') + (e.role_description ? `\n${e.role_description}` : '')
       ].map(sanitize).join(','));
-    } else if (['job','contract','part-time','project','non-profit','education','certification'].includes(e.type)) {
+    } else if (['job','contract','part-time','project','non-profit','education','certification','language'].includes(e.type)) {
       lines.push([
         e.type,
         e.company || '',
@@ -97,7 +97,7 @@ export function buildJobsFromEntries(entries: ResumeEntry[]): Array<{type:string
         company: e.role || '',
         description: (e.description || '') + (e.role_description ? `\n${e.role_description}` : ''),
       });
-    } else if (['job','contract','part-time','project','non-profit','education','certification'].includes(e.type)) {
+    } else if (['job','contract','part-time','project','non-profit','education','certification','language'].includes(e.type)) {
       out.push({
         type: e.type,
         company: e.company || '',

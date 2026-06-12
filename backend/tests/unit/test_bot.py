@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot import Bot
+from models.language import Language
 from models.resume import ResumeOutputFormat
 
 
@@ -19,7 +20,7 @@ class FakeAgent:
         self.generate = AsyncMock(side_effect=self._generate)
         self.translate = AsyncMock(side_effect=self._translate)
 
-    async def _generate(self, jd, user_id, require_tool_call=True):
+    async def _generate(self, jd, user_id, require_tool_call=True, extra_context=None):
         return self._generated
 
     async def _translate(self, resume, jd, user_id):
@@ -62,14 +63,26 @@ async def test_generate_resume_non_english_triggers_translation(sample_resume_ou
     agent.translate.assert_awaited_once()
 
 
+def _storage_with_records(records):
+    """MagicMock DBStorage whose get_job_experiences honors type_filter like the real one."""
+    storage = MagicMock()
+
+    def get_job_experiences(user_id, type_filter=None):
+        if type_filter is None:
+            return records
+        return [r for r in records if r.get("type") == type_filter]
+
+    storage.get_job_experiences.side_effect = get_job_experiences
+    return storage
+
+
 async def test_generate_resume_progress_yields_stages_and_merges_education(sample_resume_output):
     agent = FakeAgent(_resume(sample_resume_output, "en"))
     bot = Bot(writer=MagicMock(), agent=agent, user_id="u1", auto_ingest=False)
 
-    fake_storage = MagicMock()
-    fake_storage.get_job_experiences.return_value = [
-        {"company": "MIT", "description": "M.S. Computer Science", "start_date": "2019", "end_date": "2021"},
-    ]
+    fake_storage = _storage_with_records([
+        {"type": "education", "company": "MIT", "description": "M.S. Computer Science", "start_date": "01/01/2021", "end_date": "01/12/2025"},
+    ])
 
     events = []
     with patch("bot.DBStorage", return_value=fake_storage):
@@ -83,7 +96,104 @@ async def test_generate_resume_progress_yields_stages_and_merges_education(sampl
     assert len(final.resume_section.education) == 1
     assert final.resume_section.education[0].institution == "MIT"
     assert final.resume_section.education[0].degree == "M.S. Computer Science"
-    fake_storage.get_job_experiences.assert_called_once_with("u1", type_filter="education")
+    # Stored DD/MM/YYYY must be reformatted for display, not leaked raw
+    assert final.resume_section.education[0].dates == "01/2021 - 12/2025"
+    fake_storage.get_job_experiences.assert_any_call("u1", type_filter="education")
+
+
+async def test_generate_resume_progress_injects_stored_languages(sample_resume_output):
+    agent = FakeAgent(_resume(sample_resume_output, "en"))
+    bot = Bot(writer=MagicMock(), agent=agent, user_id="u1", auto_ingest=False)
+
+    fake_storage = _storage_with_records([
+        {"type": "language", "role": "English", "description": "Full professional proficiency (C2)"},
+        {"type": "language", "role": "Spanish", "description": "Native"},
+    ])
+
+    events = []
+    with patch("bot.DBStorage", return_value=fake_storage):
+        async for event in bot.generate_resume_progress("job description"):
+            events.append(event)
+
+    final = events[-1]["result"]
+    languages = final.resume_section.languages
+    assert [(l.name, l.proficiency) for l in languages] == [
+        ("English", "Full professional proficiency (C2)"),
+        ("Spanish", "Native"),
+    ]
+
+
+async def test_model_provided_languages_are_kept(sample_resume_output):
+    """When the model already produced languages (localized to the resume's language),
+    the stored raw DB values must NOT overwrite them."""
+    generated = _resume(sample_resume_output, "en")
+    generated.resume_section.languages = [
+        Language(name="English", proficiency="Full professional proficiency (C2)"),
+        Language(name="Spanish", proficiency="Native"),
+    ]
+    agent = FakeAgent(generated)
+    bot = Bot(writer=MagicMock(), agent=agent, user_id="u1", auto_ingest=False)
+
+    fake_storage = _storage_with_records([
+        {"type": "language", "role": "Ingles", "description": "Full professional proficiency (C2)"},
+        {"type": "language", "role": "Español", "description": "Native"},
+    ])
+
+    with patch("bot.DBStorage", return_value=fake_storage):
+        result = await bot.generate_resume("job description")
+
+    assert [l.name for l in result.resume_section.languages] == ["English", "Spanish"]
+
+
+async def test_stored_languages_injected_before_translation(sample_resume_output):
+    """Languages must be injected pre-translation so the translator localizes them."""
+    agent = FakeAgent(
+        generated=_resume(sample_resume_output, "es"),
+        translated=_resume(sample_resume_output, "es"),
+    )
+    bot = Bot(writer=MagicMock(), agent=agent, user_id="u1", auto_ingest=False)
+
+    fake_storage = _storage_with_records([
+        {"type": "language", "role": "English", "description": "Full professional proficiency (C2)"},
+    ])
+
+    with patch("bot.DBStorage", return_value=fake_storage):
+        await bot.generate_resume("descripción del puesto")
+
+    passed_to_translate = agent.translate.await_args.args[0]
+    assert [(l.name, l.proficiency) for l in passed_to_translate.resume_section.languages] == [
+        ("English", "Full professional proficiency (C2)"),
+    ]
+
+
+async def test_generate_resume_passes_authoritative_context_to_agent(sample_resume_output):
+    agent = FakeAgent(_resume(sample_resume_output, "en"))
+    bot = Bot(writer=MagicMock(), agent=agent, user_id="u1", auto_ingest=False)
+
+    fake_storage = _storage_with_records([
+        {"type": "job", "company": "Acme", "start_date": "01/01/2024", "end_date": "present"},
+        {"type": "language", "role": "English", "description": "Full professional proficiency (C2)"},
+    ])
+
+    with patch("bot.DBStorage", return_value=fake_storage):
+        await bot.generate_resume("job description")
+
+    extra_context = agent.generate.await_args.kwargs["extra_context"]
+    assert "Today's date" in extra_context
+    assert "English — Full professional proficiency (C2)" in extra_context
+    assert "total professional experience" in extra_context
+
+
+async def test_generate_resume_survives_context_failure(sample_resume_output):
+    """If the DB is unreachable the context is skipped, not fatal."""
+    agent = FakeAgent(_resume(sample_resume_output, "en"))
+    bot = Bot(writer=MagicMock(), agent=agent, user_id="u1", auto_ingest=False)
+
+    with patch("bot.DBStorage", side_effect=RuntimeError("db down")):
+        result = await bot.generate_resume("job description")
+
+    assert result.language == "en"
+    assert agent.generate.await_args.kwargs["extra_context"] is None
 
 
 async def test_generate_resume_progress_translates_non_english(sample_resume_output):
