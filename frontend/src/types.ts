@@ -1,4 +1,4 @@
-export type EntryType = 'info' | 'education' | 'certification' | 'job' | 'non-profit' | 'project' | 'contract' | 'part-time';
+export type EntryType = 'info' | 'education' | 'certification' | 'job' | 'non-profit' | 'project' | 'contract' | 'part-time' | 'language';
 
 export interface ResumeEntry {
   type: EntryType;

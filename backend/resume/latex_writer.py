@@ -184,6 +184,18 @@ class LatexResumeWriter(BaseWriter):
             tex.append(r"\textbf{" + _latex_escape(edu.institution) + r"} \hfill " + _latex_escape(edu.dates))
             tex.append(r"\\" + _latex_escape(edu.degree))
 
+        # Languages
+        languages = getattr(response.resume_section, "languages", None) or []
+        if languages:
+            tex.append(r"\section*{Languages}")
+            tex.append(r"\begin{itemize}[leftmargin=*]")
+            for language in languages:
+                item = r"\item \textbf{" + _latex_escape(language.name) + r"}"
+                if language.proficiency:
+                    item += " -- " + _latex_escape(language.proficiency)
+                tex.append(item)
+            tex.append(r"\end{itemize}")
+
         tex.append(r"\end{document}")
 
         tex_content = "\n".join(tex)

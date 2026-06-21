@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from typing import List
 
-from api.utils import _validate_user_id, get_user_tool
+from api.utils import _validate_user_id, get_user_store
 from utils.db_storage import DBStorage
 from utils.logging_utils import set_user_context
 from api.schemas import JobUploadRequest
@@ -22,7 +22,7 @@ async def upload_jobs(user_id: str, payload: JobUploadRequest):
     set_user_context(user_id)
     storage = DBStorage()
     storage._ensure_user(user_id)
-    tool = get_user_tool(user_id)
+    store = get_user_store(user_id)
     try:
         import pandas as pd
         # Build DataFrame from JSON payload
@@ -30,7 +30,7 @@ async def upload_jobs(user_id: str, payload: JobUploadRequest):
             logger.info("Received empty jobs payload for user=%s", user_id)
             # Still clear vectors and stored file
             try:
-                await tool.adelete_user_documents(user_id)
+                await store.adelete_user_documents(user_id)
             except Exception:
                 pass
             # Persist empty CSV
@@ -122,7 +122,7 @@ async def upload_jobs(user_id: str, payload: JobUploadRequest):
         # Replace existing vectors for this user to avoid mixing across uploads
         logger.info("Using pgvector for user=%s", user_id)
         try:
-            await tool.adelete_user_documents(user_id)
+            await store.adelete_user_documents(user_id)
         except Exception:
             pass
         if rows == 0:
@@ -134,7 +134,7 @@ async def upload_jobs(user_id: str, payload: JobUploadRequest):
             docs.append("\n".join([f"{col}: {row[col]}" for col in df_ingest.columns]))
         ids = [f"{user_id}_{i}" for i in range(len(docs))]
         logger.info("Ingesting %d rows into pgvector for user=%s", len(docs), user_id)
-        await tool.aadd_documents(
+        await store.aadd_documents(
             docs,
             ids,
             user_id=user_id,

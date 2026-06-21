@@ -103,6 +103,37 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
   });
 }
 
+export interface AdminStats {
+  totals: {
+    users: number;
+    resume_requests: number;
+    requesting_users: number;
+    generations: number;
+    successful_generations: number;
+    success_rate: number | null;
+    avg_duration_ms: number;
+  };
+  generations_per_day: Array<{ day: string; count: number }>;
+  requests_per_day: Array<{ day: string; count: number }>;
+  by_model: Array<{ model: string; count: number }>;
+  by_format: Array<{ format: string; count: number }>;
+  by_language: Array<{ language: string; count: number }>;
+  top_users: Array<{ user_id: string; requests: number; last_request: string }>;
+  recent_requests: Array<{ user_id: string; job_posting_preview: string; created_at: string }>;
+  donations: { by_currency: Array<{ currency: string; count: number; total_amount: number }> };
+}
+
+export async function fetchAdminStats(idToken: string, days = 30): Promise<AdminStats> {
+  const res = await fetch(`${API_BASE}/admin/stats?days=${days}`, {
+    headers: { Authorization: `Bearer ${idToken}` }
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('forbidden');
+  }
+  if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
+  return res.json();
+}
+
 export async function uploadProfilePicture(userId: string, file: File) {
   const form = new FormData();
   form.append('file', file);

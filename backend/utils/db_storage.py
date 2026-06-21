@@ -258,6 +258,20 @@ class DBStorage:
                             PRIMARY KEY (user_id, cache_key)
                         );
                     """)
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS generation_events (
+                            id BIGSERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            model TEXT,
+                            format TEXT,
+                            language TEXT,
+                            duration_ms INTEGER,
+                            status TEXT NOT NULL DEFAULT 'success',
+                            error TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
                     self.logger.info("Database schema initialized successfully")
         except Exception as e:
             self.logger.error("Failed to initialize database schema: %s", e)
@@ -432,6 +446,160 @@ class DBStorage:
         except Exception as e:
             self.logger.exception("Failed to insert resume request: %s", e)
             raise
+
+    def record_generation_event(
+        self,
+        user_id: str,
+        model: Optional[str] = None,
+        format: Optional[str] = None,
+        language: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        status: str = "success",
+        error: Optional[str] = None,
+    ):
+        """Insert a resume generation event row (used by the admin dashboard)."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO generation_events (user_id, model, format, language, duration_ms, status, error)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (user_id, model, format, language, duration_ms, status, (error or None) and str(error)[:2000]),
+                    )
+            self.logger.info(
+                "Recorded generation event user=%s status=%s duration_ms=%s", user_id, status, duration_ms
+            )
+        except Exception as e:
+            self.logger.exception("Failed to record generation event: %s", e)
+            raise
+
+    def get_admin_stats(self, days: int = 30) -> Dict[str, Any]:
+        """Aggregate statistics about stored resumes for the admin dashboard."""
+        stats: Dict[str, Any] = {
+            "totals": {},
+            "generations_per_day": [],
+            "requests_per_day": [],
+            "by_model": [],
+            "by_format": [],
+            "by_language": [],
+            "top_users": [],
+            "recent_requests": [],
+            "donations": {},
+        }
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM users")
+                stats["totals"]["users"] = cur.fetchone()[0]
+
+                cur.execute("SELECT COUNT(*), COUNT(DISTINCT user_id) FROM resume_requests")
+                row = cur.fetchone()
+                stats["totals"]["resume_requests"] = row[0]
+                stats["totals"]["requesting_users"] = row[1]
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*),
+                           COUNT(*) FILTER (WHERE status = 'success'),
+                           COALESCE(AVG(duration_ms) FILTER (WHERE status = 'success'), 0)
+                    FROM generation_events
+                    """
+                )
+                row = cur.fetchone()
+                total_gen, success_gen, avg_ms = row
+                stats["totals"]["generations"] = total_gen
+                stats["totals"]["successful_generations"] = success_gen
+                stats["totals"]["success_rate"] = round(success_gen / total_gen, 4) if total_gen else None
+                stats["totals"]["avg_duration_ms"] = int(avg_ms or 0)
+
+                cur.execute(
+                    """
+                    SELECT DATE(created_at) AS day, COUNT(*)
+                    FROM generation_events
+                    WHERE created_at >= CURRENT_DATE - %s::int
+                    GROUP BY day ORDER BY day
+                    """,
+                    (days,),
+                )
+                stats["generations_per_day"] = [
+                    {"day": str(r[0]), "count": r[1]} for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    SELECT DATE(created_at) AS day, COUNT(*)
+                    FROM resume_requests
+                    WHERE created_at >= CURRENT_DATE - %s::int
+                    GROUP BY day ORDER BY day
+                    """,
+                    (days,),
+                )
+                stats["requests_per_day"] = [
+                    {"day": str(r[0]), "count": r[1]} for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    SELECT COALESCE(model, 'unknown'), COUNT(*)
+                    FROM generation_events GROUP BY 1 ORDER BY 2 DESC
+                    """
+                )
+                stats["by_model"] = [{"model": r[0], "count": r[1]} for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT COALESCE(format, 'unknown'), COUNT(*)
+                    FROM generation_events GROUP BY 1 ORDER BY 2 DESC
+                    """
+                )
+                stats["by_format"] = [{"format": r[0], "count": r[1]} for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT COALESCE(LOWER(language), 'unknown'), COUNT(*)
+                    FROM generation_events GROUP BY 1 ORDER BY 2 DESC
+                    """
+                )
+                stats["by_language"] = [{"language": r[0], "count": r[1]} for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT user_id, COUNT(*) AS cnt, MAX(created_at)
+                    FROM resume_requests GROUP BY user_id ORDER BY cnt DESC LIMIT 10
+                    """
+                )
+                stats["top_users"] = [
+                    {"user_id": r[0], "requests": r[1], "last_request": str(r[2])} for r in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    SELECT user_id, LEFT(job_posting, 200), created_at
+                    FROM resume_requests ORDER BY created_at DESC LIMIT 20
+                    """
+                )
+                stats["recent_requests"] = [
+                    {"user_id": r[0], "job_posting_preview": r[1], "created_at": str(r[2])}
+                    for r in cur.fetchall()
+                ]
+
+                try:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*), COALESCE(SUM(amount), 0), COALESCE(currency, 'usd')
+                        FROM donations WHERE status = 'completed' GROUP BY currency
+                        """
+                    )
+                    stats["donations"] = {
+                        "by_currency": [
+                            {"currency": r[2], "count": r[0], "total_amount": r[1]} for r in cur.fetchall()
+                        ]
+                    }
+                except Exception:
+                    # donations table may not exist yet
+                    stats["donations"] = {"by_currency": []}
+        return stats
 
     def _ensure_donations_table(self):
         try:

@@ -3,19 +3,14 @@ Multi-model comparison test.
 
 Run with:
     pytest tests/integration/test_multi_model.py -v --real-ai \\
-      --models "google_genai:gemini-2.5-flash-lite,openai:gpt-4o-mini,anthropic:claude-haiku-4-5-20251001"
+      --models "google-gla:gemini-2.5-flash-lite,openai:gpt-4o-mini,anthropic:claude-haiku-4-5"
 
 Requires the corresponding API keys:
-    GOOGLE_API_KEY / GEMINI_API_KEY   for google_genai
+    GOOGLE_API_KEY / GEMINI_API_KEY   for google-gla
     OPENAI_API_KEY                    for openai
     ANTHROPIC_API_KEY                 for anthropic
-
-LangSmith tracing (optional):
-    LANGCHAIN_TRACING_V2=true
-    LANGCHAIN_API_KEY=<key>
 """
 import pytest
-from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.timeout(600)
 
@@ -26,9 +21,14 @@ from tests.evaluators.schema_evaluator import SchemaEvaluator
 from tests.fixtures.job_descriptions import JD_SOFTWARE_ENGINEER_SENIOR
 
 
+class _NoEducationDB:
+    def get_job_experiences(self, user_id, type_filter=None):
+        return []
+
+
 @pytest.mark.real_ai
 @pytest.mark.slow
-async def test_multi_model_comparison(mock_pg_vector_tool, models_under_test):
+async def test_multi_model_comparison(stub_vector_store, models_under_test):
     """
     Generate a resume with each model in --models, score with all evaluators,
     and print a ranked comparison table.
@@ -37,23 +37,16 @@ async def test_multi_model_comparison(mock_pg_vector_tool, models_under_test):
     Score values are informational and guide model selection.
     """
     from bot import Bot
-    from llm.gemini_agent import GeminiAgent
-    from models.resume import ResumeOutputFormat
 
     judge = LLMJudge()
     reports = []
 
     for model_string in models_under_test:
-        agent = GeminiAgent(
-            tools=[mock_pg_vector_tool],
-            output_format=ResumeOutputFormat,
-            model=model_string,
-        )
         bot = Bot(
-            writer=MagicMock(),
-            llm=agent,
-            tool=mock_pg_vector_tool,
             user_id="test_user_001",
+            vector_store=stub_vector_store,
+            model=model_string,
+            db=_NoEducationDB(),
             auto_ingest=False,
         )
 

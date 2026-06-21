@@ -1,26 +1,41 @@
 import asyncio
+import csv
 import os
-from langchain_community.document_loaders.csv_loader import CSVLoader
-from llm.pg_vector_tool import PGVectorTool
+from typing import List
 
-async def ingest_jobs_csv_async(path: str, tool: PGVectorTool, user_id: str) -> int:
-    """Load a jobs CSV and ingest its rows into the provided PGVectorTool for a specific user.
+
+def load_csv_documents(path: str) -> List[str]:
+    """Load a CSV and render each row as a "column: value" document string.
+
+    Mirrors the output format of langchain's CSVLoader, which this replaces.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"CSV not found: {path}")
+    docs: List[str] = []
+    with open(path, newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            docs.append("\n".join(f"{key}: {value or ''}" for key, value in row.items()))
+    return docs
+
+
+async def ingest_jobs_csv_async(path: str, store, user_id: str) -> int:
+    """Load a jobs CSV and ingest its rows into the provided PGVectorStore for a specific user.
 
     Args:
         path: CSV file path.
-        tool: Initialized PGVectorTool instance.
+        store: Initialized PGVectorStore instance.
         user_id: User id used to scope the documents.
 
     Returns:
         Number of rows ingested.
     """
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"CSV not found: {path}")
-    data = CSVLoader(file_path=path).load()
-    ids = [f"{user_id}_{i}" for i in range(len(data))]
-    await tool.aadd_documents([d.page_content for d in data], ids, user_id=user_id)
-    return len(data)
+    docs = load_csv_documents(path)
+    ids = [f"{user_id}_{i}" for i in range(len(docs))]
+    await store.aadd_documents(docs, ids, user_id=user_id)
+    return len(docs)
 
-def ingest_jobs_csv(path: str, tool: PGVectorTool, user_id: str) -> int:
+
+def ingest_jobs_csv(path: str, store, user_id: str) -> int:
     """Synchronous wrapper around ingest_jobs_csv_async for CLI/legacy callers."""
-    return asyncio.run(ingest_jobs_csv_async(path, tool, user_id))
+    return asyncio.run(ingest_jobs_csv_async(path, store, user_id))

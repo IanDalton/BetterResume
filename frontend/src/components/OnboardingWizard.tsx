@@ -10,10 +10,11 @@ interface WizardProps {
   onFinish: () => void;
 }
 
-// Steps: personal -> education -> experience -> review
+// Steps: personal -> education -> experience -> languages -> review
 // Personal collects: name, email, phone, website, address
 // Education: one or more education + certification entries
 // Experience: add other types
+// Languages: spoken languages with proficiency (optional)
 // Review: simple summary + Finish
 
 export const OnboardingWizard: React.FC<WizardProps> = ({ entries, addEntry, updateEntry, removeEntry, onFinish }) => {
@@ -22,7 +23,8 @@ export const OnboardingWizard: React.FC<WizardProps> = ({ entries, addEntry, upd
 
   const personalEntries = entries.filter(e=>e.type==='info');
   const educationEntries = entries.filter(e=>e.type==='education' || e.type==='certification');
-  const experienceEntries = entries.filter(e=> !['info','education','certification'].includes(e.type));
+  const languageEntries = entries.filter(e=>e.type==='language');
+  const experienceEntries = entries.filter(e=> !['info','education','certification','language'].includes(e.type));
 
   const nextAllowed = () => {
     if (step === 0) {
@@ -31,7 +33,7 @@ export const OnboardingWizard: React.FC<WizardProps> = ({ entries, addEntry, upd
     }
     if (step === 1) return educationEntries.length > 0; // require at least one
     if (step === 2) return experienceEntries.length > 0; // at least one experience
-    return true;
+    return true; // languages are optional
   };
 
   const goNext = () => { if (nextAllowed()) setStep(s=>s+1); };
@@ -43,11 +45,12 @@ export const OnboardingWizard: React.FC<WizardProps> = ({ entries, addEntry, upd
   {step === 0 && <PersonalStep addEntry={addEntry} existing={personalEntries} updateEntry={updateEntry} removeEntry={removeEntry} entries={entries} />}
       {step === 1 && <EducationStep addEntry={addEntry} existing={educationEntries} updateEntry={updateEntry} />}
       {step === 2 && <ExperienceStep addEntry={addEntry} existing={experienceEntries} updateEntry={updateEntry} />}
-      {step === 3 && <ReviewStep all={entries} onFinish={onFinish} />}
+      {step === 3 && <LanguagesStep addEntry={addEntry} existing={languageEntries} removeEntry={removeEntry} entries={entries} />}
+      {step === 4 && <ReviewStep all={entries} onFinish={onFinish} />}
 
   <div className="flex justify-between items-center pt-4 border-t border-neutral-200 dark:border-neutral-800">
   {step>0 ? <button onClick={goBack} className="btn-secondary">{t('wizard.back')}</button> : <span />}
-  {step<3 && <button disabled={!nextAllowed()} onClick={goNext} className="btn-primary disabled:opacity-40">{t('wizard.next')}</button>}
+  {step<4 && <button disabled={!nextAllowed()} onClick={goNext} className="btn-primary disabled:opacity-40">{t('wizard.next')}</button>}
       </div>
     </div>
   );
@@ -55,7 +58,7 @@ export const OnboardingWizard: React.FC<WizardProps> = ({ entries, addEntry, upd
 
 const WizardProgress: React.FC<{step:number}> = ({ step }) => {
   const { t } = useI18n();
-  const stages = [t('wizard.stage.personal'),t('wizard.stage.education'),t('wizard.stage.experience'),t('wizard.stage.review')];
+  const stages = [t('wizard.stage.personal'),t('wizard.stage.education'),t('wizard.stage.experience'),t('wizard.stage.languages'),t('wizard.stage.review')];
   return (
   <ol className="flex gap-4 text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-500">
       {stages.map((s,i)=> (
@@ -223,6 +226,51 @@ const ExperienceStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:Resume
         {existing.map((e,i)=>(
           <li key={i} className="text-sm flex justify-between bg-neutral-800/60 border border-neutral-700 rounded px-3 py-2">
             <span>{e.role}{e.company? ' @ '+e.company: ''}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+const LanguagesStep: React.FC<{ addEntry:(e:ResumeEntry)=>void; existing:ResumeEntry[]; removeEntry:(i:number)=>void; entries:ResumeEntry[] }> = ({ addEntry, existing, removeEntry, entries }) => {
+  const { t } = useI18n();
+  const [name, setName] = useState('');
+  const [proficiency, setProficiency] = useState('Native');
+  const proficiencyLevels: [string, string][] = [
+    ['Native', t('proficiency.native')],
+    ['Full professional proficiency (C2)', t('proficiency.c2')],
+    ['Advanced (C1)', t('proficiency.c1')],
+    ['Intermediate (B2)', t('proficiency.b2')],
+    ['Basic (A2/B1)', t('proficiency.basic')],
+  ];
+  const submit = (e:React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    addEntry({ type:'language', role: name.trim(), description: proficiency });
+    setName('');
+  };
+  const remove = (entry: ResumeEntry) => {
+    const globalIdx = entries.indexOf(entry);
+    if (globalIdx>=0) removeEntry(globalIdx);
+  };
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('languages.help')}</p>
+      <form onSubmit={submit} className="grid gap-3 md:grid-cols-3 bg-neutral-50 border border-neutral-200 rounded p-4 dark:bg-neutral-900/60 dark:border-neutral-800">
+        <input required placeholder={t('placeholder.languageName')} className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" value={name} onChange={e=>setName(e.target.value)} />
+        <select className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" value={proficiency} onChange={e=>setProficiency(e.target.value)}>
+          {proficiencyLevels.map(([val,lab])=> <option key={val} value={val}>{lab}</option>)}
+        </select>
+        <div className="flex justify-end">
+          <button className="btn-secondary">{t('languages.add')}</button>
+        </div>
+      </form>
+      <ul className="space-y-2">
+        {existing.map((e,i)=>(
+          <li key={i} className="text-sm flex justify-between items-center bg-neutral-100 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 rounded px-3 py-2">
+            <span><span className="font-semibold">{e.role}</span>{e.description ? ` — ${e.description}` : ''}</span>
+            <button type="button" onClick={()=>remove(e)} className="btn-danger text-xs">{t('entry.delete')}</button>
           </li>
         ))}
       </ul>

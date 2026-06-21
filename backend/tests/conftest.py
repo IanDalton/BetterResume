@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 import pytest
 from dotenv import load_dotenv
@@ -11,12 +11,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # Auto-load backend/.env so tests work without manual env exports
 load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 
-# langchain-google-genai reads GOOGLE_API_KEY; bridge from GEMINI_API_KEY if needed
+# pydantic-ai's Google provider reads GOOGLE_API_KEY; bridge from GEMINI_API_KEY if needed
 if not os.environ.get("GOOGLE_API_KEY") and os.environ.get("GEMINI_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
-from langchain.tools import BaseTool
-from pydantic import Field
+import pydantic_ai.models
 
 from models.resume import ResumeOutputFormat
 from models.resume_section import ResumeSection
@@ -48,19 +47,30 @@ Education: B.S. Computer Science, UC Berkeley (09/2014 - 05/2018)
 """
 
 
-class _StubPGVectorTool(BaseTool):
-    """Minimal BaseTool stub that returns canned resume context without touching Postgres."""
+class StubVectorStore:
+    """In-memory PGVectorStore stand-in that returns canned resume context."""
 
-    name: str = "PGVectorTool"
-    description: str = "Retrieve relevant experience from the user's background."
-    user_id: Optional[str] = Field(default=None)
-    collection_name: str = Field(default="test_collection")
+    def __init__(self, user_id: Optional[str] = None):
+        self.user_id = user_id
+        self.table_name = "test_collection"
+        self.added: List[Tuple[str, str]] = []
+        self.deleted_users: List[str] = []
+        self.queries: List[str] = []
 
-    def _run(self, query: str, **kwargs: Any) -> str:
-        return _STUB_RESUME_CONTEXT
+    async def aquery(self, query: str, user_id: Optional[str], n_results: int = 10) -> List[Tuple[str, float]]:
+        self.queries.append(query)
+        return [(_STUB_RESUME_CONTEXT, 0.1)]
 
-    async def _arun(self, query: str, **kwargs: Any) -> str:
-        return _STUB_RESUME_CONTEXT
+    async def aadd_documents(self, documents: List[str], ids: List[str], user_id: str) -> str:
+        self.added.extend(zip(ids, documents))
+        return "Documents added successfully."
+
+    async def adelete_user_documents(self, user_id: str) -> str:
+        self.deleted_users.append(user_id)
+        return "Deleted"
+
+    async def acount_user_documents(self, user_id: str) -> int:
+        return len(self.added)
 
 
 def pytest_addoption(parser):
@@ -72,7 +82,7 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--models",
-        default="google_genai:gemini-2.5-flash-lite",
+        default="google-gla:gemini-2.5-flash-lite",
         help="Comma-separated model strings for multi-model tests",
     )
 
@@ -80,7 +90,9 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_ai: requires live API keys")
     config.addinivalue_line("markers", "slow: multi-model comparison, takes several minutes")
-    os.environ.setdefault("LANGCHAIN_PROJECT", "betterresume-tests")
+    if not config.getoption("--real-ai"):
+        # Hard guarantee: no unit test can silently hit a real LLM API
+        pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 
 def pytest_collection_modifyitems(config, items):
@@ -156,6 +168,5 @@ def sample_resume_output() -> ResumeOutputFormat:
 
 
 @pytest.fixture
-def mock_pg_vector_tool():
-    tool = _StubPGVectorTool(user_id="test_user_001")
-    return tool
+def stub_vector_store() -> StubVectorStore:
+    return StubVectorStore(user_id="test_user_001")

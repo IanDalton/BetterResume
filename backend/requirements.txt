@@ -1,24 +1,30 @@
-langgraph 
-langsmith 
-langchain
+# LLM agent framework
+pydantic-ai-slim[google]
+pydantic
 
 # Postgres + pgvector support
 psycopg[binary]
 pgvector
-langchain_openai
-langchain-google-genai
-langchain_community
-fastapi
+psycopg-pool
+
+# API
+fastapi>=0.136
+uvicorn
+python-multipart
+httpx
+
+# Admin auth (Firebase ID token verification)
+PyJWT
+cryptography
+
+# Resume rendering
 python-docx
 pandas
 comtypes
 pdflatex
-uvicorn
-python-multipart
-langchain
 
+# Payments
 stripe
-psycopg-pool
 
 # Testing
 pytest>=8.3
