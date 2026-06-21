@@ -9,6 +9,16 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/favicon.ico" />
   <meta name="theme-color" content="#111112" />
   <script>
+    // SPA fallback restore: 404.html stashes the original URL here.
+    (function(){
+      try {
+        var r = sessionStorage.redirect;
+        delete sessionStorage.redirect;
+        if (r && r !== location.href) history.replaceState(null, '', r);
+      } catch {}
+    })();
+  </script>
+  <script>
     (function(){
       try {
         var theme = localStorage.getItem('theme') || 'system';
