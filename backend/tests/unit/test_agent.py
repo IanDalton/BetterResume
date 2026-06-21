@@ -31,11 +31,11 @@ class FakeDB:
 # ---------------------------------------------------------------------------
 
 def test_normalize_legacy_google_genai_prefix():
-    assert normalize_model_name("google_genai:gemini-2.5-flash-lite") == "google-gla:gemini-2.5-flash-lite"
+    assert normalize_model_name("google_genai:gemini-2.5-flash-lite") == "google:gemini-2.5-flash-lite"
 
 
 def test_normalize_bare_gemini_name():
-    assert normalize_model_name("gemini-2.5-flash") == "google-gla:gemini-2.5-flash"
+    assert normalize_model_name("gemini-2.5-flash") == "google:gemini-2.5-flash"
 
 
 def test_normalize_passthrough_for_other_providers():
