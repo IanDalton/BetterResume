@@ -4,9 +4,34 @@ import json
 import contextlib
 import math
 import psycopg
+from psycopg.adapt import Loader
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
 from pgvector.psycopg import register_vector, register_vector_async
 from typing import Optional, Dict, Any, Tuple, List
+
+
+class _RawBytesLoader(Loader):
+    """Return text columns as raw bytes instead of decoding them.
+
+    Some rows hold bytes that aren't valid UTF-8 (a SQL_ASCII client_encoding
+    used at insert time let non-UTF8 bytes — e.g. Windows-1252 smart quotes /
+    em-dashes pasted into job postings — land in the column without validation).
+    Any server-side text function or encoding conversion over such a value
+    raises CharacterNotInRepertoire. Loading the raw bytes and decoding them in
+    Python with errors='replace' sidesteps that entirely.
+    """
+
+    def load(self, data):
+        return bytes(data) if data is not None else None
+
+
+def _decode_loose(value: Any) -> Optional[str]:
+    """Decode a value that may arrive as raw bytes (see _RawBytesLoader)."""
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", "replace")
+    return str(value)
 
 # Global connection pools
 _pool: Optional[ConnectionPool] = None
@@ -573,27 +598,40 @@ class DBStorage:
                     {"user_id": r[0], "requests": r[1], "last_request": str(r[2])} for r in cur.fetchall()
                 ]
 
-                # Read the preview as bytea (binary, no server-side encoding
-                # conversion) and decode tolerantly: the prod DB may be SQL_ASCII
-                # and hold raw non-UTF8 bytes (e.g. Windows-1252 smart quotes/
-                # dashes pasted into job postings) that would otherwise raise
-                # CharacterNotInRepertoire when converted to the UTF8 client.
-                cur.execute(
-                    """
-                    SELECT user_id, LEFT(job_posting, 200)::bytea, created_at
-                    FROM resume_requests ORDER BY created_at DESC LIMIT 20
-                    """
-                )
-                stats["recent_requests"] = [
-                    {
-                        "user_id": r[0],
-                        "job_posting_preview": (
-                            bytes(r[1]).decode("utf-8", "replace") if r[1] is not None else None
-                        ),
-                        "created_at": str(r[2]),
-                    }
-                    for r in cur.fetchall()
-                ]
+                # Job postings are user-pasted and may contain bytes that aren't
+                # valid UTF-8 (see _RawBytesLoader). Read the raw column with NO
+                # server-side text function — LEFT()/conversion would decode the
+                # column and raise CharacterNotInRepertoire before we ever see it.
+                # client_encoding='SQL_ASCII' makes the server→client transfer a
+                # raw passthrough regardless of the database encoding; we then
+                # truncate and decode tolerantly in Python. Guarded so this
+                # non-critical preview can never 500 the whole dashboard.
+                try:
+                    with conn.cursor() as raw_cur:
+                        raw_cur.adapters.register_loader("text", _RawBytesLoader)
+                        raw_cur.adapters.register_loader("varchar", _RawBytesLoader)
+                        raw_cur.execute("SET client_encoding TO 'SQL_ASCII'")
+                        try:
+                            raw_cur.execute(
+                                """
+                                SELECT user_id, job_posting, created_at
+                                FROM resume_requests ORDER BY created_at DESC LIMIT 20
+                                """
+                            )
+                            rows = raw_cur.fetchall()
+                        finally:
+                            raw_cur.execute("RESET client_encoding")
+                    stats["recent_requests"] = [
+                        {
+                            "user_id": _decode_loose(r[0]),
+                            "job_posting_preview": (_decode_loose(r[1]) or "")[:200],
+                            "created_at": str(r[2]),
+                        }
+                        for r in rows
+                    ]
+                except Exception:
+                    self.logger.exception("Failed to load recent_requests preview")
+                    stats["recent_requests"] = []
 
                 try:
                     cur.execute(

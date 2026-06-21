@@ -65,12 +65,18 @@ def test_stats_500_on_db_failure():
 # DBStorage helpers
 # ---------------------------------------------------------------------------
 
+class _FakeAdapters:
+    def register_loader(self, *_args, **_kwargs):
+        pass
+
+
 class FakeCursor:
     """Answers fetchone/fetchall based on the last executed SQL."""
 
     def __init__(self):
         self.executed = []
         self._sql = ""
+        self.adapters = _FakeAdapters()
 
     def execute(self, sql, params=None):
         self._sql = sql
