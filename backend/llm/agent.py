@@ -27,7 +27,7 @@ from utils.file_io import load_prompt
 
 logger = logging.getLogger("betterresume.agent")
 
-DEFAULT_MODEL = "google-gla:gemini-3.1-flash-lite"
+DEFAULT_MODEL = "google:gemini-2.5-flash-lite"
 RETRIES = 3
 
 JOB_PROMPT = load_prompt("job_prompt")
@@ -35,9 +35,10 @@ TRANSLATION_PROMPT = load_prompt("translation_prompt")
 
 # Older code/config used LangChain provider prefixes; map them onto pydantic-ai ones.
 _LEGACY_PROVIDER_MAP = {
-    "google_genai": "google-gla",
-    "gemini": "google-gla",
-    "google": "google-gla",
+    "google_genai": "google",
+    "gemini": "google",
+    "google": "google",
+    "google-gla": "google-gla",
 }
 
 
@@ -53,7 +54,7 @@ def normalize_model_name(model: Union[str, Model, None]) -> Union[str, Model]:
         return f"{provider}:{name}"
     # Bare Gemini model names default to the Google provider
     if model.startswith("gemini"):
-        return f"google-gla:{model}"
+        return f"google:{model}"
     return model
 
 
