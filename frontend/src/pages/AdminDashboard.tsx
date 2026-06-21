@@ -4,6 +4,11 @@ import { authStateListener, googleSignIn, logout } from '../services/firebase';
 import { fetchAdminStats, AdminStats } from '../services/api';
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || 'daltioan@gmail.com').toLowerCase();
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function fmtMs(ms: number | null): string {
+  return ms == null ? '—' : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+}
 
 function StatCard({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   return (
@@ -15,26 +20,31 @@ function StatCard({ label, value, hint }: { label: string; value: React.ReactNod
   );
 }
 
-function BarChart({ data, title }: { data: Array<{ day: string; count: number }>; title: string }) {
+function BarChart({ data, title }: { data: Array<{ day: string; label?: string; count: number }>; title: string }) {
   const max = Math.max(1, ...data.map(d => d.count));
+  // Show at most ~12 x-axis labels so many bars (e.g. 90d) stay readable.
+  const step = Math.max(1, Math.ceil(data.length / 12));
   return (
     <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
       <h3 className="text-sm font-medium mb-3">{title}</h3>
       {data.length === 0 ? (
         <p className="text-xs text-neutral-500">No data yet.</p>
       ) : (
-        <div className="flex items-end gap-1 h-32">
-          {data.map(d => (
-            <div key={d.day} className="flex-1 flex flex-col items-center justify-end h-full" title={`${d.day}: ${d.count}`}>
-              <div
-                className="w-full bg-blue-500/80 dark:bg-blue-400/80 rounded-t"
-                style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
-              />
-              <span className="text-[9px] text-neutral-500 mt-1 rotate-0 truncate w-full text-center">
-                {d.day.slice(5)}
-              </span>
-            </div>
-          ))}
+        <div className="flex items-end gap-1 h-32 overflow-hidden">
+          {data.map((d, i) => {
+            const label = d.label ?? d.day.slice(5);
+            return (
+              <div key={d.day} className="flex-1 min-w-0 max-w-[48px] flex flex-col items-center justify-end h-full" title={`${label}: ${d.count}`}>
+                <div
+                  className="w-full bg-blue-500/80 dark:bg-blue-400/80 rounded-t"
+                  style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
+                />
+                <span className="text-[9px] text-neutral-500 mt-1 whitespace-nowrap text-center h-3 leading-3 shrink-0">
+                  {i % step === 0 ? label : ''}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -173,10 +183,50 @@ export function AdminDashboard() {
                   <BarChart data={stats.requests_per_day} title={`Requests per day (last ${days}d)`} />
                 </div>
 
-                <div className="grid md:grid-cols-3 gap-4">
+                {/* When people use it */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  <BarChart
+                    data={(stats.requests_by_hour ?? []).map(h => ({ day: `h${h.hour}`, label: String(h.hour), count: h.count }))}
+                    title={`Requests by hour of day (last ${days}d, UTC)`}
+                  />
+                  <BarChart
+                    data={(stats.requests_by_weekday ?? []).map(w => ({ day: `w${w.weekday}`, label: WEEKDAYS[w.weekday] ?? String(w.weekday), count: w.count }))}
+                    title={`Requests by weekday (last ${days}d)`}
+                  />
+                </div>
+
+                {/* How sticky usage is + what people use it for */}
+                <div className="grid md:grid-cols-2 gap-4">
+                  <CountTable
+                    title="Requests per user (lifetime)"
+                    keyLabel="Requests"
+                    rows={(stats.user_request_distribution ?? []).map(b => ({ label: b.bucket, count: b.count }))}
+                  />
+                  <CountTable
+                    title={`Top job-posting keywords (last ${days}d)`}
+                    keyLabel="Keyword"
+                    rows={(stats.top_keywords ?? []).map(k => ({ label: k.term, count: k.count }))}
+                  />
+                </div>
+
+                {/* Funnel & reliability */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <StatCard label="Requests → Generations" value={`${stats.totals.resume_requests} → ${stats.totals.generations}`} hint={`${stats.totals.successful_generations} successful`} />
+                  <StatCard label="Success rate" value={successRate} />
+                  <StatCard label="Latency p50" value={fmtMs(stats.duration_percentiles?.p50_ms ?? null)} hint="successful generations" />
+                  <StatCard label="Latency p95" value={fmtMs(stats.duration_percentiles?.p95_ms ?? null)} hint="successful generations" />
+                </div>
+
+                <p className="text-[11px] text-neutral-500">
+                  Generation metrics (model / format / language / status / latency / success rate) cover only
+                  events recorded since instrumentation was added; request metrics reflect full history.
+                </p>
+
+                <div className="grid md:grid-cols-4 gap-4">
                   <CountTable title="By model" keyLabel="Model" rows={stats.by_model.map(m => ({ label: m.model, count: m.count }))} />
                   <CountTable title="By format" keyLabel="Format" rows={stats.by_format.map(f => ({ label: f.format, count: f.count }))} />
                   <CountTable title="By language" keyLabel="Language" rows={stats.by_language.map(l => ({ label: l.language, count: l.count }))} />
+                  <CountTable title="By status" keyLabel="Status" rows={(stats.by_status ?? []).map(s => ({ label: s.status, count: s.count }))} />
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4">

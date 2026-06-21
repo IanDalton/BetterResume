@@ -3,6 +3,8 @@ import logging
 import json
 import contextlib
 import math
+import re
+from collections import Counter
 import psycopg
 from psycopg.adapt import Loader
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
@@ -32,6 +34,62 @@ def _decode_loose(value: Any) -> Optional[str]:
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).decode("utf-8", "replace")
     return str(value)
+
+
+# Stopwords for job-posting keyword mining. Usage skews English + Spanish
+# (Argentina), so we strip the most common words of both languages plus a few
+# generic recruiting boilerplate terms that would otherwise dominate.
+_KEYWORD_STOPWORDS = frozenset(
+    # English
+    "the and for you with our are will that have this from your has not but all "
+    "can who out who's they them their what when where which while about into over "
+    "more most some such than then they these those been being were was being "
+    "able role work team join looking experience years job position company within "
+    "must should would could able also like able per via etc inc ltd new use using "
+    # Spanish
+    "que con los las del una uno por para como mas más pero sus sí son está están "
+    "este esta estos estas entre sobre desde hasta cuando donde porque muy ser eres "
+    "tener tiene tienes trabajo empresa puesto experiencia años buscamos buscando "
+    "nuestra nuestro nuestros además también equipo perfil tareas funciones área "
+    "conocimientos requisitos ofrecemos zona horario remoto modalidad proyecto "
+    "personal salud cliente clientes servicio".split()
+)
+
+
+def _top_job_keywords(conn, days: int, limit: int = 25) -> List[Dict[str, Any]]:
+    """Top keywords across recent job postings (bounded, UTF-8-tolerant).
+
+    Reads ``job_posting`` with the same raw-bytes / SQL_ASCII passthrough used
+    for the recent-requests preview (postings may contain invalid UTF-8), then
+    tokenizes and counts in Python. The scan is bounded so a busy window can't
+    pull unbounded text. Returns ``[]`` on any error so it never 500s the
+    dashboard.
+    """
+    with conn.cursor() as raw_cur:
+        raw_cur.adapters.register_loader("text", _RawBytesLoader)
+        raw_cur.adapters.register_loader("varchar", _RawBytesLoader)
+        raw_cur.execute("SET client_encoding TO 'SQL_ASCII'")
+        try:
+            raw_cur.execute(
+                """
+                SELECT job_posting
+                FROM resume_requests
+                WHERE created_at >= CURRENT_DATE - %s::int
+                ORDER BY created_at DESC LIMIT 3000
+                """,
+                (days,),
+            )
+            rows = raw_cur.fetchall()
+        finally:
+            raw_cur.execute("RESET client_encoding")
+
+    counter: Counter = Counter()
+    for (raw,) in rows:
+        text = (_decode_loose(raw) or "").lower()
+        for token in re.findall(r"[^\W\d_]{3,}", text, flags=re.UNICODE):
+            if token not in _KEYWORD_STOPWORDS:
+                counter[token] += 1
+    return [{"term": term, "count": count} for term, count in counter.most_common(limit)]
 
 # Global connection pools
 _pool: Optional[ConnectionPool] = None
@@ -506,9 +564,15 @@ class DBStorage:
             "totals": {},
             "generations_per_day": [],
             "requests_per_day": [],
+            "requests_by_hour": [],
+            "requests_by_weekday": [],
+            "user_request_distribution": [],
             "by_model": [],
             "by_format": [],
             "by_language": [],
+            "by_status": [],
+            "duration_percentiles": {"p50_ms": None, "p95_ms": None},
+            "top_keywords": [],
             "top_users": [],
             "recent_requests": [],
             "donations": {},
@@ -564,6 +628,59 @@ class DBStorage:
                     {"day": str(r[0]), "count": r[1]} for r in cur.fetchall()
                 ]
 
+                # Requests by hour of day (0-23), zero-filled.
+                cur.execute(
+                    """
+                    SELECT EXTRACT(HOUR FROM created_at)::int AS hr, COUNT(*)
+                    FROM resume_requests
+                    WHERE created_at >= CURRENT_DATE - %s::int
+                    GROUP BY hr
+                    """,
+                    (days,),
+                )
+                hour_counts = {int(r[0]): r[1] for r in cur.fetchall()}
+                stats["requests_by_hour"] = [
+                    {"hour": h, "count": hour_counts.get(h, 0)} for h in range(24)
+                ]
+
+                # Requests by weekday (0=Sunday .. 6=Saturday), zero-filled.
+                cur.execute(
+                    """
+                    SELECT EXTRACT(DOW FROM created_at)::int AS dow, COUNT(*)
+                    FROM resume_requests
+                    WHERE created_at >= CURRENT_DATE - %s::int
+                    GROUP BY dow
+                    """,
+                    (days,),
+                )
+                weekday_counts = {int(r[0]): r[1] for r in cur.fetchall()}
+                stats["requests_by_weekday"] = [
+                    {"weekday": d, "count": weekday_counts.get(d, 0)} for d in range(7)
+                ]
+
+                # How sticky is usage: distribution of lifetime requests per user.
+                cur.execute(
+                    """
+                    SELECT bucket, COUNT(*) FROM (
+                        SELECT CASE
+                                 WHEN c = 1 THEN '1'
+                                 WHEN c <= 3 THEN '2-3'
+                                 WHEN c <= 10 THEN '4-10'
+                                 ELSE '11+'
+                               END AS bucket
+                        FROM (
+                            SELECT user_id, COUNT(*) AS c
+                            FROM resume_requests GROUP BY user_id
+                        ) per_user
+                    ) bucketed
+                    GROUP BY bucket
+                    ORDER BY array_position(ARRAY['1','2-3','4-10','11+'], bucket)
+                    """
+                )
+                stats["user_request_distribution"] = [
+                    {"bucket": r[0], "count": r[1]} for r in cur.fetchall()
+                ]
+
                 cur.execute(
                     """
                     SELECT COALESCE(model, 'unknown'), COUNT(*)
@@ -587,6 +704,28 @@ class DBStorage:
                     """
                 )
                 stats["by_language"] = [{"language": r[0], "count": r[1]} for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT COALESCE(status, 'unknown'), COUNT(*)
+                    FROM generation_events GROUP BY 1 ORDER BY 2 DESC
+                    """
+                )
+                stats["by_status"] = [{"status": r[0], "count": r[1]} for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms),
+                           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)
+                    FROM generation_events
+                    WHERE status = 'success' AND duration_ms IS NOT NULL
+                    """
+                )
+                row = cur.fetchone()
+                stats["duration_percentiles"] = {
+                    "p50_ms": int(row[0]) if row and row[0] is not None else None,
+                    "p95_ms": int(row[1]) if row and row[1] is not None else None,
+                }
 
                 cur.execute(
                     """
@@ -632,6 +771,14 @@ class DBStorage:
                 except Exception:
                     self.logger.exception("Failed to load recent_requests preview")
                     stats["recent_requests"] = []
+
+                # Job-market mining: top keywords across recent postings. Reads
+                # job_posting text (same raw-bytes path as above), so guard it.
+                try:
+                    stats["top_keywords"] = _top_job_keywords(conn, days)
+                except Exception:
+                    self.logger.exception("Failed to compute top_keywords")
+                    stats["top_keywords"] = []
 
                 try:
                     cur.execute(

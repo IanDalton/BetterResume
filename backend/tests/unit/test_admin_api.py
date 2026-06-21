@@ -97,6 +97,13 @@ class FakeCursor:
         if "COALESCE(model" in self._sql:
             return [("google-gla:gemini-3.1-flash-lite", 9), ("openai:gpt-4o-mini", 1)]
         if "job_posting" in self._sql:
+            if "LIMIT 3000" in self._sql:
+                # Keyword mining selects a single job_posting column.
+                return [
+                    (b"Senior Python Engineer \xe2\x80",),
+                    (b"Python engineer wanted",),
+                ]
+            # recent_requests preview: user_id, job_posting, created_at.
             # ::bytea preview comes back as raw bytes; include a truncated
             # smart-quote sequence (0xe2 0x80) that is invalid UTF-8.
             return [("u1", b"Senior Engineer \xe2\x80", "2026-06-10")]
@@ -138,6 +145,18 @@ def test_get_admin_stats_aggregates():
             "created_at": "2026-06-10",
         }
     ]
+    # New use-case insight fields are always present and well-formed.
+    assert len(stats["requests_by_hour"]) == 24
+    assert {d["hour"] for d in stats["requests_by_hour"]} == set(range(24))
+    assert len(stats["requests_by_weekday"]) == 7
+    assert "user_request_distribution" in stats
+    assert "by_status" in stats
+    assert set(stats["duration_percentiles"]) == {"p50_ms", "p95_ms"}
+    # Keyword mining tokenizes, drops stopwords, and counts (UTF-8 tolerant).
+    keywords = {k["term"]: k["count"] for k in stats["top_keywords"]}
+    assert keywords.get("python") == 2
+    assert keywords.get("engineer") == 2
+    assert "senior" in keywords
 
 
 def test_record_generation_event_inserts_row():

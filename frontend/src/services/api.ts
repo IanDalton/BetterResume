@@ -115,9 +115,15 @@ export interface AdminStats {
   };
   generations_per_day: Array<{ day: string; count: number }>;
   requests_per_day: Array<{ day: string; count: number }>;
+  requests_by_hour: Array<{ hour: number; count: number }>;
+  requests_by_weekday: Array<{ weekday: number; count: number }>;
+  user_request_distribution: Array<{ bucket: string; count: number }>;
   by_model: Array<{ model: string; count: number }>;
   by_format: Array<{ format: string; count: number }>;
   by_language: Array<{ language: string; count: number }>;
+  by_status: Array<{ status: string; count: number }>;
+  duration_percentiles: { p50_ms: number | null; p95_ms: number | null };
+  top_keywords: Array<{ term: string; count: number }>;
   top_users: Array<{ user_id: string; requests: number; last_request: string }>;
   recent_requests: Array<{ user_id: string; job_posting_preview: string; created_at: string }>;
   donations: { by_currency: Array<{ currency: string; count: number; total_amount: number }> };
