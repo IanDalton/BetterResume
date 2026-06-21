@@ -19,9 +19,16 @@ class ResumeSection(BaseModel):
     @field_validator("experience")
     def sort_experience(cls, v):
         # Sort experiences by end date (most recent first), then start date
+        _FUTURE = datetime.strptime("12/9999", "%m/%Y")  # sentinel so ongoing roles sort first
+
         def get_date(exp):
-            # date format is MM/YYYY, some entries might have "Present" as end_date, treat it as most recent
-            if exp.end_date == "Present" or not exp.end_date:
-                return datetime.strptime("12/9999", "%m/%Y")  # A date far in the future to ensure "Present" comes first
-            return datetime.strptime(exp.end_date, "%m/%Y")
+            # Numeric dates are MM/YYYY (language-agnostic). Any non-numeric token
+            # (empty, or a localized ongoing marker like "Present"/"Presente") is
+            # treated as most recent so the agent can write dates in its own language.
+            if not exp.end_date:
+                return _FUTURE
+            try:
+                return datetime.strptime(exp.end_date.strip(), "%m/%Y")
+            except ValueError:
+                return _FUTURE
         return sorted(v, key=get_date, reverse=True)
