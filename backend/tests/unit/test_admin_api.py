@@ -90,6 +90,10 @@ class FakeCursor:
             return [("2026-06-10", 3), ("2026-06-11", 2)]
         if "COALESCE(model" in self._sql:
             return [("google-gla:gemini-3.1-flash-lite", 9), ("openai:gpt-4o-mini", 1)]
+        if "job_posting" in self._sql:
+            # ::bytea preview comes back as raw bytes; include a truncated
+            # smart-quote sequence (0xe2 0x80) that is invalid UTF-8.
+            return [("u1", b"Senior Engineer \xe2\x80", "2026-06-10")]
         return []
 
 
@@ -120,6 +124,14 @@ def test_get_admin_stats_aggregates():
         {"day": "2026-06-11", "count": 2},
     ]
     assert stats["by_model"][0]["count"] == 9
+    # Invalid UTF-8 bytes (SQL_ASCII DB) must not crash; they decode tolerantly.
+    assert stats["recent_requests"] == [
+        {
+            "user_id": "u1",
+            "job_posting_preview": "Senior Engineer �",
+            "created_at": "2026-06-10",
+        }
+    ]
 
 
 def test_record_generation_event_inserts_row():

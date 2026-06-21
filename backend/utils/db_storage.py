@@ -573,14 +573,25 @@ class DBStorage:
                     {"user_id": r[0], "requests": r[1], "last_request": str(r[2])} for r in cur.fetchall()
                 ]
 
+                # Read the preview as bytea (binary, no server-side encoding
+                # conversion) and decode tolerantly: the prod DB may be SQL_ASCII
+                # and hold raw non-UTF8 bytes (e.g. Windows-1252 smart quotes/
+                # dashes pasted into job postings) that would otherwise raise
+                # CharacterNotInRepertoire when converted to the UTF8 client.
                 cur.execute(
                     """
-                    SELECT user_id, LEFT(job_posting, 200), created_at
+                    SELECT user_id, LEFT(job_posting, 200)::bytea, created_at
                     FROM resume_requests ORDER BY created_at DESC LIMIT 20
                     """
                 )
                 stats["recent_requests"] = [
-                    {"user_id": r[0], "job_posting_preview": r[1], "created_at": str(r[2])}
+                    {
+                        "user_id": r[0],
+                        "job_posting_preview": (
+                            bytes(r[1]).decode("utf-8", "replace") if r[1] is not None else None
+                        ),
+                        "created_at": str(r[2]),
+                    }
                     for r in cur.fetchall()
                 ]
 
