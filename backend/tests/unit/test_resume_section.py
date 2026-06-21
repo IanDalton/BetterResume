@@ -47,6 +47,16 @@ def test_present_end_date_sorts_first():
     assert section.experience[0].position == "Current"
 
 
+def test_localized_present_end_date_sorts_first():
+    # A localized ongoing marker (e.g. Spanish "Presente") must still rank as
+    # most recent, since dates can be written in the resume's own language.
+    section = _section([
+        _experience("Past", "01/2018", "12/2020"),
+        _experience("Current", "01/2021", "Presente"),
+    ])
+    assert section.experience[0].position == "Current"
+
+
 def test_already_sorted_experience_unchanged():
     section = _section([
         _experience("Newest", "01/2021", "06/2023"),

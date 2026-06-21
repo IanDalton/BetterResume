@@ -13,7 +13,9 @@ class SchemaEvaluationResult:
     score: float = 0.0
 
 
-_DATE_RE = re.compile(r"^\d{2}/\d{4}$|^Present$", re.IGNORECASE)
+# Real dates are numeric MM/YYYY; a no-digit token is a localized ongoing
+# marker like "Present"/"Presente" and is acceptable. Mirrors JobExperience.
+_DATE_RE = re.compile(r"^\d{2}/\d{4}$|^\D+$")
 
 
 class SchemaEvaluator:
