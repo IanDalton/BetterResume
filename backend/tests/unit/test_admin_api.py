@@ -107,6 +107,15 @@ class FakeCursor:
             # ::bytea preview comes back as raw bytes; include a truncated
             # smart-quote sequence (0xe2 0x80) that is invalid UTF-8.
             return [("u1", b"Senior Engineer \xe2\x80", "2026-06-10")]
+        if "SELECT id," in self._sql and "generation_events" in self._sql:
+            # get_generation_events export rows
+            return [
+                (2, "2026-06-12", "u2", "m", "latex", "en", 100, "error", "boom"),
+                (1, "2026-06-11", "u1", "m", "word", "en", 200, "success", None),
+            ]
+        if "status <> 'success'" in self._sql:
+            # recent_errors: created_at, user_id, model, format, status, error
+            return [("2026-06-12", "u2", "m", "latex", "error", "boom")]
         return []
 
 
@@ -187,3 +196,59 @@ def test_record_generation_event_truncates_error():
 
     _, params = cursor.executed[-1]
     assert len(params[6]) == 2000
+
+
+def test_get_admin_stats_includes_recent_errors():
+    cursor = FakeCursor()
+    storage = DBStorage(db_url="postgresql://fake/fake")
+    with patch.object(DBStorage, "_get_conn", return_value=_fake_conn(cursor)):
+        stats = storage.get_admin_stats(days=30)
+
+    assert stats["recent_errors"] == [
+        {
+            "created_at": "2026-06-12",
+            "user_id": "u2",
+            "model": "m",
+            "format": "latex",
+            "status": "error",
+            "error": "boom",
+        }
+    ]
+
+
+def test_get_generation_events_returns_all_columns():
+    cursor = FakeCursor()
+    storage = DBStorage(db_url="postgresql://fake/fake")
+    with patch.object(DBStorage, "_get_conn", return_value=_fake_conn(cursor)):
+        rows = storage.get_generation_events()
+
+    assert len(rows) == 2
+    assert rows[0]["status"] == "error"
+    assert rows[0]["error"] == "boom"
+    assert rows[1]["status"] == "success"
+    assert set(rows[0]) == {
+        "id", "created_at", "user_id", "model", "format",
+        "language", "duration_ms", "status", "error",
+    }
+
+
+def test_export_logs_returns_csv_for_admin():
+    cursor = FakeCursor()
+    app = _app()
+    app.dependency_overrides[require_admin] = lambda: {"email": "daltioan@gmail.com"}
+    client = TestClient(app)
+
+    with patch.object(DBStorage, "_get_conn", return_value=_fake_conn(cursor)):
+        resp = client.get("/admin/logs/export")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "attachment; filename=generation_logs.csv" in resp.headers["content-disposition"]
+    body = resp.text
+    assert body.splitlines()[0] == "id,created_at,user_id,model,format,language,duration_ms,status,error"
+    assert "boom" in body
+
+
+def test_export_logs_requires_auth():
+    client = TestClient(_app())
+    assert client.get("/admin/logs/export").status_code == 401

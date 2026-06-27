@@ -575,6 +575,7 @@ class DBStorage:
             "top_keywords": [],
             "top_users": [],
             "recent_requests": [],
+            "recent_errors": [],
             "donations": {},
         }
         with self._get_conn() as conn:
@@ -713,6 +714,31 @@ class DBStorage:
                 )
                 stats["by_status"] = [{"status": r[0], "count": r[1]} for r in cur.fetchall()]
 
+                try:
+                    cur.execute(
+                        """
+                        SELECT created_at, user_id, model, format, status, error
+                        FROM generation_events
+                        WHERE status <> 'success'
+                        ORDER BY created_at DESC
+                        LIMIT 50
+                        """
+                    )
+                    stats["recent_errors"] = [
+                        {
+                            "created_at": str(r[0]),
+                            "user_id": r[1],
+                            "model": r[2],
+                            "format": r[3],
+                            "status": r[4],
+                            "error": r[5],
+                        }
+                        for r in cur.fetchall()
+                    ]
+                except Exception:
+                    self.logger.exception("Failed to load recent_errors")
+                    stats["recent_errors"] = []
+
                 cur.execute(
                     """
                     SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms),
@@ -796,6 +822,35 @@ class DBStorage:
                     # donations table may not exist yet
                     stats["donations"] = {"by_currency": []}
         return stats
+
+    def get_generation_events(self, limit: int = 10000) -> list:
+        """Return all generation events (newest first) for CSV export. Admin only."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, created_at, user_id, model, format,
+                           language, duration_ms, status, error
+                    FROM generation_events
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return [
+                    {
+                        "id": r[0],
+                        "created_at": str(r[1]),
+                        "user_id": r[2],
+                        "model": r[3],
+                        "format": r[4],
+                        "language": r[5],
+                        "duration_ms": r[6],
+                        "status": r[7],
+                        "error": r[8],
+                    }
+                    for r in cur.fetchall()
+                ]
 
     def _ensure_donations_table(self):
         try:

@@ -126,6 +126,7 @@ export interface AdminStats {
   top_keywords: Array<{ term: string; count: number }>;
   top_users: Array<{ user_id: string; requests: number; last_request: string }>;
   recent_requests: Array<{ user_id: string; job_posting_preview: string; created_at: string }>;
+  recent_errors: Array<{ created_at: string; user_id: string; model: string; format: string; status: string; error: string }>;
   donations: { by_currency: Array<{ currency: string; count: number; total_amount: number }> };
 }
 
@@ -138,6 +139,17 @@ export async function fetchAdminStats(idToken: string, days = 30): Promise<Admin
   }
   if (!res.ok) throw new Error(`Stats request failed: ${res.status}`);
   return res.json();
+}
+
+export async function exportAdminLogs(idToken: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/admin/logs/export`, {
+    headers: { Authorization: `Bearer ${idToken}` }
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('forbidden');
+  }
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+  return res.blob();
 }
 
 export async function uploadProfilePicture(userId: string, file: File) {

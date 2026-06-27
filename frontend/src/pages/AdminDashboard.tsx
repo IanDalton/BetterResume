@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import { authStateListener, googleSignIn, logout } from '../services/firebase';
-import { fetchAdminStats, AdminStats } from '../services/api';
+import { fetchAdminStats, exportAdminLogs, AdminStats } from '../services/api';
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || 'daltioan@gmail.com').toLowerCase();
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -85,6 +85,7 @@ export function AdminDashboard() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [days, setDays] = useState(30);
 
   useEffect(() => {
@@ -114,6 +115,27 @@ export function AdminDashboard() {
     const r = stats?.totals.success_rate;
     return r == null ? '—' : `${(r * 100).toFixed(1)}%`;
   }, [stats]);
+
+  const handleExport = async () => {
+    if (!user) return;
+    try {
+      setExporting(true);
+      setError(null);
+      const token = await user.getIdToken();
+      const blob = await exportAdminLogs(token);
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'generation_logs.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+    } catch (e: any) {
+      setError(e.message === 'forbidden' ? 'Access denied.' : `Export failed: ${e.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 p-6">
@@ -165,6 +187,13 @@ export function AdminDashboard() {
                 </button>
               ))}
               {loading && <span className="text-neutral-500 ml-2">Loading…</span>}
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                className="ml-auto px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-blue-500 hover:text-blue-500 disabled:opacity-50"
+              >
+                {exporting ? 'Exporting…' : 'Export logs (CSV)'}
+              </button>
             </div>
 
             {error && <p className="text-sm text-red-400">{error}</p>}
@@ -176,6 +205,41 @@ export function AdminDashboard() {
                   <StatCard label="Success rate" value={successRate} hint={`avg ${Math.round(stats.totals.avg_duration_ms / 1000)}s per resume`} />
                   <StatCard label="Resume requests" value={stats.totals.resume_requests} hint={`${stats.totals.requesting_users} unique users`} />
                   <StatCard label="Registered users" value={stats.totals.users} />
+                </div>
+
+                <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4">
+                  <h3 className="text-sm font-medium mb-3">
+                    Recent generation errors
+                    {(stats.recent_errors?.length ?? 0) > 0 && (
+                      <span className="ml-2 text-xs text-neutral-500">({stats.recent_errors.length})</span>
+                    )}
+                  </h3>
+                  {(stats.recent_errors?.length ?? 0) === 0 ? (
+                    <p className="text-sm text-neutral-500">No errors 🎉</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-neutral-500">
+                            <th className="pb-1 font-normal">When</th>
+                            <th className="pb-1 font-normal">User</th>
+                            <th className="pb-1 font-normal">Model</th>
+                            <th className="pb-1 font-normal">Error</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stats.recent_errors.map((e, i) => (
+                            <tr key={i} className="border-t border-neutral-100 dark:border-neutral-800 align-top">
+                              <td className="py-1 pr-2 whitespace-nowrap text-neutral-500">{e.created_at.slice(0, 16)}</td>
+                              <td className="py-1 pr-2 font-mono truncate max-w-[120px]" title={e.user_id}>{e.user_id}</td>
+                              <td className="py-1 pr-2 whitespace-nowrap text-neutral-500" title={e.model}>{e.model}</td>
+                              <td className="py-1 font-mono whitespace-pre-wrap break-words text-red-500 dark:text-red-400">{e.error}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4">
