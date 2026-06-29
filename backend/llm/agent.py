@@ -118,8 +118,15 @@ def current_date_instructions(ctx: RunContext[ResumeDeps]) -> str:
 async def search_experience(ctx: RunContext[ResumeDeps], query: str, n_results: int = 10) -> List[Tuple[str, float]]:
     """Semantic search over the user's stored experience, skills, education and projects.
 
+    This is a meaning-based search, so query phrasing determines what is retrieved.
+
     Args:
-        query: Free-text query describing the skill/responsibility to look for.
+        query: A short, generalized, single-concept phrase (about 2-6 words)
+            describing one skill, responsibility, or domain to look for, e.g.
+            "REST API development" or "team leadership". Do not paste full
+            sentences or verbatim job-description requirements — verbose,
+            hyper-specific text retrieves poorly. Use separate calls for
+            related terms instead of combining them.
         n_results: Maximum number of matching documents to return.
     """
     ctx.deps.search_calls += 1
@@ -167,7 +174,9 @@ async def ensure_retrieval(ctx: RunContext[ResumeDeps], output: ResumeOutputForm
         logger.info("Output rejected: retrieval required but search_experience was never called")
         raise ModelRetry(
             "You must call search_experience to retrieve the user's stored experience "
-            "before writing the resume. Call it now with queries derived from the job description."
+            "before writing the resume. Call it now, using short, generalized, "
+            "single-concept queries (about 2-6 words each) derived from the job "
+            "description — not full sentences or verbatim requirement lines."
         )
     return output
 
