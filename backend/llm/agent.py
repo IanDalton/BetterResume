@@ -14,6 +14,7 @@ asked to retry and call `search_experience` first.
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -27,7 +28,9 @@ from utils.file_io import load_prompt
 
 logger = logging.getLogger("betterresume.agent")
 
-DEFAULT_MODEL = "google:gemini-2.5-flash-lite"
+# Default model is configurable via the DEFAULT_MODEL env var (provider-prefixed,
+# e.g. "openrouter:wafer/fp4" or "google:gemini-2.5-flash-lite").
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "openrouter:wafer/fp4")
 RETRIES = 3
 
 JOB_PROMPT = load_prompt("job_prompt")
@@ -56,6 +59,22 @@ def normalize_model_name(model: Union[str, Model, None]) -> Union[str, Model]:
     if model.startswith("gemini"):
         return f"google:{model}"
     return model
+
+
+def _model_settings(model: Union[str, Model]) -> Optional[dict]:
+    """Per-model run settings. For OpenRouter, disable reasoning tokens to cut latency.
+
+    Returns ``None`` for non-OpenRouter models so their defaults are untouched.
+    """
+    if isinstance(model, str):
+        is_openrouter = model.startswith("openrouter:")
+    else:
+        is_openrouter = type(model).__name__ == "OpenRouterModel"
+    if not is_openrouter:
+        return None
+    from pydantic_ai.models.openrouter import OpenRouterModelSettings
+
+    return OpenRouterModelSettings(openrouter_reasoning={"enabled": False})
 
 
 @dataclass
@@ -194,7 +213,9 @@ async def generate(
     start = time.monotonic()
     logger.info("Generation start user=%s model=%s jd_chars=%d", user_id, model, len(jd or ""))
     prompt = jd if not extra_context else f"{jd}\n\n{extra_context}"
-    result = await generation_agent.run(prompt, model=model, deps=deps)
+    result = await generation_agent.run(
+        prompt, model=model, deps=deps, model_settings=_model_settings(model)
+    )
     logger.info(
         "Generation finished user=%s in %dms; searches=%d",
         user_id, int((time.monotonic() - start) * 1000), deps.search_calls,
@@ -217,6 +238,8 @@ async def translate(
         f"RESUME JSON:\n{resume.model_dump_json()}"
     )
     logger.info("Translation start user=%s language=%s", user_id, resume.language)
-    result = await translation_agent.run(prompt, model=model)
+    result = await translation_agent.run(
+        prompt, model=model, model_settings=_model_settings(model)
+    )
     _log_usage("Translation", result)
     return result.output

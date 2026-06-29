@@ -41,6 +41,10 @@ def test_normalize_bare_gemini_name():
 def test_normalize_passthrough_for_other_providers():
     assert normalize_model_name("openai:gpt-4o-mini") == "openai:gpt-4o-mini"
     assert normalize_model_name("anthropic:claude-haiku-4-5") == "anthropic:claude-haiku-4-5"
+    assert (
+        normalize_model_name("openrouter:wafer/fp4")
+        == "openrouter:wafer/fp4"
+    )
 
 
 def test_normalize_none_returns_default():

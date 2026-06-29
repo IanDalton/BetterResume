@@ -27,6 +27,7 @@ from utils.logging_utils import set_user_context
 from utils.db_storage import DBStorage
 
 from bot import Bot
+from llm import agent
 from models.resume import ResumeOutputFormat
 from resume import LatexResumeWriter, WordResumeWriter
 
@@ -85,7 +86,7 @@ def _cache_payload(req: ResumeRequest, fmt, result, signature, result_signature,
         "result_signature": result_signature,
         "result": _serialize_result(result),
         "format": fmt,
-        "model": req.model,
+        "model": agent.DEFAULT_MODEL,
         "include_profile_picture": bool(req.include_profile_picture),
         "csv_hash": csv_hash,
         "profile_hash": profile_hash,
@@ -105,7 +106,7 @@ def _record_resume_request(user_id: str, job_description: str):
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
     set_user_context(user_id)
-    logger.info("Generate resume requested; format=%s model=%s", req.format, req.model)
+    logger.info("Generate resume requested; format=%s model=%s", req.format, agent.DEFAULT_MODEL)
     csv_path = _resolve_user_jobs_csv(user_id)
     logger.info("Resolved jobs CSV for user_id=%s at %s", user_id, csv_path)
     row_count = _count_csv_rows(csv_path)
@@ -285,7 +286,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 
     writer = _make_writer(fmt, csv_path, profile_path)
     clean_output_dir(out_dir)
-    logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, req.model, out_dir)
+    logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, agent.DEFAULT_MODEL, out_dir)
     bot = Bot(user_id=user_id, vector_store=store, jobs_csv=csv_path)
 
     async def event_generator():

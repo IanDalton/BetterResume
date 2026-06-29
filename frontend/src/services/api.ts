@@ -6,7 +6,6 @@ export { API_BASE };
 interface ResumeRequestPayload {
   job_description: string;
   format: string;
-  model: string;
   include_profile_picture?: boolean;
 }
 

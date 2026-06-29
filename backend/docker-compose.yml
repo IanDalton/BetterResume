@@ -35,8 +35,6 @@ services:
       - ./embeddings:/data
     # Shared memory size might need increasing for large batches
     shm_size: 1g
-    ports:
-      - "80:80"
     command: >
       --model-id BAAI/bge-base-en-v1.5
       --revision main

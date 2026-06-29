@@ -15,8 +15,6 @@ import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
-
 export function Home() {
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
@@ -290,7 +288,6 @@ export function Home() {
       const res = await generateResumeStream(userId, {
         job_description: jobDescription,
         format,
-        model: DEFAULT_MODEL,
         include_profile_picture: includeProfilePicture && !!profilePictureUrl
       }, evt => {
         if (!firstEventAt) {

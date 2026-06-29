@@ -20,6 +20,7 @@ from api.config import (
     OUTPUTS_BASE
 )
 from api.state import USER_STORES
+from llm import agent
 from llm.vector_store import PGVectorStore
 from utils.db_storage import DBStorage
 
@@ -173,7 +174,7 @@ def _hash_text(value: Optional[str]) -> str:
 def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     payload = {
         "job_description_hash": job_hash,
-        "model": req.model,
+        "model": agent.DEFAULT_MODEL,
         "csv_hash": csv_hash,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

@@ -1,5 +1,5 @@
 # LLM agent framework
-pydantic-ai-slim[google]
+pydantic-ai-slim[google,openai]
 pydantic
 
 # Postgres + pgvector support
