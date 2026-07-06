@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl } from '../services';
-import { ResumeEntry } from '../types';
-import { EntryBuilder } from '../components/EntryBuilder';
+import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, getProfile, saveProfile, getLanguages, saveLanguages } from '../services';
+import { EXPERIENCE_TYPES, LanguageEntry, ResumeEntry, UserProfile, emptyProfile } from '../types';
+import { ProfileEditor } from '../components/entries';
+import { SaveStatus } from '../components/entries/SaveStatusIndicator';
 import { Footer } from '../components/Footer';
-import { OnboardingWizard } from '../components/OnboardingWizard.js';
 import { AuthGate, UserBar } from '../components/AuthGate';
 import { FirstLoadGuide } from '../components/FirstLoadGuide';
 import { DonateToast } from '../components/DonateToast';
 import { AdBanner } from '../components/AdBanner';
 import { ProfilePictureUploader } from '../components/ProfilePictureUploader';
-import { logout, loadUserData, saveUserDataIfExperienceChanged } from '../services/firebase';
+import { logout, loadUserData, saveUserDataIfChanged } from '../services/firebase';
+import { splitLegacyEntries, hasLegacyEntries } from '../services/legacyMigration';
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
@@ -18,14 +19,46 @@ import { Dialog, Button } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
 import { ThemeToggle } from '../components/ThemeToggle';
 
+// Loads and, if needed, one-time-splits legacy localStorage data (mixed
+// personal-info/language rows inside br.entries) into the new dedicated
+// br.profile/br.languages/br.entries keys. Cached at module scope so the
+// three useState lazy initializers below don't each redo the same parse.
+let _initialLocalData: { profile: UserProfile; languages: LanguageEntry[]; entries: ResumeEntry[] } | null = null;
+function loadInitialLocalData() {
+  if (_initialLocalData) return _initialLocalData;
+  let profile: UserProfile = { ...emptyProfile };
+  let languages: LanguageEntry[] = [];
+  let entries: ResumeEntry[] = [];
+  try {
+    const rawEntries = JSON.parse(localStorage.getItem('br.entries') || '[]');
+    if (hasLegacyEntries(rawEntries)) {
+      const split = splitLegacyEntries(rawEntries);
+      profile = { ...emptyProfile, ...split.profile };
+      languages = split.languages;
+      entries = split.entries;
+      try {
+        localStorage.setItem('br.profile', JSON.stringify(profile));
+        localStorage.setItem('br.languages', JSON.stringify(languages));
+        localStorage.setItem('br.entries', JSON.stringify(entries));
+      } catch {}
+    } else {
+      entries = Array.isArray(rawEntries) ? rawEntries : [];
+      try { const p = localStorage.getItem('br.profile'); if (p) profile = { ...emptyProfile, ...JSON.parse(p) }; } catch {}
+      try { const l = localStorage.getItem('br.languages'); if (l) languages = JSON.parse(l); } catch {}
+    }
+  } catch {}
+  _initialLocalData = { profile, languages, entries };
+  return _initialLocalData;
+}
+
 export function Home() {
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [entries, setEntries] = useState<ResumeEntry[]>(() => {
-    try { const raw = localStorage.getItem('br.entries'); if (raw) return JSON.parse(raw); } catch {}
-    return [];
-  });
+  const [profile, setProfile] = useState<UserProfile>(() => loadInitialLocalData().profile);
+  const [languages, setLanguages] = useState<LanguageEntry[]>(() => loadInitialLocalData().languages);
+  const [entries, setEntries] = useState<ResumeEntry[]>(() => loadInitialLocalData().entries);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
   // Always generate a fresh guest UUID on each reload to avoid cross-session mixing
@@ -164,7 +197,37 @@ export function Home() {
 
   // Persist state to localStorage (debounced minimal by relying on React batch)
   useEffect(() => { try { localStorage.setItem('br.entries', JSON.stringify(entries)); } catch {} }, [entries]);
+  useEffect(() => { try { localStorage.setItem('br.profile', JSON.stringify(profile)); } catch {} }, [profile]);
+  useEffect(() => { try { localStorage.setItem('br.languages', JSON.stringify(languages)); } catch {} }, [languages]);
   // Hydrate from Firestore via AuthGate callback (legacy effect removed)
+
+  // Background autosave: profile/languages are cheap upserts (no pgvector
+  // re-ingest), so sync them to the backend shortly after any edit instead of
+  // only on explicit Upload/Generate -- closes the "navigate away mid-edit"
+  // data-loss gap. Work-experience entries still sync only via performUpload
+  // (that pipeline re-ingests pgvector documents and is too expensive to run
+  // on every keystroke).
+  const autosaveTimer = useRef<number | null>(null);
+  const skipFirstAutosave = useRef(true);
+  useEffect(() => {
+    if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    setSaveStatus('saving');
+    autosaveTimer.current = window.setTimeout(async () => {
+      try {
+        await Promise.all([saveProfile(userId, profile), saveLanguages(userId, languages)]);
+        if (user?.mode === 'auth') {
+          saveUserDataIfChanged(user.uid, { entries, profile, languages, jobDescription, format }).catch(() => {});
+        }
+        setSaveStatus('saved');
+        window.setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
+      } catch {
+        setSaveStatus('error');
+      }
+    }, 1200);
+    return () => { if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, languages, userId]);
 
   // Removed continuous auto-save; persistence now triggered only on explicit upload.
   // no longer store userId directly; guests stored inside AuthGate logic
@@ -242,10 +305,16 @@ export function Home() {
     setUploading(true);
     try {
       const jobs = buildJobsFromEntries(entries);
-      const result = await uploadJobsJson(userId, jobs);
+      // Profile/languages must be flushed synchronously here (not left to the
+      // debounced autosave) so generation always reads fresh personal info.
+      const [result] = await Promise.all([
+        uploadJobsJson(userId, jobs),
+        saveProfile(userId, profile),
+        saveLanguages(userId, languages),
+      ]);
       if (user?.mode === 'auth') {
-        // Persist only if experience entries changed
-        saveUserDataIfExperienceChanged(user.uid, { entries, jobDescription, format }).catch(()=>{});
+        // Persist only if experience/profile/languages actually changed
+        saveUserDataIfChanged(user.uid, { entries, profile, languages, jobDescription, format }).catch(()=>{});
       }
       return result;
     } finally {
@@ -396,11 +465,15 @@ export function Home() {
     if (!confirm(t('confirm.clear'))) return;
     try {
       localStorage.removeItem('br.entries');
+      localStorage.removeItem('br.profile');
+      localStorage.removeItem('br.languages');
     localStorage.removeItem('br.guestId');
       localStorage.removeItem('br.jobDescription');
       localStorage.removeItem('br.format');
     } catch {}
     setEntries([]);
+    setProfile({ ...emptyProfile });
+    setLanguages([]);
   setUser(null);
     setJobDescription('');
     setFormat('latex');
@@ -408,12 +481,9 @@ export function Home() {
     setError(null);
   };
 
-  // Determine if onboarding needed: require at least basic personal info (name and email, phone, address/website optional) then education/certification, then any experience.
-  const infoRoles = entries.filter(e=>e.type==='info').map(e=>e.role);
-  const hasPersonalBasics = infoRoles.includes('name') && infoRoles.includes('email');
-  const hasExperience = entries.some(e => !['info','education','certification'].includes(e.type));
-  // Keep wizard visible until basics + at least one experience entry are present (or previously completed)
-  const wizardNeeded = !onboardingComplete || !hasPersonalBasics || !hasExperience;
+  // Require basic personal info (name + email) and at least one experience entry.
+  const hasPersonalBasics = !!(profile.fullName && profile.email);
+  const hasExperience = entries.some(e => EXPERIENCE_TYPES.includes(e.type));
 
   // Compute progress percent from stages
   const stageOrder = ['csv_info','invoking_graph','graph_complete','parsed','translating','translated','writing_file','done'];
@@ -477,6 +547,8 @@ export function Home() {
   await logout();
   setUser(null);
   setEntries([]);
+  setProfile({ ...emptyProfile });
+  setLanguages([]);
   setJobDescription('');
   setFormat('latex');
 }} onSignInRequest={() => {
@@ -501,17 +573,19 @@ export function Home() {
           </div>
         </div>
       </header>
-  {wizardNeeded ? (
-    <OnboardingWizard
-      entries={entries}
-      addEntry={addEntry}
-      updateEntry={updateEntry}
-      removeEntry={removeEntry}
-      onFinish={() => setOnboardingComplete(true)}
-    />
-  ) : (
-    <EntryBuilder entries={entries} onAdd={addEntry} onUpdate={updateEntry} onRemove={removeEntry} />
-  )}
+  <ProfileEditor
+    profile={profile}
+    onProfileChange={setProfile}
+    languages={languages}
+    onLanguagesChange={setLanguages}
+    entries={entries}
+    onAddEntry={addEntry}
+    onUpdateEntry={updateEntry}
+    onRemoveEntry={removeEntry}
+    onboardingComplete={onboardingComplete}
+    onOnboardingComplete={() => setOnboardingComplete(true)}
+    saveStatus={saveStatus}
+  />
 
   <ProfilePictureUploader
     userId={userId}
@@ -641,18 +715,30 @@ export function Home() {
   <AuthGate forceOpenSignal={authGateOpenSignal} onResolved={useCallback((u, data) => {
       setUser(u);
       if (data) {
-        if (Array.isArray(data.entries)) {
-          setEntries(data.entries as any);
-          // Evaluate onboarding completion based on loaded entries (skip wizard if already satisfied)
-          try {
-            const loaded = data.entries as ResumeEntry[];
-            const roles = loaded.filter(e=>e.type==='info').map(e=>e.role);
-            const hasPersonal = roles.includes('name') && roles.includes('email');
-            if (hasPersonal) {
-              setOnboardingComplete(true);
-            }
-          } catch {}
+        let nextProfile: UserProfile = emptyProfile;
+        if (Array.isArray(data.entries) && hasLegacyEntries(data.entries)) {
+          // Pre-migration Firestore doc: split the mixed entries array once,
+          // then immediately push the cleaned shape back so this device
+          // stops re-splitting on every future load.
+          const split = splitLegacyEntries(data.entries);
+          nextProfile = { ...emptyProfile, ...(data.profile || {}), ...split.profile };
+          const nextLanguages = data.languages && data.languages.length ? data.languages : split.languages;
+          setProfile(nextProfile);
+          setLanguages(nextLanguages);
+          setEntries(split.entries);
+          saveUserDataIfChanged(u.uid, {
+            entries: split.entries, profile: nextProfile, languages: nextLanguages,
+            jobDescription: data.jobDescription, format: data.format,
+          }).catch(() => {});
+        } else {
+          if (Array.isArray(data.entries)) setEntries(data.entries as ResumeEntry[]);
+          if (data.profile) {
+            nextProfile = { ...emptyProfile, ...data.profile };
+            setProfile(nextProfile);
+          }
+          if (data.languages) setLanguages(data.languages);
         }
+        if (nextProfile.fullName && nextProfile.email) setOnboardingComplete(true);
         if (data.jobDescription) setJobDescription(data.jobDescription);
         if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
       }

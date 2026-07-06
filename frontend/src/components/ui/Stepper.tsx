@@ -9,12 +9,14 @@ export interface StepperProps {
   steps: StepperStep[];
   currentStep: number;
   onStepClick?: (index: number) => void;
+  /** Pre-translated "Step X of Y: Label" text. Defaults to an English string if omitted. */
+  progressLabel?: string;
 }
 
-export const Stepper: React.FC<StepperProps> = ({ steps, currentStep, onStepClick }) => (
+export const Stepper: React.FC<StepperProps> = ({ steps, currentStep, onStepClick, progressLabel }) => (
   <div>
     <p className="mb-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-      Step {currentStep + 1} of {steps.length}: {steps[currentStep]?.label}
+      {progressLabel ?? `Step ${currentStep + 1} of ${steps.length}: ${steps[currentStep]?.label ?? ''}`}
     </p>
     <ol className="flex items-center gap-2" aria-label="Progress">
       {steps.map((step, i) => {

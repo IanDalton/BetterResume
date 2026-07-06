@@ -34,12 +34,9 @@ describe('buildCsvFromEntries', () => {
     expect(multi).toContain('"Built APIs\nLed team"');
   });
 
-  it('maps info entries: role becomes the key column', () => {
-    const csv = buildCsvFromEntries([
-      { type: 'info', company: '', location: '', role: 'email', start: '', end: '', description: 'a@b.c', role_description: '' },
-    ]);
-    const row = csv.split('\n')[1];
-    expect(row.startsWith('info,email,')).toBe(true);
+  it('skips unknown entry types', () => {
+    const csv = buildCsvFromEntries([{ ...jobEntry, type: 'mystery' as any }]);
+    expect(csv.split('\n')).toHaveLength(1); // header only
   });
 });
 

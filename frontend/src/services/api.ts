@@ -1,7 +1,63 @@
+import type { LanguageEntry, UserProfile } from '../types';
+
 const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '').replace(/\/resume$/, '') + '/resume';
 
 export { API_BASE };
+
+async function _jsonOrThrow(res: Response, failureLabel: string) {
+  if (!res.ok) {
+    let message = `${failureLabel}: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch { }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function getProfile(userId: string): Promise<UserProfile> {
+  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(userId)}`);
+  const data = await _jsonOrThrow(res, 'Failed to load profile');
+  return {
+    fullName: data.full_name || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    address: data.address || '',
+    links: data.links || [],
+  };
+}
+
+export async function saveProfile(userId: string, profile: UserProfile): Promise<void> {
+  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      full_name: profile.fullName || null,
+      email: profile.email || null,
+      phone: profile.phone || null,
+      address: profile.address || null,
+      links: profile.links,
+    }),
+  });
+  await _jsonOrThrow(res, 'Failed to save profile');
+}
+
+export async function getLanguages(userId: string): Promise<LanguageEntry[]> {
+  const res = await fetch(`${API_BASE}/languages/${encodeURIComponent(userId)}`);
+  const data = await _jsonOrThrow(res, 'Failed to load languages');
+  return data.languages || [];
+}
+
+export async function saveLanguages(userId: string, languages: LanguageEntry[]): Promise<void> {
+  const res = await fetch(`${API_BASE}/languages/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ languages }),
+  });
+  await _jsonOrThrow(res, 'Failed to save languages');
+}
 
 interface ResumeRequestPayload {
   job_description: string;
