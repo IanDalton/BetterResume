@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ResumeEntry, EntryType } from '../types';
 import { useI18n } from '../i18n';
+import { FormField, Input, Textarea, Select, Button } from './ui';
 
 interface EntryBuilderProps {
   entries: ResumeEntry[];
@@ -53,36 +54,72 @@ export const EntryBuilder: React.FC<EntryBuilderProps> = ({ entries, onAdd, onUp
     ['Basic (A2/B1)', t('proficiency.basic')],
   ];
 
+  const typeOptions = [
+    { value: 'info', label: t('type.info') },
+    { value: 'education', label: t('type.education') },
+    { value: 'job', label: t('type.job') },
+    { value: 'non-profit', label: t('type.non-profit') },
+    { value: 'project', label: t('type.project') },
+    { value: 'contract', label: t('type.contract') },
+    { value: 'part-time', label: t('type.part-time') },
+    { value: 'language', label: t('type.language') },
+  ];
+  const personalFieldOptions = ['name','email','phone','website','address'].map(r => ({ value: r, label: t('field.personal.'+r) }));
+  const proficiencyOptions = [{ value: '__unset__', label: t('proficiency.select') }, ...proficiencyLevels.map(([value, label]) => ({ value, label }))];
+
   return (
     <section className="mb-12">
       <h2 className="text-xl font-semibold mb-4">{t('add.entry.section')}</h2>
   <form onSubmit={submit} className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 bg-neutral-50 border border-neutral-200 rounded p-4 dark:bg-neutral-900/60 dark:border-neutral-800">
-        <SelectField label={t('field.type')} value={form.type} onChange={v => setField('type', v as EntryType)} options={[
-          ['info',t('type.info')],['education',t('type.education')],['job',t('type.job')],['non-profit',t('type.non-profit')],['project',t('type.project')],['contract',t('type.contract')],['part-time',t('type.part-time')],['language',t('type.language')]
-        ]} />
-        {showJobFields && <InputField label={t('field.company')} value={form.company||''} onChange={v=>setField('company',v)} placeholder={t('placeholder.company')} />}
-        {showJobFields && <InputField label={t('field.location')} value={form.location||''} onChange={v=>setField('location',v)} placeholder={t('placeholder.location')} />}
-        {form.type !== 'education' && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">{t('field.role')}</label>
-            {form.type === 'info' ? (
-              <select className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)}>
-                {['name','email','phone','website','address'].map(r => <option key={r} value={r}>{t('field.personal.'+r)}</option>)}
-              </select>
-            ) : (
-              <input className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm" value={form.role} onChange={e => setField('role', e.target.value)} placeholder={isLanguage ? t('placeholder.languageName') : t('placeholder.role')} />
-            )}
-          </div>
+        <FormField label={t('field.type')}>
+          <Select options={typeOptions} value={form.type} onValueChange={v => setField('type', v as EntryType)} />
+        </FormField>
+        {showJobFields && (
+          <FormField label={t('field.company')}>
+            <Input value={form.company||''} onChange={e=>setField('company',e.target.value)} placeholder={t('placeholder.company')} />
+          </FormField>
         )}
-        {showJobFields && <InputField label={t('field.start')} value={form.start||''} onChange={v=>setField('start',v)} placeholder={t('placeholder.start')} />}
-        {showJobFields && <InputField label={t('field.end')} value={form.end||''} onChange={v=>setField('end',v)} placeholder={t('placeholder.end')} />}
-  {isLanguage
-    ? <SelectField label={t('field.proficiency')} value={form.description||''} onChange={v=>setField('description',v)} options={[['', t('proficiency.select')], ...proficiencyLevels]} />
-    : <TextareaField label={t('field.description')} value={form.description||''} onChange={v=>setField('description',v)} placeholder={t('placeholder.description')} className="md:col-span-2 lg:col-span-3" />}
-        {showRoleDesc && <TextareaField label={t('field.extraDetails')} value={form.role_description||''} onChange={v=>setField('role_description',v)} placeholder={t('placeholder.extraDetails')} className="md:col-span-2 lg:col-span-3" />}
+        {showJobFields && (
+          <FormField label={t('field.location')}>
+            <Input value={form.location||''} onChange={e=>setField('location',e.target.value)} placeholder={t('placeholder.location')} />
+          </FormField>
+        )}
+        {form.type !== 'education' && (
+          <FormField label={t('field.role')}>
+            {form.type === 'info' ? (
+              <Select options={personalFieldOptions} value={form.role} onValueChange={v => setField('role', v)} />
+            ) : (
+              <Input value={form.role} onChange={e => setField('role', e.target.value)} placeholder={isLanguage ? t('placeholder.languageName') : t('placeholder.role')} />
+            )}
+          </FormField>
+        )}
+        {showJobFields && (
+          <FormField label={t('field.start')}>
+            <Input value={form.start||''} onChange={e=>setField('start',e.target.value)} placeholder={t('placeholder.start')} />
+          </FormField>
+        )}
+        {showJobFields && (
+          <FormField label={t('field.end')}>
+            <Input value={form.end||''} onChange={e=>setField('end',e.target.value)} placeholder={t('placeholder.end')} />
+          </FormField>
+        )}
+        {isLanguage ? (
+          <FormField label={t('field.proficiency')}>
+            <Select options={proficiencyOptions} value={form.description || '__unset__'} onValueChange={v => setField('description', v === '__unset__' ? '' : v)} />
+          </FormField>
+        ) : (
+          <FormField label={t('field.description')} className="md:col-span-2 lg:col-span-3">
+            <Textarea value={form.description||''} onChange={e=>setField('description',e.target.value)} placeholder={t('placeholder.description')} />
+          </FormField>
+        )}
+        {showRoleDesc && (
+          <FormField label={t('field.extraDetails')} className="md:col-span-2 lg:col-span-3">
+            <Textarea value={form.role_description||''} onChange={e=>setField('role_description',e.target.value)} placeholder={t('placeholder.extraDetails')} />
+          </FormField>
+        )}
         <div className="md:col-span-2 lg:col-span-3 flex justify-end gap-3 pt-2">
-          {editing != null && <button type="button" onClick={reset} className="btn-secondary">{t('button.cancel')}</button>}
-          <button type="submit" className="btn-secondary">{editing == null ? t('button.addEntry') : t('button.updateEntry')}</button>
+          {editing != null && <Button type="button" variant="secondary" onClick={reset}>{t('button.cancel')}</Button>}
+          <Button type="submit" variant="secondary">{editing == null ? t('button.addEntry') : t('button.updateEntry')}</Button>
         </div>
       </form>
       <EntriesList entries={entries} onEdit={startEdit} onRemove={onRemove} />
@@ -121,29 +158,3 @@ export const EntriesList: React.FC<EntriesListProps> = ({ entries, onEdit, onRem
   );
 };
 
-// Reusable field components
-const baseInput = 'bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-2 text-sm focus:outline-none focus:ring focus:ring-red-500';
-const labelCls = 'text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400';
-
-const InputField: React.FC<{label:string; value:string; onChange:(v:string)=>void; placeholder?:string;}> = ({label,value,onChange,placeholder}) => (
-  <div className="flex flex-col gap-1">
-    <label className={labelCls}>{label}</label>
-    <input className={baseInput} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)} />
-  </div>
-);
-
-const TextareaField: React.FC<{label:string; value:string; onChange:(v:string)=>void; placeholder?:string; className?:string;}> = ({label,value,onChange,placeholder,className}) => (
-  <div className={"flex flex-col gap-1 "+(className||'')}>
-    <label className={labelCls}>{label}</label>
-    <textarea className={baseInput+" min-h-[100px] resize-y"} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)} />
-  </div>
-);
-
-const SelectField: React.FC<{label:string; value:string; onChange:(v:string)=>void; options:[string,string][];}> = ({label,value,onChange,options}) => (
-  <div className="flex flex-col gap-1">
-    <label className={labelCls}>{label}</label>
-    <select className={baseInput} value={value} onChange={e=>onChange(e.target.value)}>
-      {options.map(([val,lab])=> <option key={val} value={val}>{lab}</option>)}
-    </select>
-  </div>
-);

@@ -14,10 +14,14 @@ import { logout, loadUserData, saveUserDataIfExperienceChanged } from '../servic
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
+import { Dialog, Button } from '../components/ui';
+import { useToast } from '../components/ui/use-toast';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function Home() {
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [entries, setEntries] = useState<ResumeEntry[]>(() => {
     try { const raw = localStorage.getItem('br.entries'); if (raw) return JSON.parse(raw); } catch {}
     return [];
@@ -255,14 +259,16 @@ export function Home() {
       setLoading(true);
       const res: any = await performUpload();
       if (res?.status === 'unchanged') {
-        alert(t('upload.unchanged'));
+        toast({ title: t('upload.unchanged') });
       } else if (res?.rows_ingested != null) {
-        alert(`${t('upload.success.rows')} (${res.rows_ingested})`);
+        toast({ title: `${t('upload.success.rows')} (${res.rows_ingested})`, variant: 'success' });
       } else {
-        alert(t('upload.success'));
+        toast({ title: t('upload.success'), variant: 'success' });
       }
     } catch (e: any) {
-      setError(e.message || t('upload.failed'));
+      const message = e.message || t('upload.failed');
+      setError(message);
+      toast({ title: message, variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -491,7 +497,7 @@ export function Home() {
               {availableLanguages.map(l => <option key={l.code} value={l.code}>{t(l.labelKey)}</option>)}
             </select>
           </label>
-          {/* <ThemeToggle /> */}
+          <ThemeToggle />
           </div>
         </div>
       </header>
@@ -568,63 +574,70 @@ export function Home() {
         </div>
       </section>
     )}
-    {showGenModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 dark:bg-black/70 backdrop-blur-sm">
-        <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg p-6 shadow-xl space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="relative w-10 h-10">
-              <div className="absolute inset-0 rounded-md bg-red-600 animate-pulse" />
-              <div className="absolute inset-1 rounded-sm bg-white dark:bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</div>
-            </div>
-            <div>
-              <h3 className="font-semibold">{t('modal.building.title')}</h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('modal.building.subtitle')}</p>
-            </div>
+    <Dialog
+      open={showGenModal}
+      onOpenChange={() => {}}
+      hideClose
+      title={
+        <span className="flex items-center gap-3">
+          <span className="relative w-10 h-10 shrink-0">
+            <span className="absolute inset-0 rounded-md bg-red-600 animate-pulse" />
+            <span className="absolute inset-1 rounded-sm bg-white dark:bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</span>
+          </span>
+          {t('modal.building.title')}
+        </span>
+      }
+      description={t('modal.building.subtitle')}
+    >
+      <div className="space-y-6">
+        <div>
+          <div className="h-2 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+            <div
+              className="h-full bg-[length:200%_100%] bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-progressMove"
+              style={{ width: percent + '%' }}
+            />
           </div>
-          <div>
-            <div className="h-2 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-[progressMove_2s_linear_infinite]" style={{width: percent+"%"}} />
-            </div>
-            <div className="flex justify-between mt-1 text-[11px] text-neutral-600 dark:text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
-          </div>
-          <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
-            {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
-          </div>
-          {geoLocation?.isArgentina && (
-          <div className="mt-2">
-            <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
-            <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
-              <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
-            </a>
-          </div>
-          )}
+          <div className="flex justify-between mt-1 text-[11px] text-neutral-600 dark:text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
         </div>
+        <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
+          {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
+        </div>
+        {geoLocation?.isArgentina && (
+        <div className="mt-2">
+          <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
+          <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
+            <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
+          </a>
+        </div>
+        )}
       </div>
-    )}
+    </Dialog>
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
   <DonateToast 
     open={showDonateToast} 
     onClose={()=>{ try { localStorage.setItem('br.toastDonateLastShown', String(Date.now())); localStorage.setItem('br.toastDonateGenCount','0'); } catch {} setShowDonateToast(false); }} 
     onDonateClick={!geoLocation || !geoLocation.isArgentina ? () => { navigate('/donate'); setShowDonateToast(false); } : undefined}
   />
-    {showDonate && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-        <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">
-          <button onClick={()=>setShowDonate(false)} className="absolute top-2 right-2 text-neutral-500 hover:text-neutral-300 text-xs">✕</button>
-          <h3 className="text-xl font-semibold tracking-tight">{t('donate.title')}</h3>
-          <p className="text-sm text-neutral-400 leading-relaxed">{t('donate.body')}</p>
-          <div className="flex gap-3 flex-wrap">
-            {!geoLocation || !geoLocation.isArgentina ? (
-              <button onClick={() => { navigate('/donate'); setShowDonate(false); }} className="btn-primary">{t('donate.cta')}</button>
-            ) : (
-              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
-            )}
-            <button onClick={()=>setShowDonate(false)} className="btn-secondary">{t('donate.later')}</button>
-          </div>
-          <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
-        </div>
-      </div>
-    )}
+    <Dialog
+      open={showDonate}
+      onOpenChange={setShowDonate}
+      title={t('donate.title')}
+      description={t('donate.body')}
+      footer={
+        <>
+          {!geoLocation || !geoLocation.isArgentina ? (
+            <Button variant="primary" onClick={() => { navigate('/donate'); setShowDonate(false); }}>{t('donate.cta')}</Button>
+          ) : (
+            <Button asChild variant="primary">
+              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer">{t('donate.cta')}</a>
+            </Button>
+          )}
+          <Button variant="secondary" onClick={()=>setShowDonate(false)}>{t('donate.later')}</Button>
+        </>
+      }
+    >
+      <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
+    </Dialog>
   <AuthGate forceOpenSignal={authGateOpenSignal} onResolved={useCallback((u, data) => {
       setUser(u);
       if (data) {

@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import Confetti from 'react-confetti';
 import { useI18n } from '../i18n';
+import { Button } from '../components/ui';
 
 export function ThankYou() {
   const { t } = useI18n();
@@ -14,12 +15,9 @@ export function ThankYou() {
         <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-8">
           {t('thankyou.message')}
         </p>
-        <Link 
-          to="/" 
-          className="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
-        >
-          {t('thankyou.back')}
-        </Link>
+        <Button asChild variant="primary">
+          <Link to="/">{t('thankyou.back')}</Link>
+        </Button>
       </div>
     </div>
   );

@@ -36,7 +36,7 @@ function BarChart({ data, title }: { data: Array<{ day: string; label?: string; 
             return (
               <div key={d.day} className="flex-1 min-w-0 max-w-[48px] flex flex-col items-center justify-end h-full" title={`${label}: ${d.count}`}>
                 <div
-                  className="w-full bg-blue-500/80 dark:bg-blue-400/80 rounded-t"
+                  className="w-full bg-primary-500/80 dark:bg-primary-400/80 rounded-t"
                   style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
                 />
                 <span className="text-[9px] text-neutral-500 mt-1 whitespace-nowrap text-center h-3 leading-3 shrink-0">
@@ -180,7 +180,7 @@ export function AdminDashboard() {
                   key={d}
                   onClick={() => setDays(d)}
                   className={`px-2 py-1 rounded border ${days === d
-                    ? 'border-blue-500 text-blue-500'
+                    ? 'border-primary-500 text-primary-500'
                     : 'border-neutral-300 dark:border-neutral-700 text-neutral-500'}`}
                 >
                   {d}d
@@ -190,7 +190,7 @@ export function AdminDashboard() {
               <button
                 onClick={handleExport}
                 disabled={exporting}
-                className="ml-auto px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-blue-500 hover:text-blue-500 disabled:opacity-50"
+                className="ml-auto px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-primary-500 hover:text-primary-500 disabled:opacity-50"
               >
                 {exporting ? 'Exporting…' : 'Export logs (CSV)'}
               </button>

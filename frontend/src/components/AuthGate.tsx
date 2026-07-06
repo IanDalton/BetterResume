@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
 import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, logout, loadUserData, UserDataDoc, googleSignIn } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
+import { Dialog, FormField, Input, Button } from './ui';
 
 interface AuthGateProps {
   onResolved: (user: { mode: 'auth' | 'guest'; uid: string; email?: string }, data?: UserDataDoc | null) => void;
@@ -84,59 +85,42 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
     }
   };
 
-  if (!show) return null;
-
   return (
-    <div
-      className="fixed inset-0 bg-black/40 dark:bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={() => setShow(false)}
-      role="dialog"
-      aria-modal="true"
+    <Dialog
+      open={show}
+      onOpenChange={setShow}
+      title={t('auth.welcome')}
+      description={t('auth.tagline')}
     >
-      <div
-        className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-6 shadow-xl space-y-5 relative"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          aria-label="Close"
-          className="absolute top-2 right-2 text-neutral-500 hover:text-neutral-300 text-xs"
-          onClick={() => setShow(false)}
-        >
-          ✕
+      <form onSubmit={submit} className="space-y-4">
+        <FormField label={t('auth.email')} required>
+          <Input type="email" required value={email} onChange={e => setEmail(e.target.value)} />
+        </FormField>
+        <FormField label={t('auth.password')} required>
+          <Input type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+        </FormField>
+        {error && <p className="text-sm text-red-500">{error}</p>}
+        <div className="flex items-center justify-between text-xs text-neutral-400">
+          <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')} className="btn-link-primary">{mode==='signin'? t('auth.needAccount'): t('auth.haveAccount')}</button>
+          {/* Guest option hidden because user is already a guest by default */}
+        </div>
+        <Button type="submit" variant="primary" loading={loading} className="w-full mt-2">
+          {mode==='signin'? t('auth.signIn'): t('auth.createAccount')}
+        </Button>
+        <div className="relative my-2">
+          <div className="flex items-center">
+            <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
+            <span className="mx-2 text-[10px] uppercase tracking-wide text-neutral-500">{t('auth.or')}</span>
+            <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
+          </div>
+        </div>
+        <button type="button" onClick={handleGoogle} disabled={loading} className="w-full bg-neutral-100 text-neutral-900 hover:bg-white disabled:opacity-50 rounded py-2 text-sm font-medium flex items-center justify-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512" className="w-4 h-4" fill="currentColor"><path d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/></svg>
+          <span>{loading ? t('auth.working') : t('auth.continueGoogle')}</span>
         </button>
-        <h2 className="text-xl font-semibold tracking-tight">{t('auth.welcome')}</h2>
-  <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('auth.tagline')}</p>
-        <form onSubmit={submit} className="space-y-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">{t('auth.email')}</label>
-            <input type="email" required value={email} onChange={e=>setEmail(e.target.value)} className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">{t('auth.password')}</label>
-            <input type="password" required value={password} onChange={e=>setPassword(e.target.value)} className="bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-2 text-sm" />
-          </div>
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          <div className="flex items-center justify-between text-xs text-neutral-400">
-            <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')} className="btn-link-primary">{mode==='signin'? t('auth.needAccount'): t('auth.haveAccount')}</button>
-            {/* Guest option hidden because user is already a guest by default */}
-          </div>
-          <button disabled={loading} className="w-full mt-2 btn-primary disabled:opacity-50">{mode==='signin'? t('auth.signIn'): t('auth.createAccount')}</button>
-      <div className="relative my-2">
-            <div className="flex items-center">
-        <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
-        <span className="mx-2 text-[10px] uppercase tracking-wide text-neutral-500">{t('auth.or')}</span>
-        <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
-            </div>
-          </div>
-          <button type="button" onClick={handleGoogle} disabled={loading} className="w-full bg-neutral-100 text-neutral-900 hover:bg-white disabled:opacity-50 rounded py-2 text-sm font-medium flex items-center justify-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512" className="w-4 h-4" fill="currentColor"><path d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/></svg>
-            <span>{loading ? t('auth.working') : t('auth.continueGoogle')}</span>
-          </button>
-        </form>
-  <p className="text-[11px] text-neutral-600 dark:text-neutral-500 leading-relaxed">{t('auth.guest.notice')}</p>
-      </div>
-    </div>
+      </form>
+      <p className="mt-4 text-[11px] text-neutral-600 dark:text-neutral-500 leading-relaxed">{t('auth.guest.notice')}</p>
+    </Dialog>
   );
 };
 
