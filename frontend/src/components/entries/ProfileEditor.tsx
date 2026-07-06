@@ -5,11 +5,13 @@ import { PersonalInfoSection } from './PersonalInfoSection';
 import { EducationSection } from './EducationSection';
 import { ExperienceSection } from './ExperienceSection';
 import { LanguagesSection } from './LanguagesSection';
+import { LinkedInImportDialog } from './LinkedInImportDialog';
 import { SaveStatusIndicator, SaveStatus } from './SaveStatusIndicator';
 import { personalInfoSchema } from './validation';
 import { useI18n } from '../../i18n';
 
 export interface ProfileEditorProps {
+  userId: string;
   profile: UserProfile;
   onProfileChange: (p: UserProfile) => void;
   languages: LanguageEntry[];
@@ -24,7 +26,7 @@ export interface ProfileEditorProps {
 }
 
 export const ProfileEditor: React.FC<ProfileEditorProps> = ({
-  profile, onProfileChange, languages, onLanguagesChange,
+  userId, profile, onProfileChange, languages, onLanguagesChange,
   entries, onAddEntry, onUpdateEntry, onRemoveEntry,
   onboardingComplete, onOnboardingComplete, saveStatus,
 }) => {
@@ -56,7 +58,17 @@ export const ProfileEditor: React.FC<ProfileEditorProps> = ({
         {!onboardingComplete ? (
           <Stepper steps={steps} currentStep={currentStep} progressLabel={progressLabel} />
         ) : <span />}
-        <SaveStatusIndicator status={saveStatus} />
+        <div className="ml-auto flex items-center gap-3">
+          <LinkedInImportDialog
+            userId={userId}
+            currentProfile={profile}
+            onProfileChange={onProfileChange}
+            currentLanguages={languages}
+            onLanguagesChange={onLanguagesChange}
+            onAddEntry={onAddEntry}
+          />
+          <SaveStatusIndicator status={saveStatus} />
+        </div>
       </div>
       <PersonalInfoSection profile={profile} onChange={onProfileChange} />
       <EducationSection entries={entries} onAdd={onAddEntry} onUpdate={onUpdateEntry} onRemove={onRemoveEntry} />

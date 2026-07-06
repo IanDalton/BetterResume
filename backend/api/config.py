@@ -21,4 +21,6 @@ ALLOWED_PROFILE_IMAGE_TYPES = {
 }
 PROFILE_EXTENSIONS = {".png", ".jpg"}
 
+LINKEDIN_PDF_MAX_BYTES = 10 * 1024 * 1024  # LinkedIn exports are small; headroom for embedded fonts
+
 DOWNLOAD_SIGNING_SECRET = os.getenv("DOWNLOAD_SIGNING_SECRET") or os.getenv("SECRET_KEY") or "dev-secret-change-me"

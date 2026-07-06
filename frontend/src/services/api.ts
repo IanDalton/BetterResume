@@ -1,4 +1,4 @@
-import type { LanguageEntry, UserProfile } from '../types';
+import type { LanguageEntry, ProfileLink, UserProfile } from '../types';
 
 const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '').replace(/\/resume$/, '') + '/resume';
@@ -223,6 +223,57 @@ export async function uploadProfilePicture(userId: string, file: File) {
       const text = await res.text().catch(() => '');
       if (text) message = text;
     }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export interface LinkedInImportProfile {
+  full_name?: string | null;
+  headline?: string | null;
+  summary?: string | null;
+  location?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  links: ProfileLink[];
+}
+
+export interface LinkedInImportEntry {
+  type: string;
+  company: string;
+  description: string;
+  role?: string | null;
+  location?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface LinkedInImportResult {
+  profile: LinkedInImportProfile;
+  experience: LinkedInImportEntry[];
+  education: LinkedInImportEntry[];
+  skills: string[];
+  languages: LanguageEntry[];
+  warnings: string[];
+}
+
+/** Uploads a LinkedIn "Save to PDF" export for parsing. Nothing is saved
+ * server-side by this call -- the result is for the user to review before
+ * anything is merged into their profile/entries (see legacyMigration-style
+ * adapter in services/linkedinImport.ts). */
+export async function importLinkedInPdf(userId: string, file: File): Promise<LinkedInImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_BASE}/import/linkedin/${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    let message = `Import failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch { }
     throw new Error(message);
   }
   return res.json();

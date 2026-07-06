@@ -25,6 +25,7 @@ from pydantic_ai.models import Model
 
 from models.resume import ResumeOutputFormat
 from utils.file_io import load_prompt
+from utils.linkedin_import import LinkedInImportResult
 
 logger = logging.getLogger("betterresume.agent")
 
@@ -35,6 +36,7 @@ RETRIES = 3
 
 JOB_PROMPT = load_prompt("job_prompt")
 TRANSLATION_PROMPT = load_prompt("translation_prompt")
+LINKEDIN_IMPORT_PROMPT = load_prompt("linkedin_import_prompt")
 
 # Older code/config used LangChain provider prefixes; map them onto pydantic-ai ones.
 _LEGACY_PROVIDER_MAP = {
@@ -99,6 +101,13 @@ generation_agent = Agent(
 translation_agent = Agent(
     output_type=ResumeOutputFormat,
     instructions=TRANSLATION_PROMPT,
+    retries=RETRIES,
+)
+
+# No tools/deps needed: pure text-in, structured-out extraction.
+linkedin_import_agent = Agent(
+    output_type=LinkedInImportResult,
+    instructions=LINKEDIN_IMPORT_PROMPT,
     retries=RETRIES,
 )
 
@@ -251,4 +260,20 @@ async def translate(
         prompt, model=model, model_settings=_model_settings(model)
     )
     _log_usage("Translation", result)
+    return result.output
+
+
+async def extract_linkedin_profile(
+    text: str,
+    *,
+    model: Union[str, Model, None] = None,
+) -> LinkedInImportResult:
+    """Structured extraction of profile/experience/education/language data
+    from a LinkedIn PDF export's cleaned text (see utils/linkedin_import.py)."""
+    model = normalize_model_name(model)
+    logger.info("LinkedIn import extraction start; chars=%d model=%s", len(text or ""), model)
+    result = await linkedin_import_agent.run(
+        text, model=model, model_settings=_model_settings(model)
+    )
+    _log_usage("LinkedIn import extraction", result)
     return result.output

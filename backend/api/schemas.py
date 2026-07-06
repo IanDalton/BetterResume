@@ -55,3 +55,33 @@ class LanguageRecord(BaseModel):
 
 class LanguagesPayload(BaseModel):
     languages: List[LanguageRecord] = []
+
+
+class LinkedInImportProfile(BaseModel):
+    full_name: Optional[str] = None
+    headline: Optional[str] = None
+    summary: Optional[str] = None
+    location: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    links: List[ProfileLink] = []
+
+
+class LinkedInImportEntry(BaseModel):
+    type: str
+    company: str
+    description: str
+    role: Optional[str] = None
+    location: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class LinkedInImportResponse(BaseModel):
+    """Parsed-but-unsaved LinkedIn import result, returned for user review."""
+    profile: LinkedInImportProfile
+    experience: List[LinkedInImportEntry] = []
+    education: List[LinkedInImportEntry] = []
+    skills: List[str] = []
+    languages: List[LanguageRecord] = []
+    warnings: List[str] = []

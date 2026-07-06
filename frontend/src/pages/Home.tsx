@@ -574,6 +574,7 @@ export function Home() {
         </div>
       </header>
   <ProfileEditor
+    userId={userId}
     profile={profile}
     onProfileChange={setProfile}
     languages={languages}
