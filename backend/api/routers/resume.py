@@ -13,6 +13,7 @@ from api.utils import (
     _resolve_profile_picture_path,
     _file_sha256,
     _hash_text,
+    _hash_profile,
     _build_result_signature,
     _build_request_signature,
     _load_resume_cache,
@@ -59,9 +60,17 @@ def _record_generation(user_id, model, fmt, language, started_at, status, error=
         logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
 
 
-def _make_writer(fmt: str, csv_path: str, profile_path):
+def _make_writer(fmt: str, csv_path: str, profile_path, profile: dict = None):
     writer_cls = LatexResumeWriter if fmt == "latex" else WordResumeWriter
-    return writer_cls(csv_location=csv_path, profile_image_path=profile_path)
+    return writer_cls(csv_location=csv_path, profile_image_path=profile_path, profile=profile)
+
+
+def _get_profile_dict(user_id: str) -> dict:
+    """Fetch a user's personal info + links as a single dict for the writers."""
+    storage = DBStorage()
+    fields = storage.get_user_profile(user_id) or {}
+    links = storage.list_profile_links(user_id)
+    return {**fields, "links": links}
 
 
 def _count_csv_rows(csv_path: str):
@@ -115,13 +124,15 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
+    profile_dict = _get_profile_dict(user_id)
     csv_hash = _file_sha256(csv_path)
     job_hash = _hash_text(req.job_description)
     _record_resume_request(user_id, req.job_description)
     profile_hash = _file_sha256(profile_path) if profile_path else None
+    profile_fields_hash = _hash_profile(profile_dict)
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
-    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
+    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash, profile_fields_hash)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
     cached = _load_resume_cache(out_dir) or {"results": {}, "renders": {}}
@@ -136,7 +147,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
 
     if cached_result is not None:
         logger.info("Reusing cached resume content for new render user_id=%s format=%s include_image=%s", user_id, fmt, req.include_profile_picture)
-        writer = _make_writer(fmt, csv_path, profile_path)
+        writer = _make_writer(fmt, csv_path, profile_path, profile_dict)
         clean_output_dir(out_dir)
         output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
         try:
@@ -152,7 +163,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
             ))
         return JSONResponse(content={"result": cached_result, "files": signed_files, "rows": row_count})
 
-    writer = _make_writer(fmt, csv_path, profile_path)
+    writer = _make_writer(fmt, csv_path, profile_path, profile_dict)
     store = get_user_store(user_id)
     clean_output_dir(out_dir)
     logger.info("Starting Bot generation; out_dir=%s", out_dir)
@@ -196,13 +207,15 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
     profile_path = _resolve_profile_picture_path(user_id) if req.include_profile_picture else None
     if req.include_profile_picture and not profile_path:
         logger.info("Profile picture requested but none stored for user=%s", user_id)
+    profile_dict = _get_profile_dict(user_id)
     csv_hash = _file_sha256(csv_path)
     job_hash = _hash_text(req.job_description)
     _record_resume_request(user_id, req.job_description)
     profile_hash = _file_sha256(profile_path) if profile_path else None
+    profile_fields_hash = _hash_profile(profile_dict)
     fmt = req.format.lower()
     result_signature = _build_result_signature(req, csv_hash, job_hash)
-    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash)
+    signature = _build_request_signature(req, csv_hash, profile_hash, job_hash, profile_fields_hash)
     store = get_user_store(user_id)
     out_dir = os.path.join(OUTPUTS_BASE, user_id)
     os.makedirs(out_dir, exist_ok=True)
@@ -260,7 +273,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event(csv_info)
                 yield sse_event({"stage": "cached", "message": "Reusing cached resume content"})
                 clean_output_dir(out_dir)
-                writer = _make_writer(fmt, csv_path, profile_path)
+                writer = _make_writer(fmt, csv_path, profile_path, profile_dict)
                 output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
                 try:
                     typed_result = _as_resume(cached_result)
@@ -284,7 +297,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 
         return StreamingResponse(cached_rerender_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
 
-    writer = _make_writer(fmt, csv_path, profile_path)
+    writer = _make_writer(fmt, csv_path, profile_path, profile_dict)
     clean_output_dir(out_dir)
     logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, agent.DEFAULT_MODEL, out_dir)
     bot = Bot(user_id=user_id, vector_store=store, jobs_csv=csv_path)

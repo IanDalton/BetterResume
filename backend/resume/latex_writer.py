@@ -1,7 +1,7 @@
 import os
 import logging
 import shutil
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import pandas as pd
 from .base_writer import BaseWriter
 from models.resume import ResumeOutputFormat
@@ -62,8 +62,8 @@ class LatexResumeWriter(BaseWriter):
             Raises:
                 RuntimeError: If the LaTeX to PDF conversion fails.
     """
-    def __init__(self, template: str = None, csv_location: str = "jobs.csv", profile_image_path: Optional[str] = None):
-        super().__init__(template, csv_location, ".tex", profile_image_path=profile_image_path)
+    def __init__(self, template: str = None, csv_location: str = "jobs.csv", profile_image_path: Optional[str] = None, profile: Optional[Dict[str, Any]] = None):
+        super().__init__(template, csv_location, ".tex", profile_image_path=profile_image_path, profile=profile)
         self._logger = logging.getLogger("betterresume.writer")
 
 
@@ -78,21 +78,16 @@ class LatexResumeWriter(BaseWriter):
 
     def generate_file(self, response: ResumeOutputFormat, output: str = None):
         self.response = response
-        data = self.data
-        # Safe accessors for optional info rows
-        def _safe_first(df, default=""):
-            try:
-                return df.values[0]
-            except Exception:
-                return default
-        name = _latex_escape(_safe_first(data[data['company'] == 'name']['description'], ""))
+        name = _latex_escape(self.profile.get("full_name") or "")
         title = _latex_escape(response.resume_section.title)
-        address = _latex_escape(_safe_first(data[data['company'] == 'address']['description'], ""))
-        phone = _latex_escape(_safe_first(data[data['company'] == 'phone']['description'], ""))
-        email = _latex_escape(_safe_first(data[data['company'] == 'email']['description'], ""))
-        websites = data[data['company'] == 'website']['description'].tolist()
-        websites_names= data[data['company'] == 'website']['role'].tolist()
-        websites = {w: _latex_escape(n) for w, n in zip(websites, websites_names)}
+        address = _latex_escape(self.profile.get("address") or "")
+        phone = _latex_escape(self.profile.get("phone") or "")
+        email = _latex_escape(self.profile.get("email") or "")
+        links = [link for link in self.profile.get("links", []) if link.get("url")]
+        websites = {
+            link["url"]: _latex_escape(link.get("label") or link.get("kind") or link["url"])
+            for link in links
+        }
 
         tex = []
         tex.append(r"\documentclass[11pt]{article}")

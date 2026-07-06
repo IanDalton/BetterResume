@@ -4,15 +4,44 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 
 from api.config import PROFILE_PICS_BASE, PROFILE_EXTENSIONS
+from api.schemas import UserProfilePayload, ProfileLink
 from api.utils import (
     _validate_user_id,
     _detect_profile_extension,
     _resolve_profile_picture_path
 )
+from utils.db_storage import DBStorage
 from utils.logging_utils import set_user_context
 
 logger = logging.getLogger("betterresume.api.profile")
 router = APIRouter()
+
+
+@router.get("/profile/{user_id}", response_model=UserProfilePayload)
+async def get_profile(user_id: str):
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    storage = DBStorage()
+    fields = storage.get_user_profile(user_id) or {}
+    links = storage.list_profile_links(user_id)
+    return UserProfilePayload(
+        full_name=fields.get("full_name"),
+        email=fields.get("email"),
+        phone=fields.get("phone"),
+        address=fields.get("address"),
+        links=[ProfileLink(**link) for link in links],
+    )
+
+
+@router.put("/profile/{user_id}", response_model=UserProfilePayload)
+async def put_profile(user_id: str, payload: UserProfilePayload):
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    storage = DBStorage()
+    storage.upsert_user_profile(user_id, payload.full_name, payload.email, payload.phone, payload.address)
+    storage.replace_profile_links(user_id, [link.dict() for link in payload.links])
+    logger.info("Updated profile for user=%s (%d links)", user_id, len(payload.links))
+    return payload
 
 @router.post("/upload-profile-picture/{user_id}")
 async def upload_profile_picture(user_id: str, file: UploadFile = File(...)):

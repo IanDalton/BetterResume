@@ -171,6 +171,16 @@ def _save_resume_cache(out_dir: str, payload: dict) -> None:
 def _hash_text(value: Optional[str]) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
+def _hash_profile(profile: Optional[dict]) -> str:
+    """Hash a user's profile dict (name/email/phone/address/links).
+
+    Used to bust the render cache when personal info changes even though the
+    underlying LLM result (skills/experience) hasn't -- personal info lives
+    in its own table now, not the jobs CSV, so it isn't covered by csv_hash.
+    """
+    serialized = json.dumps(profile or {}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
 def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     payload = {
         "job_description_hash": job_hash,
@@ -181,7 +191,8 @@ def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 def _build_request_signature(
-    req, csv_hash: Optional[str], profile_hash: Optional[str], job_hash: str
+    req, csv_hash: Optional[str], profile_hash: Optional[str], job_hash: str,
+    profile_fields_hash: Optional[str] = None,
 ) -> str:
     result_signature = _build_result_signature(req, csv_hash, job_hash)
     payload = {
@@ -189,6 +200,7 @@ def _build_request_signature(
         "format": req.format.lower(),
         "include_profile_picture": bool(req.include_profile_picture),
         "profile_hash": profile_hash if req.include_profile_picture else None,
+        "profile_fields_hash": profile_fields_hash,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()

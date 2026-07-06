@@ -16,7 +16,7 @@ from models.education import Education
 from models.language import Language
 from models.resume import ResumeOutputFormat
 from utils.db_storage import DBStorage
-from utils.generation_context import build_generation_context, extract_languages, format_display_date
+from utils.generation_context import build_generation_context, format_display_date
 from utils.ingest import load_csv_documents
 from utils.logging_utils import set_user_context
 
@@ -100,8 +100,10 @@ class Bot:
         """Build the authoritative context block (current date, computed years of
         experience, spoken languages) from the user's stored records."""
         try:
-            records = DBStorage().get_job_experiences(self.user_id)
-            context = build_generation_context(records)
+            storage = DBStorage()
+            records = storage.get_job_experiences(self.user_id)
+            languages = [(l["name"], l.get("proficiency") or "") for l in storage.get_user_languages(self.user_id)]
+            context = build_generation_context(records, languages=languages)
             self.logger.info("Generation context built from %d stored records", len(records))
             return context
         except Exception as e:
@@ -109,10 +111,9 @@ class Bot:
             return None
 
     def _fetch_stored_languages(self, storage: DBStorage) -> list:
-        records = storage.get_job_experiences(self.user_id, type_filter="language")
         return [
-            Language(name=name, proficiency=proficiency)
-            for name, proficiency in extract_languages(records)
+            Language(name=l["name"], proficiency=l.get("proficiency") or "")
+            for l in storage.get_user_languages(self.user_id)
         ]
 
     def _inject_stored_languages(self, resume: ResumeOutputFormat) -> None:

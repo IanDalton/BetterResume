@@ -22,8 +22,8 @@ class WordResumeWriter(BaseWriter):
     to_pdf(output: str, src_path: str = None) -> str:
         Converts a Word document to a PDF file using the comtypes library.
     """ 
-    def __init__(self, template: str = None, csv_location: str = "jobs.csv", profile_image_path: Optional[str] = None):
-        super().__init__(template, csv_location, ".docx", profile_image_path=profile_image_path)
+    def __init__(self, template: str = None, csv_location: str = "jobs.csv", profile_image_path: Optional[str] = None, profile: Optional[Dict[str, Any]] = None):
+        super().__init__(template, csv_location, ".docx", profile_image_path=profile_image_path, profile=profile)
         self._logger = logging.getLogger("betterresume.writer")
 
 
@@ -38,12 +38,7 @@ class WordResumeWriter(BaseWriter):
         return file
 
     def generate_file(self,response:ResumeOutputFormat, output: str = None):
-        
-        data = self.data
-        
-
         # Create the Word document
-        
         document = Document()
 
         # Set reduced margins for the document
@@ -54,18 +49,6 @@ class WordResumeWriter(BaseWriter):
             section.left_margin = Cm(2)  # Set left margin to 1 cm
             section.right_margin = Cm(2)  # Set right margin to 1 cm
 
-        # Helper safe getters
-        def _safe_first(series, default: str = "") -> str:
-            try:
-                if series is None:
-                    return default
-                lst = series.to_list() if hasattr(series, "to_list") else list(series)
-                return lst[0] if lst else default
-            except Exception:
-                return default
-
-        
-        
         resume_section = response.resume_section
         
         profile_path = self.profile_image_path if getattr(self, "profile_image_path", None) else None
@@ -129,7 +112,7 @@ class WordResumeWriter(BaseWriter):
 
         # Heading (Name - Title)
         try:
-            name_txt = _safe_first(data[data['company'] == 'name']['description'], "")
+            name_txt = self.profile.get("full_name") or ""
             title_txt = resume_section.title
             heading_txt_parts = [p for p in [name_txt, title_txt] if p]
             if heading_txt_parts:
@@ -139,8 +122,8 @@ class WordResumeWriter(BaseWriter):
 
         # Address • Phone
         try:
-            address_txt = _safe_first(data[data['company'] == 'address']['description'], "")
-            phone_txt = _safe_first(data[data['company'] == 'phone']['description'], "")
+            address_txt = self.profile.get("address") or ""
+            phone_txt = self.profile.get("phone") or ""
             parts = [p for p in [address_txt, phone_txt] if p]
             if parts:
                 _add_paragraph(header_container, " • ".join(parts))
@@ -149,12 +132,8 @@ class WordResumeWriter(BaseWriter):
 
         # Email • Websites
         try:
-            email_txt = _safe_first(data[data['company'] == 'email']['description'], "")
-            websites = []
-            try:
-                websites = data[data["company"] == "website"]["description"].to_list()
-            except Exception:
-                websites = []
+            email_txt = self.profile.get("email") or ""
+            websites = [link.get("url", "") for link in self.profile.get("links", []) if link.get("url")]
             if email_txt or websites:
                 p = _add_paragraph(header_container, f"{email_txt}" + (" • " if email_txt and websites else ""))
                 if p:

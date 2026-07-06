@@ -25,6 +25,7 @@ class BaseWriter(ABC):
         csv_location: str = "jobs.csv",
         file_ending: str = None,
         profile_image_path: Optional[str] = None,
+        profile: Optional[Dict[str, Any]] = None,
     ):
         try:
             data = pd.read_csv(csv_location)
@@ -43,6 +44,10 @@ class BaseWriter(ABC):
         self.data = data
         self.file_ending = template.split(".")[-1] if template else file_ending
         self.profile_image_path = profile_image_path
+        # Personal info (name/email/phone/address/links) now lives in its own
+        # table (see utils/db_storage.py's user_profile/user_profile_links),
+        # not the jobs CSV -- passed in directly rather than filtered out of `data`.
+        self.profile = profile or {}
 
     @abstractmethod
     def write(self,response:dict, output: str = None,to_pdf:bool=False):
