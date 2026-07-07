@@ -1,5 +1,5 @@
 export * from './ProfileEditor';
-export * from './LinkedInImportDialog';
+export * from './ResumeImportDialog';
 export * from './PersonalInfoSection';
 export * from './EducationSection';
 export * from './ExperienceSection';

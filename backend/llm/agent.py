@@ -25,7 +25,11 @@ from pydantic_ai.models import Model
 
 from models.resume import ResumeOutputFormat
 from utils.file_io import load_prompt
-from utils.linkedin_import import LinkedInImportResult
+from utils.resume_import import (
+    ResumeImportResult,
+    entries_with_date_like_descriptions,
+    strip_date_like_descriptions,
+)
 
 logger = logging.getLogger("betterresume.agent")
 
@@ -36,7 +40,7 @@ RETRIES = 3
 
 JOB_PROMPT = load_prompt("job_prompt")
 TRANSLATION_PROMPT = load_prompt("translation_prompt")
-LINKEDIN_IMPORT_PROMPT = load_prompt("linkedin_import_prompt")
+RESUME_IMPORT_PROMPT = load_prompt("resume_import_prompt")
 
 # Older code/config used LangChain provider prefixes; map them onto pydantic-ai ones.
 _LEGACY_PROVIDER_MAP = {
@@ -105,9 +109,9 @@ translation_agent = Agent(
 )
 
 # No tools/deps needed: pure text-in, structured-out extraction.
-linkedin_import_agent = Agent(
-    output_type=LinkedInImportResult,
-    instructions=LINKEDIN_IMPORT_PROMPT,
+resume_import_agent = Agent(
+    output_type=ResumeImportResult,
+    instructions=RESUME_IMPORT_PROMPT,
     retries=RETRIES,
 )
 
@@ -190,6 +194,30 @@ async def ensure_retrieval(ctx: RunContext[ResumeDeps], output: ResumeOutputForm
     return output
 
 
+@resume_import_agent.output_validator
+async def ensure_real_descriptions(ctx: RunContext[None], output: ResumeImportResult) -> ResumeImportResult:
+    """Reject extractions where a description is just the entry's date-range/
+    duration line (a failure mode of smaller models -- the real bullets are in
+    the source text but the model copied the date line near the role title
+    instead). After the retries are spent, degrade gracefully: strip the
+    date-like lines and warn rather than failing the whole import."""
+    offenders = entries_with_date_like_descriptions(output)
+    if not offenders:
+        return output
+    if ctx.retry < RETRIES - 1:
+        labels = "; ".join(f"{e.role or '?'} at {e.company}" for e in offenders)
+        logger.info("Resume import rejected: date-like descriptions for %s (retry %d)", labels, ctx.retry)
+        raise ModelRetry(
+            "The `description` of these entries is the date range/duration line, which is wrong: "
+            f"{labels}. A description must be ONLY the descriptive bullet/summary text of the entry "
+            "in the source, copied verbatim. Dates go only in start_date/end_date; durations are "
+            "discarded. If an entry has no descriptive text in the source, set description to an "
+            "empty string -- never the dates."
+        )
+    logger.warning("Resume import: stripping date-like descriptions after retries for %d entries", len(offenders))
+    return strip_date_like_descriptions(output)
+
+
 def _log_usage(label: str, result) -> None:
     try:
         usage = result.usage
@@ -263,17 +291,17 @@ async def translate(
     return result.output
 
 
-async def extract_linkedin_profile(
+async def extract_resume_fields(
     text: str,
     *,
     model: Union[str, Model, None] = None,
-) -> LinkedInImportResult:
+) -> ResumeImportResult:
     """Structured extraction of profile/experience/education/language data
-    from a LinkedIn PDF export's cleaned text (see utils/linkedin_import.py)."""
+    from a resume PDF's cleaned text (see utils/resume_import.py)."""
     model = normalize_model_name(model)
-    logger.info("LinkedIn import extraction start; chars=%d model=%s", len(text or ""), model)
-    result = await linkedin_import_agent.run(
+    logger.info("Resume import extraction start; chars=%d model=%s", len(text or ""), model)
+    result = await resume_import_agent.run(
         text, model=model, model_settings=_model_settings(model)
     )
-    _log_usage("LinkedIn import extraction", result)
+    _log_usage("Resume import extraction", result)
     return result.output

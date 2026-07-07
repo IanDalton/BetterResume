@@ -2,14 +2,14 @@
 
 `normalize_month_year` is a small, testable, defense-in-depth net for
 callers whose upstream data is already roughly structured (e.g. an LLM
-instructed to emit DD/MM/YYYY directly, per prompts/linkedin_import_prompt.txt).
+instructed to emit DD/MM/YYYY directly, per prompts/resume_import_prompt.txt).
 It intentionally does not attempt to parse localized month names ("Jan",
-"enero", etc.) -- that's delegated to the LLM in the LinkedIn-import path,
+"enero", etc.) -- that's delegated to the LLM in the resume-import path,
 which handles locale variance far better than a regex table would.
 
 backend/api/routers/jobs.py has its own, separate, numeric-only `_norm_date`
 used for the manual entry-upload path; this module is not a refactor of
-that -- it exists specifically for the LinkedIn-import pipeline.
+that -- it exists specifically for the resume-import pipeline.
 """
 
 import re

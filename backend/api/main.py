@@ -12,7 +12,7 @@ if not os.environ.get("GOOGLE_API_KEY") and os.environ.get("GEMINI_API_KEY"):
 from utils.logging_utils import setup_logging, new_request_id, clear_request_id
 from utils.db_storage import DBStorage, init_db_pool, close_db_pool, init_async_db_pool, close_async_db_pool
 from utils.legacy_migration import backfill_personal_info_and_languages
-from api.routers import admin, health, jobs, languages, linkedin_import, profile, resume, users, donations
+from api.routers import admin, health, jobs, languages, profile, resume, resume_import, users, donations
 
 setup_logging()
 # Module logger (relies on configured handlers)
@@ -79,7 +79,7 @@ async def add_security_headers(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(jobs.router, prefix="/resume")
 app.include_router(languages.router, prefix="/resume")
-app.include_router(linkedin_import.router, prefix="/resume")
+app.include_router(resume_import.router, prefix="/resume")
 app.include_router(profile.router, prefix="/resume")
 app.include_router(resume.router, prefix="/resume")
 app.include_router(users.router, prefix="/resume")

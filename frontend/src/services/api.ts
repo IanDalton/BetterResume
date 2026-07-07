@@ -228,7 +228,7 @@ export async function uploadProfilePicture(userId: string, file: File) {
   return res.json();
 }
 
-export interface LinkedInImportProfile {
+export interface ResumeImportProfile {
   full_name?: string | null;
   headline?: string | null;
   summary?: string | null;
@@ -238,7 +238,7 @@ export interface LinkedInImportProfile {
   links: ProfileLink[];
 }
 
-export interface LinkedInImportEntry {
+export interface ResumeImportEntry {
   type: string;
   company: string;
   description: string;
@@ -248,23 +248,24 @@ export interface LinkedInImportEntry {
   end_date?: string | null;
 }
 
-export interface LinkedInImportResult {
-  profile: LinkedInImportProfile;
-  experience: LinkedInImportEntry[];
-  education: LinkedInImportEntry[];
+export interface ResumeImportResult {
+  profile: ResumeImportProfile;
+  experience: ResumeImportEntry[];
+  education: ResumeImportEntry[];
   skills: string[];
   languages: LanguageEntry[];
   warnings: string[];
 }
 
-/** Uploads a LinkedIn "Save to PDF" export for parsing. Nothing is saved
- * server-side by this call -- the result is for the user to review before
- * anything is merged into their profile/entries (see legacyMigration-style
- * adapter in services/linkedinImport.ts). */
-export async function importLinkedInPdf(userId: string, file: File): Promise<LinkedInImportResult> {
+/** Uploads a resume PDF (any resume/CV, including a LinkedIn "Save to PDF"
+ * export) for parsing. Nothing is saved server-side by this call -- the
+ * result is for the user to review before anything is merged into their
+ * profile/entries (see legacyMigration-style adapter in
+ * services/resumeImport.ts). */
+export async function importResumePdf(userId: string, file: File): Promise<ResumeImportResult> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_BASE}/import/linkedin/${encodeURIComponent(userId)}`, {
+  const res = await fetch(`${API_BASE}/import/resume/${encodeURIComponent(userId)}`, {
     method: 'POST',
     body: form,
   });

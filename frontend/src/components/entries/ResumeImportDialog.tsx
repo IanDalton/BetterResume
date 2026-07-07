@@ -2,8 +2,8 @@ import React, { useRef, useState } from 'react';
 import { LanguageEntry, ResumeEntry, UserProfile } from '../../types';
 import { Dialog, Button, Spinner } from '../ui';
 import { useToast } from '../ui/use-toast';
-import { importLinkedInPdf, LinkedInImportResult } from '../../services/api';
-import { linkedInEntryToResumeEntry } from '../../services/linkedinImport';
+import { importResumePdf, ResumeImportResult } from '../../services/api';
+import { importedEntryToResumeEntry } from '../../services/resumeImport';
 import { useI18n } from '../../i18n';
 
 interface Props {
@@ -19,7 +19,7 @@ type Step = 'upload' | 'parsing' | 'review';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
-export const LinkedInImportDialog: React.FC<Props> = ({
+export const ResumeImportDialog: React.FC<Props> = ({
   userId, currentProfile, onProfileChange, currentLanguages, onLanguagesChange, onAddEntry,
 }) => {
   const { t } = useI18n();
@@ -28,7 +28,7 @@ export const LinkedInImportDialog: React.FC<Props> = ({
   const [step, setStep] = useState<Step>('upload');
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<LinkedInImportResult | null>(null);
+  const [result, setResult] = useState<ResumeImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedProfileFields, setSelectedProfileFields] = useState<Record<string, boolean>>({});
@@ -52,12 +52,12 @@ export const LinkedInImportDialog: React.FC<Props> = ({
 
   const handleFile = async (file: File) => {
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    if (!isPdf) { setError(t('linkedin.import.dropzone')); return; }
+    if (!isPdf) { setError(t('resume.import.dropzone')); return; }
     if (file.size > MAX_BYTES) { setError('File too large (max 10 MB).'); return; }
     setStep('parsing');
     setError(null);
     try {
-      const parsed = await importLinkedInPdf(userId, file);
+      const parsed = await importResumePdf(userId, file);
       setResult(parsed);
       const fields: Record<string, boolean> = {};
       if (parsed.profile.full_name) fields.full_name = !currentProfile.fullName;
@@ -97,11 +97,11 @@ export const LinkedInImportDialog: React.FC<Props> = ({
     if (Object.keys(profileUpdates).length || newLinks.length) {
       onProfileChange({ ...currentProfile, ...profileUpdates, links: [...currentProfile.links, ...newLinks] });
     }
-    result.experience.filter((_, i) => selectedExperience[i]).forEach((e) => onAddEntry(linkedInEntryToResumeEntry(e)));
-    result.education.filter((_, i) => selectedEducation[i]).forEach((e) => onAddEntry(linkedInEntryToResumeEntry(e)));
+    result.experience.filter((_, i) => selectedExperience[i]).forEach((e) => onAddEntry(importedEntryToResumeEntry(e)));
+    result.education.filter((_, i) => selectedEducation[i]).forEach((e) => onAddEntry(importedEntryToResumeEntry(e)));
     const newLanguages = result.languages.filter((_, i) => selectedLanguages[i]);
     if (newLanguages.length) onLanguagesChange([...currentLanguages, ...newLanguages]);
-    toast({ title: t('linkedin.import.success'), variant: 'success' });
+    toast({ title: t('resume.import.success'), variant: 'success' });
     setOpen(false);
   };
 
@@ -114,28 +114,28 @@ export const LinkedInImportDialog: React.FC<Props> = ({
 
   return (
     <>
-      <Button variant="secondary" size="sm" onClick={openDialog}>{t('linkedin.import.button')}</Button>
+      <Button variant="secondary" size="sm" onClick={openDialog}>{t('resume.import.button')}</Button>
       <Dialog
         open={open}
         onOpenChange={setOpen}
-        title={t('linkedin.import.title')}
+        title={t('resume.import.title')}
         size="lg"
         footer={
           step === 'review' ? (
             <>
-              <Button variant="secondary" onClick={reset}>{t('linkedin.import.tryAgain')}</Button>
+              <Button variant="secondary" onClick={reset}>{t('resume.import.tryAgain')}</Button>
               <Button variant="primary" disabled={selectedCount === 0} onClick={confirmImport}>
-                {t('linkedin.import.confirm')} ({selectedCount})
+                {t('resume.import.confirm')} ({selectedCount})
               </Button>
             </>
           ) : (
-            <Button variant="secondary" onClick={() => setOpen(false)}>{t('linkedin.import.cancel')}</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>{t('resume.import.cancel')}</Button>
           )
         }
       >
         {step === 'upload' && (
           <div className="space-y-4">
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('linkedin.import.upload.hint')}</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('resume.import.upload.hint')}</p>
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -149,7 +149,7 @@ export const LinkedInImportDialog: React.FC<Props> = ({
               }
             >
               <span aria-hidden className="text-2xl">📄</span>
-              <span>{t('linkedin.import.dropzone')}</span>
+              <span>{t('resume.import.dropzone')}</span>
             </div>
             <input
               ref={fileInputRef}
@@ -165,13 +165,13 @@ export const LinkedInImportDialog: React.FC<Props> = ({
         {step === 'parsing' && (
           <div className="flex flex-col items-center gap-3 py-10 text-sm text-neutral-600 dark:text-neutral-400">
             <Spinner size="lg" />
-            <p>{t('linkedin.import.parsing')}</p>
+            <p>{t('resume.import.parsing')}</p>
           </div>
         )}
 
         {step === 'review' && result && (
           <div className="max-h-[60vh] space-y-6 overflow-y-auto pr-1">
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('linkedin.import.review.hint')}</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('resume.import.review.hint')}</p>
             {result.warnings.length > 0 && (
               <ul className="list-inside list-disc rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
                 {result.warnings.map((w, i) => <li key={i}>{w}</li>)}
@@ -179,7 +179,7 @@ export const LinkedInImportDialog: React.FC<Props> = ({
             )}
 
             <section>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{t('linkedin.import.section.profile')}</h4>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{t('resume.import.section.profile')}</h4>
               <div className="space-y-2 text-sm">
                 {result.profile.full_name && (
                   <label className="flex items-center gap-2">
@@ -220,24 +220,24 @@ export const LinkedInImportDialog: React.FC<Props> = ({
             </section>
 
             <ReviewEntrySection
-              title={t('linkedin.import.section.experience')}
+              title={t('resume.import.section.experience')}
               entries={result.experience}
               selected={selectedExperience}
               onToggle={(i) => toggle(selectedExperience, setSelectedExperience, i)}
-              emptyLabel={t('linkedin.import.none')}
+              emptyLabel={t('resume.import.none')}
             />
             <ReviewEntrySection
-              title={t('linkedin.import.section.education')}
+              title={t('resume.import.section.education')}
               entries={result.education}
               selected={selectedEducation}
               onToggle={(i) => toggle(selectedEducation, setSelectedEducation, i)}
-              emptyLabel={t('linkedin.import.none')}
+              emptyLabel={t('resume.import.none')}
             />
 
             <section>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{t('linkedin.import.section.languages')}</h4>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{t('resume.import.section.languages')}</h4>
               {result.languages.length === 0 ? (
-                <p className="text-sm text-neutral-500">{t('linkedin.import.none')}</p>
+                <p className="text-sm text-neutral-500">{t('resume.import.none')}</p>
               ) : (
                 <div className="space-y-2 text-sm">
                   {result.languages.map((l, i) => (

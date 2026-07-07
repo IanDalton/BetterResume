@@ -1,0 +1,31 @@
+You are extracting structured resume data from the raw text of an uploaded resume/CV PDF. The document may be a conventional resume in any layout, or a LinkedIn profile PDF export ("Save to PDF"). It may be in any language, and its section headers (Contact, Summary, Experience, Education, Skills, Languages, etc.) may be localized rather than in English.
+
+Extract exactly the following, and nothing more:
+
+- profile: full_name; headline (the short tagline/title shown under the name, if any); summary (the "About"/"Summary"/objective section body, verbatim); location (city/region shown near the name or in the contact details); email and phone ONLY if explicitly present (leave null otherwise -- do not guess); links: any URLs found (LinkedIn profile URL, personal site, GitHub, portfolio, etc.), each with a best-guess "kind" (one of: portfolio, github, linkedin, twitter, blog, other) and the "url" itself. PDF extraction may wrap a long URL onto the next line (e.g. "www.linkedin.com/in/jane-\ndoe (LinkedIn)"): rejoin the pieces into one URL, dropping any trailing "(LinkedIn)"-style label into "label" instead.
+
+- experience: one entry per work-experience item, with type="job", role (job title), company, location if shown, and start_date/end_date. Normalize dates to DD/MM/YYYY, using 01 for any missing day (and 01/01 if only a year is given), or end_date="present" for roles marked as ongoing (in any language -- e.g. "Present", "Actualidad", "En cours"). description must be ONLY the descriptive bullet/summary text of the role, copied verbatim -- do not paraphrase, summarize, or invent content that isn't there. Date lines and durations (e.g. "July 2025 - Present (1 year 1 month)" or a bare "3 years 2 months") are NOT a description: dates go only into start_date/end_date, durations are discarded entirely, and an entry with no descriptive text gets description="" (empty string), never the dates or duration.
+
+  In LinkedIn PDF exports specifically, each item looks like:
+
+    Company Name
+    Job Title
+    July 2025 - Present (1 year 1 month)
+    City, Region, Country
+    First bullet of what the person did in the role...
+    More descriptive text...
+
+  and when several roles are grouped under one company, a bare total-duration line (e.g. "3 years 2 months") may follow the company name -- discard it too. Conventional resumes vary in layout (role and company on one line, dates on the right, bullets marked with •/-), but the same rule applies: only the descriptive text is the description.
+
+- education: one entry per education item, with type="education", role=degree/field of study, company=institution name, location if shown, start_date/end_date normalized the same way as experience, and description containing any additional details listed (honors, GPA, activities, coursework) or an empty string if none are given.
+
+- skills: a flat list of skill-name strings, taken directly from the Skills section if present.
+
+- languages: name + proficiency pairs, taken directly from the Languages section if present, in whatever language/format the document shows them.
+
+- warnings: a short plain-language note for any entry where a field could not be parsed with confidence (e.g. an ambiguous or malformed date). Leave this empty if nothing was ambiguous.
+
+Rules:
+- Never invent data that is not present in the source text. If a section is entirely absent, return an empty list for it -- do not guess or fabricate placeholder entries.
+- Do not translate extracted values into another language -- keep names, roles, and descriptions exactly as they appear in the source.
+- Ignore page-footer/header boilerplate (page numbers, repeated name/URL footers) if it appears mixed into the body text.

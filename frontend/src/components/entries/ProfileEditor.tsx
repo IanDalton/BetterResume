@@ -5,7 +5,7 @@ import { PersonalInfoSection } from './PersonalInfoSection';
 import { EducationSection } from './EducationSection';
 import { ExperienceSection } from './ExperienceSection';
 import { LanguagesSection } from './LanguagesSection';
-import { LinkedInImportDialog } from './LinkedInImportDialog';
+import { ResumeImportDialog } from './ResumeImportDialog';
 import { SaveStatusIndicator, SaveStatus } from './SaveStatusIndicator';
 import { personalInfoSchema } from './validation';
 import { useI18n } from '../../i18n';
@@ -59,7 +59,7 @@ export const ProfileEditor: React.FC<ProfileEditorProps> = ({
           <Stepper steps={steps} currentStep={currentStep} progressLabel={progressLabel} />
         ) : <span />}
         <div className="ml-auto flex items-center gap-3">
-          <LinkedInImportDialog
+          <ResumeImportDialog
             userId={userId}
             currentProfile={profile}
             onProfileChange={onProfileChange}
