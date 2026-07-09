@@ -23,6 +23,9 @@ pandas
 comtypes
 pdflatex
 
+# LinkedIn PDF import
+pypdf
+
 # Payments
 stripe
 

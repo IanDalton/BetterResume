@@ -171,6 +171,16 @@ def _save_resume_cache(out_dir: str, payload: dict) -> None:
 def _hash_text(value: Optional[str]) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
+def _hash_profile(profile: Optional[dict]) -> str:
+    """Hash a user's profile dict (name/email/phone/address/links).
+
+    Used to bust the render cache when personal info changes even though the
+    underlying LLM result (skills/experience) hasn't -- personal info lives
+    in its own table now, not the jobs CSV, so it isn't covered by csv_hash.
+    """
+    serialized = json.dumps(profile or {}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
 def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     payload = {
         "job_description_hash": job_hash,
@@ -181,7 +191,8 @@ def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 def _build_request_signature(
-    req, csv_hash: Optional[str], profile_hash: Optional[str], job_hash: str
+    req, csv_hash: Optional[str], profile_hash: Optional[str], job_hash: str,
+    profile_fields_hash: Optional[str] = None,
 ) -> str:
     result_signature = _build_result_signature(req, csv_hash, job_hash)
     payload = {
@@ -189,6 +200,7 @@ def _build_request_signature(
         "format": req.format.lower(),
         "include_profile_picture": bool(req.include_profile_picture),
         "profile_hash": profile_hash if req.include_profile_picture else None,
+        "profile_fields_hash": profile_fields_hash,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -204,6 +216,14 @@ def _build_signed_files(user_id: str, fmt: str, out_dir: str) -> Dict[str, str]:
     if os.path.isfile(pdf_path):
         files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
     return files
+
+def get_profile_with_links(user_id: str) -> dict:
+    """Fetch a user's personal info + links as a single dict (the shape the
+    resume writers and profile endpoints share)."""
+    storage = DBStorage()
+    fields = storage.get_user_profile(user_id) or {}
+    links = storage.list_profile_links(user_id)
+    return {**fields, "links": links}
 
 def get_user_store(user_id: str) -> PGVectorStore:
     store = USER_STORES.get(user_id)

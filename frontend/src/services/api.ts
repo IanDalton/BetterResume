@@ -1,7 +1,45 @@
+import type { LanguageEntry, ProfileLink, UserProfile } from '../types';
+
 const API_BASE_RAW = import.meta.env.VITE_API_URL || 'http://localhost:8000/resume';
 const API_BASE = API_BASE_RAW.replace(/\/+$/, '').replace(/\/resume$/, '') + '/resume';
 
 export { API_BASE };
+
+async function _jsonOrThrow(res: Response, failureLabel: string) {
+  if (!res.ok) {
+    let message = `${failureLabel}: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch { }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function saveProfile(userId: string, profile: UserProfile): Promise<void> {
+  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      full_name: profile.fullName || null,
+      email: profile.email || null,
+      phone: profile.phone || null,
+      address: profile.address || null,
+      links: profile.links,
+    }),
+  });
+  await _jsonOrThrow(res, 'Failed to save profile');
+}
+
+export async function saveLanguages(userId: string, languages: LanguageEntry[]): Promise<void> {
+  const res = await fetch(`${API_BASE}/languages/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ languages }),
+  });
+  await _jsonOrThrow(res, 'Failed to save languages');
+}
 
 interface ResumeRequestPayload {
   job_description: string;
@@ -170,6 +208,50 @@ export async function uploadProfilePicture(userId: string, file: File) {
     throw new Error(message);
   }
   return res.json();
+}
+
+export interface ResumeImportProfile {
+  full_name?: string | null;
+  headline?: string | null;
+  summary?: string | null;
+  location?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  links: ProfileLink[];
+}
+
+export interface ResumeImportEntry {
+  type: string;
+  company: string;
+  description: string;
+  role?: string | null;
+  location?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+export interface ResumeImportResult {
+  profile: ResumeImportProfile;
+  experience: ResumeImportEntry[];
+  education: ResumeImportEntry[];
+  skills: string[];
+  languages: LanguageEntry[];
+  warnings: string[];
+}
+
+/** Uploads a resume PDF (any resume/CV, including a LinkedIn "Save to PDF"
+ * export) for parsing. Nothing is saved server-side by this call -- the
+ * result is for the user to review before anything is merged into their
+ * profile/entries (see legacyMigration-style adapter in
+ * services/resumeImport.ts). */
+export async function importResumePdf(userId: string, file: File): Promise<ResumeImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_BASE}/import/resume/${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: form,
+  });
+  return _jsonOrThrow(res, 'Import failed');
 }
 
 export async function resolveProfilePictureUrl(userId: string): Promise<string | null> {

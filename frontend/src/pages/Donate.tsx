@@ -10,9 +10,11 @@ import { useI18n } from '../i18n';
 import { authStateListener } from '../services/firebase';
 import { getStripe } from '../services/stripe';
 import { API_BASE } from '../services/api';
+import { Button, Input, useToast } from '../components/ui';
 
 export function Donate() {
   const { t } = useI18n();
+  const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientSecret, setClientSecret] = useState<string | null>(searchParams.get('client_secret'));
   const [stripePromise, setStripePromise] = useState<Promise<any> | null>(null);
@@ -49,7 +51,7 @@ export function Donate() {
 
   const handleDonateClick = async () => {
     if (!amount || amount < 1) {
-      alert(t('donate.error.amount'));
+      toast({ title: t('donate.error.amount'), variant: 'error' });
       return;
     }
     setIsLoading(true);
@@ -107,7 +109,7 @@ export function Donate() {
             <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">
               {t('donate.complete.title')}
             </h1>
-            <Link to="/donate" onClick={() => { setClientSecret(null); setSearchParams({}); }} className="text-sm text-blue-600 hover:underline mt-2 inline-block">
+            <Link to="/donate" onClick={() => { setClientSecret(null); setSearchParams({}); }} className="text-sm text-primary-600 hover:underline mt-2 inline-block">
               {t('donate.changeAmount')}
             </Link>
           </div>
@@ -167,7 +169,7 @@ export function Donate() {
               <button
                 onClick={() => handleReasonChange('support')}
                 className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${reason === 'support'
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
+                    ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
                     : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
                   }`}
               >
@@ -176,7 +178,7 @@ export function Donate() {
               <button
                 onClick={() => handleReasonChange('job')}
                 className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${reason === 'job'
-                    ? 'border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                    ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
                     : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
                   }`}
               >
@@ -186,11 +188,11 @@ export function Donate() {
           </div>
 
           {reason === 'job' && (
-            <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg border border-green-200 dark:border-green-800">
-              <h3 className="text-lg font-semibold text-green-800 dark:text-green-300 mb-2">
+            <div className="bg-primary-50 dark:bg-primary-900/20 p-4 rounded-lg border border-primary-200 dark:border-primary-800">
+              <h3 className="text-lg font-semibold text-primary-800 dark:text-primary-300 mb-2">
                 {t('donate.job.title')}
               </h3>
-              <p className="text-sm text-green-700 dark:text-green-400 mb-3">
+              <p className="text-sm text-primary-700 dark:text-primary-400 mb-3">
                 {t('donate.job.subtitle')}
               </p>
             </div>
@@ -206,7 +208,7 @@ export function Donate() {
                   key={val}
                   onClick={() => setAmount(val)}
                   className={`py-2 px-4 rounded-lg border ${amount === val
-                      ? 'bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-900/30 dark:border-blue-400 dark:text-blue-300'
+                      ? 'bg-primary-50 border-primary-500 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400 dark:text-primary-300'
                       : 'border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-700'
                     }`}
                 >
@@ -218,12 +220,12 @@ export function Donate() {
               <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                 <span className="text-neutral-900 dark:text-white sm:text-sm">$</span>
               </div>
-              <input
+              <Input
                 type="number"
                 name="amount"
                 id="amount"
                 min="1"
-                className="block w-full rounded-md border-neutral-300 pl-7 pr-12 focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white sm:text-sm py-3 font-semibold text-neutral-900"
+                className="block w-full pl-7 pr-12 py-3 font-semibold"
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
@@ -237,13 +239,14 @@ export function Donate() {
             </div>
           )}
 
-          <button
+          <Button
+            variant="primary"
             onClick={handleDonateClick}
-            disabled={isLoading}
-            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            loading={isLoading}
+            className="w-full"
           >
             {isLoading ? t('donate.processing') : `${t('donate.button')}${amount}`}
-          </button>
+          </Button>
 
           <div className="text-center">
             <Link to="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">

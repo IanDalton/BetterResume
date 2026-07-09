@@ -355,6 +355,53 @@ class DBStorage:
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
+
+                    cur.execute("ALTER TABLE job_experiences ADD COLUMN IF NOT EXISTS migrated_at TIMESTAMP;")
+
+                    # Matches get_unmigrated_legacy_rows' predicate so the
+                    # every-boot backfill check is an index lookup instead of a
+                    # full table scan (the index is near-empty once migrated).
+                    cur.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_job_experiences_legacy_unmigrated
+                        ON job_experiences (id)
+                        WHERE LOWER(TRIM(type)) IN ('info', 'language') AND migrated_at IS NULL;
+                    """)
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS user_profile (
+                          user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+                          full_name TEXT,
+                          email TEXT,
+                          phone TEXT,
+                          address TEXT,
+                          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS user_profile_links (
+                          id BIGSERIAL PRIMARY KEY,
+                          user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                          kind TEXT NOT NULL,
+                          label TEXT,
+                          url TEXT NOT NULL,
+                          sort_order INTEGER DEFAULT 0,
+                          source_job_experience_id BIGINT UNIQUE,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS user_languages (
+                          id BIGSERIAL PRIMARY KEY,
+                          user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                          name TEXT NOT NULL,
+                          proficiency TEXT,
+                          sort_order INTEGER DEFAULT 0,
+                          source_job_experience_id BIGINT UNIQUE,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
                     self.logger.info("Database schema initialized successfully")
         except Exception as e:
             self.logger.error("Failed to initialize database schema: %s", e)
@@ -515,6 +562,225 @@ class DBStorage:
         except Exception as e:
             self.logger.exception("Failed to get job experiences: %s", e)
             return []
+
+    def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve the dedicated profile row for a user, or None if never set."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT full_name, email, phone, address FROM user_profile WHERE user_id = %s",
+                        (user_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    return {"full_name": row[0], "email": row[1], "phone": row[2], "address": row[3]}
+        except Exception as e:
+            self.logger.exception("Failed to get user profile: %s", e)
+            return None
+
+    def upsert_user_profile(self, user_id: str, full_name: Optional[str], email: Optional[str],
+                             phone: Optional[str], address: Optional[str]):
+        """Insert or update the dedicated profile row for a user."""
+        try:
+            self._ensure_user(user_id)
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO user_profile (user_id, full_name, email, phone, address, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id)
+                        DO UPDATE SET full_name = EXCLUDED.full_name, email = EXCLUDED.email,
+                                      phone = EXCLUDED.phone, address = EXCLUDED.address,
+                                      updated_at = CURRENT_TIMESTAMP;
+                        """,
+                        (user_id, full_name, email, phone, address),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to upsert user profile: %s", e)
+            raise
+
+    def list_profile_links(self, user_id: str) -> List[Dict[str, Any]]:
+        """Retrieve a user's profile links (portfolio/github/linkedin/etc.), in order."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT kind, label, url FROM user_profile_links
+                        WHERE user_id = %s ORDER BY sort_order, id
+                        """,
+                        (user_id,),
+                    )
+                    return [{"kind": r[0], "label": r[1], "url": r[2]} for r in cur.fetchall()]
+        except Exception as e:
+            self.logger.exception("Failed to list profile links: %s", e)
+            return []
+
+    def replace_profile_links(self, user_id: str, links: List[Dict[str, Any]]):
+        """Replace all profile links for a user with the provided list."""
+        try:
+            self._ensure_user(user_id)
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM user_profile_links WHERE user_id = %s", (user_id,))
+                    for i, link in enumerate(links):
+                        cur.execute(
+                            """
+                            INSERT INTO user_profile_links (user_id, kind, label, url, sort_order)
+                            VALUES (%s, %s, %s, %s, %s)
+                            """,
+                            (user_id, link.get("kind", "other"), link.get("label"), link.get("url", ""), i),
+                        )
+            self.logger.info("Replaced %d profile links for user=%s", len(links), user_id)
+        except Exception as e:
+            self.logger.exception("Failed to replace profile links: %s", e)
+            raise
+
+    def get_user_languages(self, user_id: str) -> List[Dict[str, Any]]:
+        """Retrieve a user's languages, in order."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT name, proficiency FROM user_languages
+                        WHERE user_id = %s ORDER BY sort_order, id
+                        """,
+                        (user_id,),
+                    )
+                    return [{"name": r[0], "proficiency": r[1]} for r in cur.fetchall()]
+        except Exception as e:
+            self.logger.exception("Failed to get user languages: %s", e)
+            return []
+
+    def replace_user_languages(self, user_id: str, languages: List[Dict[str, Any]]):
+        """Replace all languages for a user with the provided list."""
+        try:
+            self._ensure_user(user_id)
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM user_languages WHERE user_id = %s", (user_id,))
+                    for i, lang in enumerate(languages):
+                        cur.execute(
+                            """
+                            INSERT INTO user_languages (user_id, name, proficiency, sort_order)
+                            VALUES (%s, %s, %s, %s)
+                            """,
+                            (user_id, lang.get("name", ""), lang.get("proficiency"), i),
+                        )
+            self.logger.info("Replaced %d languages for user=%s", len(languages), user_id)
+        except Exception as e:
+            self.logger.exception("Failed to replace user languages: %s", e)
+            raise
+
+    def upsert_profile_field_from_legacy(self, user_id: str, field: str, value: str):
+        """Set a single profile column, used by the legacy backfill (one field per legacy row)."""
+        assert field in ("full_name", "email", "phone", "address")
+        # No _ensure_user: the user_id comes from a job_experiences row, whose
+        # FK already guarantees the user exists (same for the other
+        # *_from_legacy helpers below).
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        INSERT INTO user_profile (user_id, {field}, updated_at)
+                        VALUES (%s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id)
+                        DO UPDATE SET {field} = EXCLUDED.{field}, updated_at = CURRENT_TIMESTAMP;
+                        """,
+                        (user_id, value),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to upsert profile field %s for user=%s: %s", field, user_id, e)
+            raise
+
+    def insert_profile_link_from_legacy(self, user_id: str, kind: str, label: Optional[str], url: str,
+                                         source_job_experience_id: int, sort_order: int = 0):
+        """Insert a profile link tied to its legacy source row; a no-op if already migrated."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO user_profile_links (user_id, kind, label, url, sort_order, source_job_experience_id)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (source_job_experience_id) DO NOTHING;
+                        """,
+                        (user_id, kind, label, url, sort_order, source_job_experience_id),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to insert legacy profile link for user=%s: %s", user_id, e)
+            raise
+
+    def insert_language_from_legacy(self, user_id: str, name: str, proficiency: Optional[str],
+                                     source_job_experience_id: int, sort_order: int = 0):
+        """Insert a language tied to its legacy source row; a no-op if already migrated."""
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO user_languages (user_id, name, proficiency, sort_order, source_job_experience_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (source_job_experience_id) DO NOTHING;
+                        """,
+                        (user_id, name, proficiency, sort_order, source_job_experience_id),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to insert legacy language for user=%s: %s", user_id, e)
+            raise
+
+    def get_unmigrated_legacy_rows(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Fetch legacy type='info'/'language' job_experiences rows not yet backfilled.
+
+        Never deletes source rows; callers mark them migrated once copied so
+        this can be safely rerun without double-processing.
+        """
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id, user_id, type, company, description, role, raw
+                        FROM job_experiences
+                        WHERE LOWER(TRIM(type)) IN ('info', 'language') AND migrated_at IS NULL
+                        ORDER BY id
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                    rows = cur.fetchall()
+                    return [
+                        {
+                            "id": r[0],
+                            "user_id": r[1],
+                            "type": r[2],
+                            "company": r[3],
+                            "description": r[4],
+                            "role": r[5],
+                            "raw": r[6] if isinstance(r[6], dict) else (json.loads(r[6]) if r[6] else {}),
+                        }
+                        for r in rows
+                    ]
+        except Exception as e:
+            self.logger.exception("Failed to fetch unmigrated legacy rows: %s", e)
+            return []
+
+    def mark_job_experience_migrated(self, row_id: int):
+        try:
+            with self._get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE job_experiences SET migrated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        (row_id,),
+                    )
+        except Exception as e:
+            self.logger.exception("Failed to mark job_experience %s migrated: %s", row_id, e)
+            raise
 
     def insert_resume_request(self, user_id: str, job_posting: str):
         """Insert a resume request row."""

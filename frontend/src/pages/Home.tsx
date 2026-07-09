@@ -1,27 +1,32 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl } from '../services';
-import { ResumeEntry } from '../types';
-import { EntryBuilder } from '../components/EntryBuilder';
+import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages } from '../services';
+import { EXPERIENCE_TYPES, LanguageEntry, ResumeEntry, UserProfile, emptyProfile } from '../types';
+import { ProfileEditor } from '../components/entries';
+import { SaveStatus } from '../components/entries/SaveStatusIndicator';
 import { Footer } from '../components/Footer';
-import { OnboardingWizard } from '../components/OnboardingWizard.js';
 import { AuthGate, UserBar } from '../components/AuthGate';
 import { FirstLoadGuide } from '../components/FirstLoadGuide';
 import { DonateToast } from '../components/DonateToast';
 import { AdBanner } from '../components/AdBanner';
 import { ProfilePictureUploader } from '../components/ProfilePictureUploader';
-import { logout, loadUserData, saveUserDataIfExperienceChanged } from '../services/firebase';
+import { logout, loadUserData, saveUserDataIfChanged } from '../services/firebase';
+import { splitLegacyEntries, hasLegacyEntries, loadLocalDataWithMigration } from '../services/legacyMigration';
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
+import { Dialog, Button } from '../components/ui';
+import { useToast } from '../components/ui/use-toast';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function Home() {
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
-  const [entries, setEntries] = useState<ResumeEntry[]>(() => {
-    try { const raw = localStorage.getItem('br.entries'); if (raw) return JSON.parse(raw); } catch {}
-    return [];
-  });
+  const { toast } = useToast();
+  const [profile, setProfile] = useState<UserProfile>(() => loadLocalDataWithMigration().profile);
+  const [languages, setLanguages] = useState<LanguageEntry[]>(() => loadLocalDataWithMigration().languages);
+  const [entries, setEntries] = useState<ResumeEntry[]>(() => loadLocalDataWithMigration().entries);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
   // Always generate a fresh guest UUID on each reload to avoid cross-session mixing
@@ -160,7 +165,49 @@ export function Home() {
 
   // Persist state to localStorage (debounced minimal by relying on React batch)
   useEffect(() => { try { localStorage.setItem('br.entries', JSON.stringify(entries)); } catch {} }, [entries]);
+  useEffect(() => { try { localStorage.setItem('br.profile', JSON.stringify(profile)); } catch {} }, [profile]);
+  useEffect(() => { try { localStorage.setItem('br.languages', JSON.stringify(languages)); } catch {} }, [languages]);
   // Hydrate from Firestore via AuthGate callback (legacy effect removed)
+
+  // Background autosave: profile/languages are cheap upserts (no pgvector
+  // re-ingest), so sync them to the backend shortly after any edit instead of
+  // only on explicit Upload/Generate -- closes the "navigate away mid-edit"
+  // data-loss gap. Work-experience entries still sync only via performUpload
+  // (that pipeline re-ingests pgvector documents and is too expensive to run
+  // on every keystroke).
+  const autosaveTimer = useRef<number | null>(null);
+  const lastSynced = useRef<{ userId: string; profile: string; languages: string } | null>(null);
+  useEffect(() => {
+    const profileJson = JSON.stringify(profile);
+    const languagesJson = JSON.stringify(languages);
+    if (!lastSynced.current) {
+      // First run is initial hydration, not an edit -- record it, don't save.
+      lastSynced.current = { userId, profile: profileJson, languages: languagesJson };
+      return;
+    }
+    if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
+    setSaveStatus('saving');
+    autosaveTimer.current = window.setTimeout(async () => {
+      try {
+        const prev = lastSynced.current!;
+        const userChanged = prev.userId !== userId;
+        const tasks: Promise<void>[] = [];
+        if (userChanged || prev.profile !== profileJson) tasks.push(saveProfile(userId, profile));
+        if (userChanged || prev.languages !== languagesJson) tasks.push(saveLanguages(userId, languages));
+        await Promise.all(tasks);
+        lastSynced.current = { userId, profile: profileJson, languages: languagesJson };
+        if (user?.mode === 'auth') {
+          saveUserDataIfChanged(user.uid, { entries, profile, languages, jobDescription, format }).catch(() => {});
+        }
+        setSaveStatus('saved');
+        window.setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 2000);
+      } catch {
+        setSaveStatus('error');
+      }
+    }, 1200);
+    return () => { if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, languages, userId]);
 
   // Removed continuous auto-save; persistence now triggered only on explicit upload.
   // no longer store userId directly; guests stored inside AuthGate logic
@@ -238,10 +285,16 @@ export function Home() {
     setUploading(true);
     try {
       const jobs = buildJobsFromEntries(entries);
-      const result = await uploadJobsJson(userId, jobs);
+      // Profile/languages must be flushed synchronously here (not left to the
+      // debounced autosave) so generation always reads fresh personal info.
+      const [result] = await Promise.all([
+        uploadJobsJson(userId, jobs),
+        saveProfile(userId, profile),
+        saveLanguages(userId, languages),
+      ]);
       if (user?.mode === 'auth') {
-        // Persist only if experience entries changed
-        saveUserDataIfExperienceChanged(user.uid, { entries, jobDescription, format }).catch(()=>{});
+        // Persist only if experience/profile/languages actually changed
+        saveUserDataIfChanged(user.uid, { entries, profile, languages, jobDescription, format }).catch(()=>{});
       }
       return result;
     } finally {
@@ -255,14 +308,16 @@ export function Home() {
       setLoading(true);
       const res: any = await performUpload();
       if (res?.status === 'unchanged') {
-        alert(t('upload.unchanged'));
+        toast({ title: t('upload.unchanged') });
       } else if (res?.rows_ingested != null) {
-        alert(`${t('upload.success.rows')} (${res.rows_ingested})`);
+        toast({ title: `${t('upload.success.rows')} (${res.rows_ingested})`, variant: 'success' });
       } else {
-        alert(t('upload.success'));
+        toast({ title: t('upload.success'), variant: 'success' });
       }
     } catch (e: any) {
-      setError(e.message || t('upload.failed'));
+      const message = e.message || t('upload.failed');
+      setError(message);
+      toast({ title: message, variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -390,11 +445,15 @@ export function Home() {
     if (!confirm(t('confirm.clear'))) return;
     try {
       localStorage.removeItem('br.entries');
+      localStorage.removeItem('br.profile');
+      localStorage.removeItem('br.languages');
     localStorage.removeItem('br.guestId');
       localStorage.removeItem('br.jobDescription');
       localStorage.removeItem('br.format');
     } catch {}
     setEntries([]);
+    setProfile({ ...emptyProfile });
+    setLanguages([]);
   setUser(null);
     setJobDescription('');
     setFormat('latex');
@@ -402,12 +461,9 @@ export function Home() {
     setError(null);
   };
 
-  // Determine if onboarding needed: require at least basic personal info (name and email, phone, address/website optional) then education/certification, then any experience.
-  const infoRoles = entries.filter(e=>e.type==='info').map(e=>e.role);
-  const hasPersonalBasics = infoRoles.includes('name') && infoRoles.includes('email');
-  const hasExperience = entries.some(e => !['info','education','certification'].includes(e.type));
-  // Keep wizard visible until basics + at least one experience entry are present (or previously completed)
-  const wizardNeeded = !onboardingComplete || !hasPersonalBasics || !hasExperience;
+  // Require basic personal info (name + email) and at least one experience entry.
+  const hasPersonalBasics = !!(profile.fullName && profile.email);
+  const hasExperience = entries.some(e => EXPERIENCE_TYPES.includes(e.type));
 
   // Compute progress percent from stages
   const stageOrder = ['csv_info','invoking_graph','graph_complete','parsed','translating','translated','writing_file','done'];
@@ -471,6 +527,8 @@ export function Home() {
   await logout();
   setUser(null);
   setEntries([]);
+  setProfile({ ...emptyProfile });
+  setLanguages([]);
   setJobDescription('');
   setFormat('latex');
 }} onSignInRequest={() => {
@@ -491,21 +549,24 @@ export function Home() {
               {availableLanguages.map(l => <option key={l.code} value={l.code}>{t(l.labelKey)}</option>)}
             </select>
           </label>
-          {/* <ThemeToggle /> */}
+          <ThemeToggle />
           </div>
         </div>
       </header>
-  {wizardNeeded ? (
-    <OnboardingWizard
-      entries={entries}
-      addEntry={addEntry}
-      updateEntry={updateEntry}
-      removeEntry={removeEntry}
-      onFinish={() => setOnboardingComplete(true)}
-    />
-  ) : (
-    <EntryBuilder entries={entries} onAdd={addEntry} onUpdate={updateEntry} onRemove={removeEntry} />
-  )}
+  <ProfileEditor
+    userId={userId}
+    profile={profile}
+    onProfileChange={setProfile}
+    languages={languages}
+    onLanguagesChange={setLanguages}
+    entries={entries}
+    onAddEntry={addEntry}
+    onUpdateEntry={updateEntry}
+    onRemoveEntry={removeEntry}
+    onboardingComplete={onboardingComplete}
+    onOnboardingComplete={() => setOnboardingComplete(true)}
+    saveStatus={saveStatus}
+  />
 
   <ProfilePictureUploader
     userId={userId}
@@ -568,78 +629,97 @@ export function Home() {
         </div>
       </section>
     )}
-    {showGenModal && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 dark:bg-black/70 backdrop-blur-sm">
-        <div className="w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-lg p-6 shadow-xl space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="relative w-10 h-10">
-              <div className="absolute inset-0 rounded-md bg-red-600 animate-pulse" />
-              <div className="absolute inset-1 rounded-sm bg-white dark:bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</div>
-            </div>
-            <div>
-              <h3 className="font-semibold">{t('modal.building.title')}</h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('modal.building.subtitle')}</p>
-            </div>
+    <Dialog
+      open={showGenModal}
+      onOpenChange={() => {}}
+      hideClose
+      title={
+        <span className="flex items-center gap-3">
+          <span className="relative w-10 h-10 shrink-0">
+            <span className="absolute inset-0 rounded-md bg-red-600 animate-pulse" />
+            <span className="absolute inset-1 rounded-sm bg-white dark:bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</span>
+          </span>
+          {t('modal.building.title')}
+        </span>
+      }
+      description={t('modal.building.subtitle')}
+    >
+      <div className="space-y-6">
+        <div>
+          <div className="h-2 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+            <div
+              className="h-full bg-[length:200%_100%] bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-progressMove"
+              style={{ width: percent + '%' }}
+            />
           </div>
-          <div>
-            <div className="h-2 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-[progressMove_2s_linear_infinite]" style={{width: percent+"%"}} />
-            </div>
-            <div className="flex justify-between mt-1 text-[11px] text-neutral-600 dark:text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
-          </div>
-          <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
-            {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
-          </div>
-          {geoLocation?.isArgentina && (
-          <div className="mt-2">
-            <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
-            <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
-              <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
-            </a>
-          </div>
-          )}
+          <div className="flex justify-between mt-1 text-[11px] text-neutral-600 dark:text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
         </div>
+        <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
+          {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
+        </div>
+        {geoLocation?.isArgentina && (
+        <div className="mt-2">
+          <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
+          <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
+            <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
+          </a>
+        </div>
+        )}
       </div>
-    )}
+    </Dialog>
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
   <DonateToast 
     open={showDonateToast} 
     onClose={()=>{ try { localStorage.setItem('br.toastDonateLastShown', String(Date.now())); localStorage.setItem('br.toastDonateGenCount','0'); } catch {} setShowDonateToast(false); }} 
     onDonateClick={!geoLocation || !geoLocation.isArgentina ? () => { navigate('/donate'); setShowDonateToast(false); } : undefined}
   />
-    {showDonate && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-        <div className="w-full max-w-md bg-neutral-900 border border-red-700/50 rounded-xl p-6 shadow-2xl space-y-5 relative">
-          <button onClick={()=>setShowDonate(false)} className="absolute top-2 right-2 text-neutral-500 hover:text-neutral-300 text-xs">✕</button>
-          <h3 className="text-xl font-semibold tracking-tight">{t('donate.title')}</h3>
-          <p className="text-sm text-neutral-400 leading-relaxed">{t('donate.body')}</p>
-          <div className="flex gap-3 flex-wrap">
-            {!geoLocation || !geoLocation.isArgentina ? (
-              <button onClick={() => { navigate('/donate'); setShowDonate(false); }} className="btn-primary">{t('donate.cta')}</button>
-            ) : (
-              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" className="btn-primary">{t('donate.cta')}</a>
-            )}
-            <button onClick={()=>setShowDonate(false)} className="btn-secondary">{t('donate.later')}</button>
-          </div>
-          <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
-        </div>
-      </div>
-    )}
+    <Dialog
+      open={showDonate}
+      onOpenChange={setShowDonate}
+      title={t('donate.title')}
+      description={t('donate.body')}
+      footer={
+        <>
+          {!geoLocation || !geoLocation.isArgentina ? (
+            <Button variant="primary" onClick={() => { navigate('/donate'); setShowDonate(false); }}>{t('donate.cta')}</Button>
+          ) : (
+            <Button asChild variant="primary">
+              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer">{t('donate.cta')}</a>
+            </Button>
+          )}
+          <Button variant="secondary" onClick={()=>setShowDonate(false)}>{t('donate.later')}</Button>
+        </>
+      }
+    >
+      <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
+    </Dialog>
   <AuthGate forceOpenSignal={authGateOpenSignal} onResolved={useCallback((u, data) => {
       setUser(u);
       if (data) {
-        if (Array.isArray(data.entries)) {
-          setEntries(data.entries as any);
-          // Evaluate onboarding completion based on loaded entries (skip wizard if already satisfied)
-          try {
-            const loaded = data.entries as ResumeEntry[];
-            const roles = loaded.filter(e=>e.type==='info').map(e=>e.role);
-            const hasPersonal = roles.includes('name') && roles.includes('email');
-            if (hasPersonal) {
-              setOnboardingComplete(true);
-            }
-          } catch {}
+        let nextProfile: UserProfile = emptyProfile;
+        if (Array.isArray(data.entries) && hasLegacyEntries(data.entries)) {
+          // Pre-migration Firestore doc: split the mixed entries array once,
+          // then immediately push the cleaned shape back so this device
+          // stops re-splitting on every future load.
+          const split = splitLegacyEntries(data.entries);
+          nextProfile = { ...emptyProfile, ...(data.profile || {}), ...split.profile };
+          const nextLanguages = data.languages && data.languages.length ? data.languages : split.languages;
+          setProfile(nextProfile);
+          setLanguages(nextLanguages);
+          setEntries(split.entries);
+          saveUserDataIfChanged(u.uid, {
+            entries: split.entries, profile: nextProfile, languages: nextLanguages,
+            jobDescription: data.jobDescription, format: data.format,
+          }).catch(() => {});
+        } else {
+          if (Array.isArray(data.entries)) setEntries(data.entries as ResumeEntry[]);
+          if (data.profile) {
+            nextProfile = { ...emptyProfile, ...data.profile };
+            setProfile(nextProfile);
+          }
+          if (data.languages) setLanguages(data.languages);
         }
+        if (nextProfile.fullName && nextProfile.email) setOnboardingComplete(true);
         if (data.jobDescription) setJobDescription(data.jobDescription);
         if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
       }

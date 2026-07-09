@@ -186,3 +186,20 @@ def test_context_without_work_history_omits_experience_claim():
     ctx = build_generation_context([], today=TODAY)
     assert "total professional experience" not in ctx
     assert "06/2026" in ctx
+
+
+def test_context_prefers_explicit_languages_over_records():
+    """languages= (from the dedicated user_languages table) takes priority
+    over any type='language' rows still present in records (e.g. pre-migration
+    data that hasn't been marked migrated_at yet)."""
+    records = [{"type": "language", "role": "Legacy", "description": "B1"}]
+    ctx = build_generation_context(records, today=TODAY, languages=[("French", "C1")])
+    assert "French — C1" in ctx
+    assert "Legacy" not in ctx
+
+
+def test_context_explicit_empty_languages_says_omit_even_with_legacy_records():
+    records = [{"type": "language", "role": "Legacy", "description": "B1"}]
+    ctx = build_generation_context(records, today=TODAY, languages=[])
+    assert "No spoken-language data" in ctx
+    assert "Legacy" not in ctx

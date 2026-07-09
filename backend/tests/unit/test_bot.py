@@ -53,8 +53,13 @@ async def test_generate_resume_non_english_triggers_translation(sample_resume_ou
     translate.assert_awaited_once()
 
 
-def _storage_with_records(records):
-    """MagicMock DBStorage whose get_job_experiences honors type_filter like the real one."""
+def _storage_with_records(records, languages=None):
+    """MagicMock DBStorage whose get_job_experiences honors type_filter like the real one.
+
+    `languages` mocks the dedicated user_languages table (see
+    utils/db_storage.py) as a list of {"name", "proficiency"} dicts --
+    languages no longer live in job_experiences rows.
+    """
     storage = MagicMock()
 
     def get_job_experiences(user_id, type_filter=None):
@@ -63,6 +68,7 @@ def _storage_with_records(records):
         return [r for r in records if r.get("type") == type_filter]
 
     storage.get_job_experiences.side_effect = get_job_experiences
+    storage.get_user_languages.return_value = languages or []
     return storage
 
 
@@ -93,9 +99,9 @@ async def test_generate_resume_progress_yields_stages_and_merges_education(sampl
 async def test_generate_resume_progress_injects_stored_languages(sample_resume_output):
     bot = Bot(user_id="u1", auto_ingest=False)
 
-    fake_storage = _storage_with_records([
-        {"type": "language", "role": "English", "description": "Full professional proficiency (C2)"},
-        {"type": "language", "role": "Spanish", "description": "Native"},
+    fake_storage = _storage_with_records([], languages=[
+        {"name": "English", "proficiency": "Full professional proficiency (C2)"},
+        {"name": "Spanish", "proficiency": "Native"},
     ])
 
     events = []
@@ -136,8 +142,8 @@ async def test_stored_languages_injected_before_translation(sample_resume_output
     """Languages must be injected pre-translation so the translator localizes them."""
     bot = Bot(user_id="u1", auto_ingest=False)
 
-    fake_storage = _storage_with_records([
-        {"type": "language", "role": "English", "description": "Full professional proficiency (C2)"},
+    fake_storage = _storage_with_records([], languages=[
+        {"name": "English", "proficiency": "Full professional proficiency (C2)"},
     ])
 
     with fake_agent(
@@ -157,7 +163,8 @@ async def test_generate_resume_passes_authoritative_context_to_agent(sample_resu
 
     fake_storage = _storage_with_records([
         {"type": "job", "company": "Acme", "start_date": "01/01/2024", "end_date": "present"},
-        {"type": "language", "role": "English", "description": "Full professional proficiency (C2)"},
+    ], languages=[
+        {"name": "English", "proficiency": "Full professional proficiency (C2)"},
     ])
 
     with fake_agent(_resume(sample_resume_output, "en")) as (generate, _), \
@@ -185,8 +192,7 @@ async def test_generate_resume_survives_context_failure(sample_resume_output):
 async def test_generate_resume_progress_translates_non_english(sample_resume_output):
     bot = Bot(user_id="u1", auto_ingest=False)
 
-    fake_storage = MagicMock()
-    fake_storage.get_job_experiences.return_value = []
+    fake_storage = _storage_with_records([])
 
     events = []
     with fake_agent(

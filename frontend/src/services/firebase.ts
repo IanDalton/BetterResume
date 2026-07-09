@@ -55,7 +55,9 @@ export function getDb() {
 }
 
 export interface UserDataDoc {
-  entries: any[]; // ResumeEntry-like objects
+  entries: any[]; // ResumeEntry-like objects (work/education only, post-split)
+  profile?: any; // UserProfile
+  languages?: any[]; // LanguageEntry[]
   jobDescription?: string;
   format?: string; // 'latex' | 'word'
   updatedAt?: any;
@@ -73,10 +75,12 @@ export async function saveUserData(uid: string, data: Partial<UserDataDoc>) {
   await setDoc(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
 }
 
-// Extract only "experience" style entries (exclude purely personal info & optionally education/certification)
+// Entries are already work/education-only post-split (personal info and
+// languages live in their own UserDataDoc fields), but stay defensive against
+// any pre-migration data that slipped through with legacy type='info' rows.
 function extractExperience(entries: any[] | undefined) {
   if (!Array.isArray(entries)) return [] as any[];
-  return entries.filter(e => e && typeof e === 'object' && !['info'].includes(e.type));
+  return entries.filter(e => e && typeof e === 'object' && !['info', 'language'].includes(e.type));
 }
 
 function normalizeExperience(entries: any[]) {
@@ -96,7 +100,11 @@ function normalizeExperience(entries: any[]) {
     .sort((a,b)=> key(a).localeCompare(key(b)));
 }
 
-export async function saveUserDataIfExperienceChanged(uid: string, data: Partial<UserDataDoc>): Promise<{updated:boolean; reason:string}> {
+/** Save only if entries, profile, or languages actually changed vs. the stored doc.
+ * Guards against writing on every jobDescription keystroke, while still
+ * persisting profile-only or languages-only edits (a personal-info change
+ * with no experience change used to be silently dropped here). */
+export async function saveUserDataIfChanged(uid: string, data: Partial<UserDataDoc>): Promise<{updated:boolean; reason:string}> {
   try {
     const ref = doc(getDb(), 'users', uid);
     const snap = await getDoc(ref);
@@ -107,12 +115,14 @@ export async function saveUserDataIfExperienceChanged(uid: string, data: Partial
     const prev = snap.data() as UserDataDoc;
     const prevNorm = normalizeExperience(extractExperience(prev.entries));
     const nextNorm = normalizeExperience(extractExperience(data.entries));
-    const same = JSON.stringify(prevNorm) === JSON.stringify(nextNorm);
-    if (same) {
-      return { updated: false, reason: 'experience-unchanged' };
+    const sameEntries = JSON.stringify(prevNorm) === JSON.stringify(nextNorm);
+    const sameProfile = JSON.stringify(prev.profile || null) === JSON.stringify(data.profile || null);
+    const sameLanguages = JSON.stringify(prev.languages || []) === JSON.stringify(data.languages || []);
+    if (sameEntries && sameProfile && sameLanguages) {
+      return { updated: false, reason: 'unchanged' };
     }
     await setDoc(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-    return { updated: true, reason: 'experience-changed' };
+    return { updated: true, reason: 'changed' };
   } catch (e:any) {
     // Fallback: attempt normal save to avoid data loss if comparison failed
     try { await saveUserData(uid, data); return { updated: true, reason: 'fallback-error-compare' }; } catch {}

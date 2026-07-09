@@ -159,8 +159,16 @@ def extract_languages(records: List[dict]) -> List[Tuple[str, str]]:
     return languages
 
 
-def build_generation_context(records: List[dict], today: Optional[date] = None) -> str:
-    """Render the authoritative context block appended to the generation prompt."""
+def build_generation_context(
+    records: List[dict], today: Optional[date] = None, languages: Optional[List[Tuple[str, str]]] = None
+) -> str:
+    """Render the authoritative context block appended to the generation prompt.
+
+    `languages` now normally comes from the dedicated user_languages table
+    (see bot.py's _fetch_stored_languages) rather than job_experiences rows.
+    If omitted, falls back to extracting type='language' rows from `records`
+    for backward compatibility with older/pre-migration data and callers.
+    """
     today = today or date.today()
     lines = [
         "AUTHORITATIVE USER CONTEXT (computed from the user's stored data; the resume MUST be consistent with it):",
@@ -190,7 +198,8 @@ def build_generation_context(records: List[dict], today: Optional[date] = None) 
             "description. Keep full-time jobs as their own separate entries."
         )
 
-    languages = extract_languages(records)
+    if languages is None:
+        languages = extract_languages(records)
     if languages:
         rendered = "; ".join(f"{name} — {prof}" if prof else name for name, prof in languages)
         lines.append(
