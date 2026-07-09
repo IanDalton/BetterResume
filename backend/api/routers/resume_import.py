@@ -1,12 +1,12 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from api.config import IMPORT_PDF_MAX_BYTES
-from api.schemas import LanguageRecord, ResumeImportEntry, ResumeImportProfile, ResumeImportResponse
 from api.utils import _validate_user_id
 from utils.db_storage import DBStorage
-from utils.resume_import import ResumePdfEmptyError, parse_resume_pdf
+from utils.resume_import import ResumeImportResult, ResumePdfEmptyError, parse_resume_pdf
 from utils.logging_utils import set_user_context
 
 logger = logging.getLogger("betterresume.api.resume_import")
@@ -20,7 +20,7 @@ def _is_pdf(file: UploadFile) -> bool:
     return (file.filename or "").lower().endswith(".pdf")
 
 
-@router.post("/import/resume/{user_id}", response_model=ResumeImportResponse)
+@router.post("/import/resume/{user_id}", response_model=ResumeImportResult)
 async def import_resume_pdf(user_id: str, file: UploadFile = File(...)):
     """Parse an uploaded resume PDF (any resume/CV, including a LinkedIn
     "Save to PDF" export) and return structured data for the user to review --
@@ -39,9 +39,11 @@ async def import_resume_pdf(user_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="PDF too large (max 10 MB)")
 
     # Best-effort audit/re-parse copy; never fail the request over this.
+    # Off-loop: the sync DB write would otherwise block other requests.
     try:
         storage = DBStorage()
-        storage.save_file(
+        await asyncio.to_thread(
+            storage.save_file,
             user_id=user_id,
             file_type="resume_import_pdf_raw",
             content=content,
@@ -69,11 +71,4 @@ async def import_resume_pdf(user_id: str, file: UploadFile = File(...)):
             detail="Could not parse this file right now. You can still add your experience manually.",
         ) from exc
 
-    return ResumeImportResponse(
-        profile=ResumeImportProfile(**result.profile.model_dump()),
-        experience=[ResumeImportEntry(**e.model_dump()) for e in result.experience],
-        education=[ResumeImportEntry(**e.model_dump()) for e in result.education],
-        skills=result.skills,
-        languages=[LanguageRecord(**l.model_dump()) for l in result.languages],
-        warnings=result.warnings,
-    )
+    return result

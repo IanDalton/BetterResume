@@ -47,7 +47,13 @@ class BaseWriter(ABC):
         # Personal info (name/email/phone/address/links) now lives in its own
         # table (see utils/db_storage.py's user_profile/user_profile_links),
         # not the jobs CSV -- passed in directly rather than filtered out of `data`.
-        self.profile = profile or {}
+        # Normalized here once so format writers can rely on the four field
+        # keys being present ("" when unset) and links having non-empty URLs.
+        profile = dict(profile or {})
+        for key in ("full_name", "email", "phone", "address"):
+            profile[key] = profile.get(key) or ""
+        profile["links"] = [link for link in (profile.get("links") or []) if link.get("url")]
+        self.profile = profile
 
     @abstractmethod
     def write(self,response:dict, output: str = None,to_pdf:bool=False):

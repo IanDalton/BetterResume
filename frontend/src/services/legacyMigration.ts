@@ -1,6 +1,5 @@
+import { SITE_KINDS, emptyProfile } from '../types';
 import type { LanguageEntry, ProfileLink, ProfileLinkKind, ResumeEntry, UserProfile } from '../types';
-
-const SITE_KINDS: ProfileLinkKind[] = ['portfolio', 'github', 'linkedin', 'twitter', 'blog', 'other'];
 
 /**
  * Splits a legacy mixed `entries` array (the old encoding, where personal info
@@ -57,4 +56,36 @@ export function splitLegacyEntries(raw: any[]): { profile: Partial<UserProfile>;
 /** True if `raw` contains any legacy type='info'/'language' rows needing a split. */
 export function hasLegacyEntries(raw: any[]): boolean {
   return Array.isArray(raw) && raw.some(e => e && (e.type === 'info' || e.type === 'language'));
+}
+
+// Loads and, if needed, one-time-splits legacy localStorage data (mixed
+// personal-info/language rows inside br.entries) into the new dedicated
+// br.profile/br.languages/br.entries keys. Cached at module scope so multiple
+// callers (e.g. lazy useState initializers) don't each redo the same parse.
+let _localData: { profile: UserProfile; languages: LanguageEntry[]; entries: ResumeEntry[] } | null = null;
+export function loadLocalDataWithMigration() {
+  if (_localData) return _localData;
+  let profile: UserProfile = { ...emptyProfile };
+  let languages: LanguageEntry[] = [];
+  let entries: ResumeEntry[] = [];
+  try {
+    const rawEntries = JSON.parse(localStorage.getItem('br.entries') || '[]');
+    if (hasLegacyEntries(rawEntries)) {
+      const split = splitLegacyEntries(rawEntries);
+      profile = { ...emptyProfile, ...split.profile };
+      languages = split.languages;
+      entries = split.entries;
+      try {
+        localStorage.setItem('br.profile', JSON.stringify(profile));
+        localStorage.setItem('br.languages', JSON.stringify(languages));
+        localStorage.setItem('br.entries', JSON.stringify(entries));
+      } catch {}
+    } else {
+      entries = Array.isArray(rawEntries) ? rawEntries : [];
+      try { const p = localStorage.getItem('br.profile'); if (p) profile = { ...emptyProfile, ...JSON.parse(p) }; } catch {}
+      try { const l = localStorage.getItem('br.languages'); if (l) languages = JSON.parse(l); } catch {}
+    }
+  } catch {}
+  _localData = { profile, languages, entries };
+  return _localData;
 }

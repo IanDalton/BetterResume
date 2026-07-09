@@ -217,6 +217,14 @@ def _build_signed_files(user_id: str, fmt: str, out_dir: str) -> Dict[str, str]:
         files["pdf"] = make_signed_download_path(user_id, "resume.pdf")
     return files
 
+def get_profile_with_links(user_id: str) -> dict:
+    """Fetch a user's personal info + links as a single dict (the shape the
+    resume writers and profile endpoints share)."""
+    storage = DBStorage()
+    fields = storage.get_user_profile(user_id) or {}
+    links = storage.list_profile_links(user_id)
+    return {**fields, "links": links}
+
 def get_user_store(user_id: str) -> PGVectorStore:
     store = USER_STORES.get(user_id)
     if store is None:

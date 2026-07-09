@@ -56,6 +56,9 @@ class Bot:
         )
 
         self._auto_ingest_task = None
+        # Language rows cached by _fetch_generation_context so
+        # _inject_stored_languages doesn't re-query the same data.
+        self._stored_language_rows = None
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             self._start_auto_ingest(jobs_csv)
 
@@ -102,7 +105,8 @@ class Bot:
         try:
             storage = DBStorage()
             records = storage.get_job_experiences(self.user_id)
-            languages = [(l["name"], l.get("proficiency") or "") for l in storage.get_user_languages(self.user_id)]
+            self._stored_language_rows = storage.get_user_languages(self.user_id)
+            languages = [(l["name"], l.get("proficiency") or "") for l in self._stored_language_rows]
             context = build_generation_context(records, languages=languages)
             self.logger.info("Generation context built from %d stored records", len(records))
             return context
@@ -110,11 +114,11 @@ class Bot:
             self.logger.warning("Could not build generation context: %s", e)
             return None
 
-    def _fetch_stored_languages(self, storage: DBStorage) -> list:
-        return [
-            Language(name=l["name"], proficiency=l.get("proficiency") or "")
-            for l in storage.get_user_languages(self.user_id)
-        ]
+    def _fetch_stored_languages(self) -> list:
+        rows = self._stored_language_rows
+        if rows is None:
+            rows = DBStorage().get_user_languages(self.user_id)
+        return [Language(name=l["name"], proficiency=l.get("proficiency") or "") for l in rows]
 
     def _inject_stored_languages(self, resume: ResumeOutputFormat) -> None:
         """Fallback: if the model omitted the languages section despite the context
@@ -124,7 +128,7 @@ class Bot:
         if resume.resume_section.languages:
             return
         try:
-            stored_languages = self._fetch_stored_languages(DBStorage())
+            stored_languages = self._fetch_stored_languages()
             if stored_languages:
                 resume.resume_section.languages = stored_languages
                 self.logger.info("Injected %d stored languages (model omitted them)", len(stored_languages))

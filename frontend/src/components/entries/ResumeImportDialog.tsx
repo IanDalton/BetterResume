@@ -19,6 +19,16 @@ type Step = 'upload' | 'parsing' | 'review';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
+interface Selection {
+  profile: Record<string, boolean>;
+  links: boolean[];
+  experience: boolean[];
+  education: boolean[];
+  languages: boolean[];
+}
+
+const EMPTY_SELECTION: Selection = { profile: {}, links: [], experience: [], education: [], languages: [] };
+
 export const ResumeImportDialog: React.FC<Props> = ({
   userId, currentProfile, onProfileChange, currentLanguages, onLanguagesChange, onAddEntry,
 }) => {
@@ -31,21 +41,13 @@ export const ResumeImportDialog: React.FC<Props> = ({
   const [result, setResult] = useState<ResumeImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedProfileFields, setSelectedProfileFields] = useState<Record<string, boolean>>({});
-  const [selectedLinks, setSelectedLinks] = useState<boolean[]>([]);
-  const [selectedExperience, setSelectedExperience] = useState<boolean[]>([]);
-  const [selectedEducation, setSelectedEducation] = useState<boolean[]>([]);
-  const [selectedLanguages, setSelectedLanguages] = useState<boolean[]>([]);
+  const [selected, setSelected] = useState<Selection>(EMPTY_SELECTION);
 
   const reset = () => {
     setStep('upload');
     setError(null);
     setResult(null);
-    setSelectedProfileFields({});
-    setSelectedLinks([]);
-    setSelectedExperience([]);
-    setSelectedEducation([]);
-    setSelectedLanguages([]);
+    setSelected(EMPTY_SELECTION);
   };
 
   const openDialog = () => { reset(); setOpen(true); };
@@ -64,11 +66,13 @@ export const ResumeImportDialog: React.FC<Props> = ({
       if (parsed.profile.email) fields.email = !currentProfile.email;
       if (parsed.profile.phone) fields.phone = !currentProfile.phone;
       if (parsed.profile.location) fields.address = !currentProfile.address;
-      setSelectedProfileFields(fields);
-      setSelectedLinks(parsed.profile.links.map(() => true));
-      setSelectedExperience(parsed.experience.map(() => true));
-      setSelectedEducation(parsed.education.map(() => true));
-      setSelectedLanguages(parsed.languages.map(() => true));
+      setSelected({
+        profile: fields,
+        links: parsed.profile.links.map(() => true),
+        experience: parsed.experience.map(() => true),
+        education: parsed.education.map(() => true),
+        languages: parsed.languages.map(() => true),
+      });
       setStep('review');
     } catch (e: any) {
       setError(e.message || 'Import failed');
@@ -83,34 +87,36 @@ export const ResumeImportDialog: React.FC<Props> = ({
     if (file) handleFile(file);
   };
 
-  const toggle = (arr: boolean[], setArr: (v: boolean[]) => void, i: number) =>
-    setArr(arr.map((v, idx) => (idx === i ? !v : v)));
+  const toggleAt = (section: 'links' | 'experience' | 'education' | 'languages', i: number) =>
+    setSelected((s) => ({ ...s, [section]: s[section].map((v, idx) => (idx === i ? !v : v)) }));
+  const toggleProfileField = (key: string) =>
+    setSelected((s) => ({ ...s, profile: { ...s.profile, [key]: !s.profile[key] } }));
 
   const confirmImport = () => {
     if (!result) return;
     const profileUpdates: Partial<UserProfile> = {};
-    if (selectedProfileFields.full_name && result.profile.full_name) profileUpdates.fullName = result.profile.full_name;
-    if (selectedProfileFields.email && result.profile.email) profileUpdates.email = result.profile.email;
-    if (selectedProfileFields.phone && result.profile.phone) profileUpdates.phone = result.profile.phone;
-    if (selectedProfileFields.address && result.profile.location) profileUpdates.address = result.profile.location;
-    const newLinks = result.profile.links.filter((_, i) => selectedLinks[i]);
+    if (selected.profile.full_name && result.profile.full_name) profileUpdates.fullName = result.profile.full_name;
+    if (selected.profile.email && result.profile.email) profileUpdates.email = result.profile.email;
+    if (selected.profile.phone && result.profile.phone) profileUpdates.phone = result.profile.phone;
+    if (selected.profile.address && result.profile.location) profileUpdates.address = result.profile.location;
+    const newLinks = result.profile.links.filter((_, i) => selected.links[i]);
     if (Object.keys(profileUpdates).length || newLinks.length) {
       onProfileChange({ ...currentProfile, ...profileUpdates, links: [...currentProfile.links, ...newLinks] });
     }
-    result.experience.filter((_, i) => selectedExperience[i]).forEach((e) => onAddEntry(importedEntryToResumeEntry(e)));
-    result.education.filter((_, i) => selectedEducation[i]).forEach((e) => onAddEntry(importedEntryToResumeEntry(e)));
-    const newLanguages = result.languages.filter((_, i) => selectedLanguages[i]);
+    result.experience.filter((_, i) => selected.experience[i]).forEach((e) => onAddEntry(importedEntryToResumeEntry(e)));
+    result.education.filter((_, i) => selected.education[i]).forEach((e) => onAddEntry(importedEntryToResumeEntry(e)));
+    const newLanguages = result.languages.filter((_, i) => selected.languages[i]);
     if (newLanguages.length) onLanguagesChange([...currentLanguages, ...newLanguages]);
     toast({ title: t('resume.import.success'), variant: 'success' });
     setOpen(false);
   };
 
   const selectedCount =
-    selectedExperience.filter(Boolean).length +
-    selectedEducation.filter(Boolean).length +
-    selectedLanguages.filter(Boolean).length +
-    selectedLinks.filter(Boolean).length +
-    Object.values(selectedProfileFields).filter(Boolean).length;
+    selected.experience.filter(Boolean).length +
+    selected.education.filter(Boolean).length +
+    selected.languages.filter(Boolean).length +
+    selected.links.filter(Boolean).length +
+    Object.values(selected.profile).filter(Boolean).length;
 
   return (
     <>
@@ -181,38 +187,22 @@ export const ResumeImportDialog: React.FC<Props> = ({
             <section>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{t('resume.import.section.profile')}</h4>
               <div className="space-y-2 text-sm">
-                {result.profile.full_name && (
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" className="accent-red-600" checked={!!selectedProfileFields.full_name}
-                      onChange={() => setSelectedProfileFields((f) => ({ ...f, full_name: !f.full_name }))} />
-                    {result.profile.full_name}
+                {([
+                  ['full_name', result.profile.full_name],
+                  ['email', result.profile.email],
+                  ['phone', result.profile.phone],
+                  ['address', result.profile.location],
+                ] as const).map(([key, value]) => value && (
+                  <label key={key} className="flex items-center gap-2">
+                    <input type="checkbox" className="accent-red-600" checked={!!selected.profile[key]}
+                      onChange={() => toggleProfileField(key)} />
+                    {value}
                   </label>
-                )}
-                {result.profile.email && (
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" className="accent-red-600" checked={!!selectedProfileFields.email}
-                      onChange={() => setSelectedProfileFields((f) => ({ ...f, email: !f.email }))} />
-                    {result.profile.email}
-                  </label>
-                )}
-                {result.profile.phone && (
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" className="accent-red-600" checked={!!selectedProfileFields.phone}
-                      onChange={() => setSelectedProfileFields((f) => ({ ...f, phone: !f.phone }))} />
-                    {result.profile.phone}
-                  </label>
-                )}
-                {result.profile.location && (
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" className="accent-red-600" checked={!!selectedProfileFields.address}
-                      onChange={() => setSelectedProfileFields((f) => ({ ...f, address: !f.address }))} />
-                    {result.profile.location}
-                  </label>
-                )}
+                ))}
                 {result.profile.links.map((link, i) => (
                   <label key={i} className="flex items-center gap-2">
-                    <input type="checkbox" className="accent-red-600" checked={!!selectedLinks[i]}
-                      onChange={() => toggle(selectedLinks, setSelectedLinks, i)} />
+                    <input type="checkbox" className="accent-red-600" checked={!!selected.links[i]}
+                      onChange={() => toggleAt('links', i)} />
                     <span className="truncate">{link.kind}: {link.url}</span>
                   </label>
                 ))}
@@ -222,15 +212,15 @@ export const ResumeImportDialog: React.FC<Props> = ({
             <ReviewEntrySection
               title={t('resume.import.section.experience')}
               entries={result.experience}
-              selected={selectedExperience}
-              onToggle={(i) => toggle(selectedExperience, setSelectedExperience, i)}
+              selected={selected.experience}
+              onToggle={(i) => toggleAt('experience', i)}
               emptyLabel={t('resume.import.none')}
             />
             <ReviewEntrySection
               title={t('resume.import.section.education')}
               entries={result.education}
-              selected={selectedEducation}
-              onToggle={(i) => toggle(selectedEducation, setSelectedEducation, i)}
+              selected={selected.education}
+              onToggle={(i) => toggleAt('education', i)}
               emptyLabel={t('resume.import.none')}
             />
 
@@ -242,8 +232,8 @@ export const ResumeImportDialog: React.FC<Props> = ({
                 <div className="space-y-2 text-sm">
                   {result.languages.map((l, i) => (
                     <label key={i} className="flex items-center gap-2">
-                      <input type="checkbox" className="accent-red-600" checked={!!selectedLanguages[i]}
-                        onChange={() => toggle(selectedLanguages, setSelectedLanguages, i)} />
+                      <input type="checkbox" className="accent-red-600" checked={!!selected.languages[i]}
+                        onChange={() => toggleAt('languages', i)} />
                       <span className="font-semibold">{l.name}</span>{l.proficiency ? ` — ${l.proficiency}` : ''}
                     </label>
                   ))}

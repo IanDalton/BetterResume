@@ -1,5 +1,5 @@
 import React from 'react';
-import { ResumeEntry } from '../../types';
+import { EXPERIENCE_TYPES, ResumeEntry } from '../../types';
 import { FormField, Input, Textarea, Select } from '../ui';
 import { EntrySectionCard } from './EntrySectionCard';
 import { MonthYearInput } from './MonthYearInput';
@@ -13,12 +13,10 @@ interface Props {
   onRemove: (i: number) => void;
 }
 
-const EXPERIENCE_SECTION_TYPES = ['job', 'contract', 'part-time', 'project', 'non-profit'] as const;
-
 export const ExperienceSection: React.FC<Props> = ({ entries, onAdd, onUpdate, onRemove }) => {
   const { t } = useI18n();
-  const hasAny = entries.some((e) => (EXPERIENCE_SECTION_TYPES as readonly string[]).includes(e.type));
-  const typeOptions = EXPERIENCE_SECTION_TYPES.map((v) => ({ value: v, label: t(`type.${v}`) }));
+  const hasAny = entries.some((e) => EXPERIENCE_TYPES.includes(e.type));
+  const typeOptions = EXPERIENCE_TYPES.map((v) => ({ value: v, label: t(`type.${v}`) }));
 
   return (
     <EntrySectionCard
@@ -26,7 +24,7 @@ export const ExperienceSection: React.FC<Props> = ({ entries, onAdd, onUpdate, o
       hint={t('section.experience.hint')}
       addLabel={t('experience.add')}
       emptyLabel={t('entries.none')}
-      types={[...EXPERIENCE_SECTION_TYPES]}
+      types={EXPERIENCE_TYPES}
       defaultType="job"
       entries={entries}
       onAdd={onAdd}

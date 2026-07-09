@@ -358,6 +358,15 @@ class DBStorage:
 
                     cur.execute("ALTER TABLE job_experiences ADD COLUMN IF NOT EXISTS migrated_at TIMESTAMP;")
 
+                    # Matches get_unmigrated_legacy_rows' predicate so the
+                    # every-boot backfill check is an index lookup instead of a
+                    # full table scan (the index is near-empty once migrated).
+                    cur.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_job_experiences_legacy_unmigrated
+                        ON job_experiences (id)
+                        WHERE LOWER(TRIM(type)) IN ('info', 'language') AND migrated_at IS NULL;
+                    """)
+
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS user_profile (
                           user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
@@ -670,8 +679,10 @@ class DBStorage:
     def upsert_profile_field_from_legacy(self, user_id: str, field: str, value: str):
         """Set a single profile column, used by the legacy backfill (one field per legacy row)."""
         assert field in ("full_name", "email", "phone", "address")
+        # No _ensure_user: the user_id comes from a job_experiences row, whose
+        # FK already guarantees the user exists (same for the other
+        # *_from_legacy helpers below).
         try:
-            self._ensure_user(user_id)
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -691,7 +702,6 @@ class DBStorage:
                                          source_job_experience_id: int, sort_order: int = 0):
         """Insert a profile link tied to its legacy source row; a no-op if already migrated."""
         try:
-            self._ensure_user(user_id)
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -710,7 +720,6 @@ class DBStorage:
                                      source_job_experience_id: int, sort_order: int = 0):
         """Insert a language tied to its legacy source row; a no-op if already migrated."""
         try:
-            self._ensure_user(user_id)
             with self._get_conn() as conn:
                 with conn.cursor() as cur:
                     cur.execute(

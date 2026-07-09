@@ -17,6 +17,8 @@ export const EXPERIENCE_TYPES: EntryType[] = ['job', 'contract', 'part-time', 'p
 
 export type ProfileLinkKind = 'portfolio' | 'github' | 'linkedin' | 'twitter' | 'blog' | 'other';
 
+export const SITE_KINDS: ProfileLinkKind[] = ['portfolio', 'github', 'linkedin', 'twitter', 'blog', 'other'];
+
 export interface ProfileLink {
   kind: ProfileLinkKind;
   label?: string | null;

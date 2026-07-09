@@ -1,5 +1,5 @@
 import React from 'react';
-import { ResumeEntry } from '../../types';
+import { EDUCATION_TYPES, ResumeEntry } from '../../types';
 import { FormField, Input, Textarea, Select } from '../ui';
 import { EntrySectionCard } from './EntrySectionCard';
 import { MonthYearInput } from './MonthYearInput';
@@ -15,7 +15,7 @@ interface Props {
 
 export const EducationSection: React.FC<Props> = ({ entries, onAdd, onUpdate, onRemove }) => {
   const { t } = useI18n();
-  const hasAny = entries.some((e) => e.type === 'education' || e.type === 'certification');
+  const hasAny = entries.some((e) => EDUCATION_TYPES.includes(e.type));
   const typeOptions = [
     { value: 'education', label: t('type.education') },
     { value: 'certification', label: t('field.certification') },
@@ -27,7 +27,7 @@ export const EducationSection: React.FC<Props> = ({ entries, onAdd, onUpdate, on
       hint={t('section.education.hint')}
       addLabel={t('education.add')}
       emptyLabel={t('entries.none')}
-      types={['education', 'certification']}
+      types={EDUCATION_TYPES}
       defaultType="education"
       entries={entries}
       onAdd={onAdd}

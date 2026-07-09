@@ -17,18 +17,6 @@ async function _jsonOrThrow(res: Response, failureLabel: string) {
   return res.json();
 }
 
-export async function getProfile(userId: string): Promise<UserProfile> {
-  const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(userId)}`);
-  const data = await _jsonOrThrow(res, 'Failed to load profile');
-  return {
-    fullName: data.full_name || '',
-    email: data.email || '',
-    phone: data.phone || '',
-    address: data.address || '',
-    links: data.links || [],
-  };
-}
-
 export async function saveProfile(userId: string, profile: UserProfile): Promise<void> {
   const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(userId)}`, {
     method: 'PUT',
@@ -42,12 +30,6 @@ export async function saveProfile(userId: string, profile: UserProfile): Promise
     }),
   });
   await _jsonOrThrow(res, 'Failed to save profile');
-}
-
-export async function getLanguages(userId: string): Promise<LanguageEntry[]> {
-  const res = await fetch(`${API_BASE}/languages/${encodeURIComponent(userId)}`);
-  const data = await _jsonOrThrow(res, 'Failed to load languages');
-  return data.languages || [];
 }
 
 export async function saveLanguages(userId: string, languages: LanguageEntry[]): Promise<void> {
@@ -269,15 +251,7 @@ export async function importResumePdf(userId: string, file: File): Promise<Resum
     method: 'POST',
     body: form,
   });
-  if (!res.ok) {
-    let message = `Import failed: ${res.status}`;
-    try {
-      const data = await res.json();
-      if (data?.detail) message = data.detail;
-    } catch { }
-    throw new Error(message);
-  }
-  return res.json();
+  return _jsonOrThrow(res, 'Import failed');
 }
 
 export async function resolveProfilePictureUrl(userId: string): Promise<string | null> {

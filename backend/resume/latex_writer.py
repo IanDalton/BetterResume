@@ -78,15 +78,14 @@ class LatexResumeWriter(BaseWriter):
 
     def generate_file(self, response: ResumeOutputFormat, output: str = None):
         self.response = response
-        name = _latex_escape(self.profile.get("full_name") or "")
+        name = _latex_escape(self.profile["full_name"])
         title = _latex_escape(response.resume_section.title)
-        address = _latex_escape(self.profile.get("address") or "")
-        phone = _latex_escape(self.profile.get("phone") or "")
-        email = _latex_escape(self.profile.get("email") or "")
-        links = [link for link in self.profile.get("links", []) if link.get("url")]
+        address = _latex_escape(self.profile["address"])
+        phone = _latex_escape(self.profile["phone"])
+        email = _latex_escape(self.profile["email"])
         websites = {
             link["url"]: _latex_escape(link.get("label") or link.get("kind") or link["url"])
-            for link in links
+            for link in self.profile["links"]
         }
 
         tex = []

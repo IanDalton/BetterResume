@@ -13,6 +13,7 @@ codebase already has the pydantic-ai plumbing for exactly this kind of
 forced structured extraction (see llm/agent.py).
 """
 
+import asyncio
 import io
 import logging
 import re
@@ -48,8 +49,8 @@ class ImportedProfileFields(BaseModel):
 
 class ImportedEntry(BaseModel):
     """Shaped like backend/api/schemas.py's JobRecord (type/company/role/etc.)
-    without importing it -- utils/ must not depend on api/ (see api/routers/
-    resume_import.py for the conversion at the API boundary)."""
+    without importing it -- utils/ must not depend on api/. The import router
+    returns these models directly as its response schema."""
     type: str  # "job" | "education"
     company: str
     description: str = Field(
@@ -171,7 +172,9 @@ async def parse_resume_pdf(content: bytes, *, model=None) -> ResumeImportResult:
     # its output_type, so importing it back at module load time here would cycle.
     from llm.agent import extract_resume_fields
 
-    raw_text = extract_text_from_pdf(content)
+    # pypdf extraction is CPU-bound (can take seconds on multi-page resumes);
+    # run it off the event loop so it doesn't stall concurrent requests.
+    raw_text = await asyncio.to_thread(extract_text_from_pdf, content)
     cleaned = _clean_text(raw_text)
     logger.info("Extracted %d chars of cleaned text from resume PDF", len(cleaned))
     return await extract_resume_fields(cleaned, model=model)

@@ -112,7 +112,7 @@ class WordResumeWriter(BaseWriter):
 
         # Heading (Name - Title)
         try:
-            name_txt = self.profile.get("full_name") or ""
+            name_txt = self.profile["full_name"]
             title_txt = resume_section.title
             heading_txt_parts = [p for p in [name_txt, title_txt] if p]
             if heading_txt_parts:
@@ -122,8 +122,8 @@ class WordResumeWriter(BaseWriter):
 
         # Address • Phone
         try:
-            address_txt = self.profile.get("address") or ""
-            phone_txt = self.profile.get("phone") or ""
+            address_txt = self.profile["address"]
+            phone_txt = self.profile["phone"]
             parts = [p for p in [address_txt, phone_txt] if p]
             if parts:
                 _add_paragraph(header_container, " • ".join(parts))
@@ -132,8 +132,8 @@ class WordResumeWriter(BaseWriter):
 
         # Email • Websites
         try:
-            email_txt = self.profile.get("email") or ""
-            websites = [link.get("url", "") for link in self.profile.get("links", []) if link.get("url")]
+            email_txt = self.profile["email"]
+            websites = [link["url"] for link in self.profile["links"]]
             if email_txt or websites:
                 p = _add_paragraph(header_container, f"{email_txt}" + (" • " if email_txt and websites else ""))
                 if p:

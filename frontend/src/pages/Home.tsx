@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, getProfile, saveProfile, getLanguages, saveLanguages } from '../services';
+import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages } from '../services';
 import { EXPERIENCE_TYPES, LanguageEntry, ResumeEntry, UserProfile, emptyProfile } from '../types';
 import { ProfileEditor } from '../components/entries';
 import { SaveStatus } from '../components/entries/SaveStatusIndicator';
@@ -11,7 +11,7 @@ import { DonateToast } from '../components/DonateToast';
 import { AdBanner } from '../components/AdBanner';
 import { ProfilePictureUploader } from '../components/ProfilePictureUploader';
 import { logout, loadUserData, saveUserDataIfChanged } from '../services/firebase';
-import { splitLegacyEntries, hasLegacyEntries } from '../services/legacyMigration';
+import { splitLegacyEntries, hasLegacyEntries, loadLocalDataWithMigration } from '../services/legacyMigration';
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
@@ -19,45 +19,13 @@ import { Dialog, Button } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
 import { ThemeToggle } from '../components/ThemeToggle';
 
-// Loads and, if needed, one-time-splits legacy localStorage data (mixed
-// personal-info/language rows inside br.entries) into the new dedicated
-// br.profile/br.languages/br.entries keys. Cached at module scope so the
-// three useState lazy initializers below don't each redo the same parse.
-let _initialLocalData: { profile: UserProfile; languages: LanguageEntry[]; entries: ResumeEntry[] } | null = null;
-function loadInitialLocalData() {
-  if (_initialLocalData) return _initialLocalData;
-  let profile: UserProfile = { ...emptyProfile };
-  let languages: LanguageEntry[] = [];
-  let entries: ResumeEntry[] = [];
-  try {
-    const rawEntries = JSON.parse(localStorage.getItem('br.entries') || '[]');
-    if (hasLegacyEntries(rawEntries)) {
-      const split = splitLegacyEntries(rawEntries);
-      profile = { ...emptyProfile, ...split.profile };
-      languages = split.languages;
-      entries = split.entries;
-      try {
-        localStorage.setItem('br.profile', JSON.stringify(profile));
-        localStorage.setItem('br.languages', JSON.stringify(languages));
-        localStorage.setItem('br.entries', JSON.stringify(entries));
-      } catch {}
-    } else {
-      entries = Array.isArray(rawEntries) ? rawEntries : [];
-      try { const p = localStorage.getItem('br.profile'); if (p) profile = { ...emptyProfile, ...JSON.parse(p) }; } catch {}
-      try { const l = localStorage.getItem('br.languages'); if (l) languages = JSON.parse(l); } catch {}
-    }
-  } catch {}
-  _initialLocalData = { profile, languages, entries };
-  return _initialLocalData;
-}
-
 export function Home() {
   const { t, lang, setLang } = useI18n();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [profile, setProfile] = useState<UserProfile>(() => loadInitialLocalData().profile);
-  const [languages, setLanguages] = useState<LanguageEntry[]>(() => loadInitialLocalData().languages);
-  const [entries, setEntries] = useState<ResumeEntry[]>(() => loadInitialLocalData().entries);
+  const [profile, setProfile] = useState<UserProfile>(() => loadLocalDataWithMigration().profile);
+  const [languages, setLanguages] = useState<LanguageEntry[]>(() => loadLocalDataWithMigration().languages);
+  const [entries, setEntries] = useState<ResumeEntry[]>(() => loadLocalDataWithMigration().entries);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
@@ -208,14 +176,26 @@ export function Home() {
   // (that pipeline re-ingests pgvector documents and is too expensive to run
   // on every keystroke).
   const autosaveTimer = useRef<number | null>(null);
-  const skipFirstAutosave = useRef(true);
+  const lastSynced = useRef<{ userId: string; profile: string; languages: string } | null>(null);
   useEffect(() => {
-    if (skipFirstAutosave.current) { skipFirstAutosave.current = false; return; }
+    const profileJson = JSON.stringify(profile);
+    const languagesJson = JSON.stringify(languages);
+    if (!lastSynced.current) {
+      // First run is initial hydration, not an edit -- record it, don't save.
+      lastSynced.current = { userId, profile: profileJson, languages: languagesJson };
+      return;
+    }
     if (autosaveTimer.current) window.clearTimeout(autosaveTimer.current);
     setSaveStatus('saving');
     autosaveTimer.current = window.setTimeout(async () => {
       try {
-        await Promise.all([saveProfile(userId, profile), saveLanguages(userId, languages)]);
+        const prev = lastSynced.current!;
+        const userChanged = prev.userId !== userId;
+        const tasks: Promise<void>[] = [];
+        if (userChanged || prev.profile !== profileJson) tasks.push(saveProfile(userId, profile));
+        if (userChanged || prev.languages !== languagesJson) tasks.push(saveLanguages(userId, languages));
+        await Promise.all(tasks);
+        lastSynced.current = { userId, profile: profileJson, languages: languagesJson };
         if (user?.mode === 'auth') {
           saveUserDataIfChanged(user.uid, { entries, profile, languages, jobDescription, format }).catch(() => {});
         }

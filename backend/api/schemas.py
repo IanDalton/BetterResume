@@ -55,33 +55,3 @@ class LanguageRecord(BaseModel):
 
 class LanguagesPayload(BaseModel):
     languages: List[LanguageRecord] = []
-
-
-class ResumeImportProfile(BaseModel):
-    full_name: Optional[str] = None
-    headline: Optional[str] = None
-    summary: Optional[str] = None
-    location: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    links: List[ProfileLink] = []
-
-
-class ResumeImportEntry(BaseModel):
-    type: str
-    company: str
-    description: str
-    role: Optional[str] = None
-    location: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-
-
-class ResumeImportResponse(BaseModel):
-    """Parsed-but-unsaved resume import result, returned for user review."""
-    profile: ResumeImportProfile
-    experience: List[ResumeImportEntry] = []
-    education: List[ResumeImportEntry] = []
-    skills: List[str] = []
-    languages: List[LanguageRecord] = []
-    warnings: List[str] = []

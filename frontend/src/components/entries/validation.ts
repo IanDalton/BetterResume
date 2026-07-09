@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { EDUCATION_TYPES, EXPERIENCE_TYPES } from '../../types';
+import type { EntryType } from '../../types';
 
 export const personalInfoSchema = z.object({
   fullName: z.string().trim().min(1, 'Full name is required'),
@@ -16,7 +18,7 @@ const monthYearOrPresent = z
   });
 
 export const educationEntrySchema = z.object({
-  type: z.enum(['education', 'certification']),
+  type: z.enum(EDUCATION_TYPES as [EntryType, ...EntryType[]]),
   company: z.string().trim().min(1, 'Institution is required'),
   role: z.string().trim().min(1, 'Degree is required'),
   location: z.string().optional(),
@@ -26,7 +28,7 @@ export const educationEntrySchema = z.object({
 });
 
 export const experienceEntrySchema = z.object({
-  type: z.enum(['job', 'contract', 'part-time', 'project', 'non-profit']),
+  type: z.enum(EXPERIENCE_TYPES as [EntryType, ...EntryType[]]),
   company: z.string().trim().min(1, 'Company is required'),
   role: z.string().trim().min(1, 'Role is required'),
   location: z.string().optional(),

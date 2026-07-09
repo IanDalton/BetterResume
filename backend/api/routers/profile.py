@@ -4,11 +4,12 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 
 from api.config import PROFILE_PICS_BASE, PROFILE_EXTENSIONS
-from api.schemas import UserProfilePayload, ProfileLink
+from api.schemas import UserProfilePayload
 from api.utils import (
     _validate_user_id,
     _detect_profile_extension,
-    _resolve_profile_picture_path
+    _resolve_profile_picture_path,
+    get_profile_with_links,
 )
 from utils.db_storage import DBStorage
 from utils.logging_utils import set_user_context
@@ -21,16 +22,7 @@ router = APIRouter()
 async def get_profile(user_id: str):
     _validate_user_id(user_id)
     set_user_context(user_id)
-    storage = DBStorage()
-    fields = storage.get_user_profile(user_id) or {}
-    links = storage.list_profile_links(user_id)
-    return UserProfilePayload(
-        full_name=fields.get("full_name"),
-        email=fields.get("email"),
-        phone=fields.get("phone"),
-        address=fields.get("address"),
-        links=[ProfileLink(**link) for link in links],
-    )
+    return UserProfilePayload(**get_profile_with_links(user_id))
 
 
 @router.put("/profile/{user_id}", response_model=UserProfilePayload)

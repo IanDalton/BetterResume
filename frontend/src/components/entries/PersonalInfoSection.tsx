@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
-import { ProfileLink, ProfileLinkKind, UserProfile } from '../../types';
+import { ProfileLink, ProfileLinkKind, SITE_KINDS, UserProfile } from '../../types';
 import { FormField, Input, Select, Button, cn } from '../ui';
 import { personalInfoSchema } from './validation';
 import { useI18n } from '../../i18n';
-
-const SITE_KIND_VALUES: ProfileLinkKind[] = ['portfolio', 'github', 'linkedin', 'twitter', 'blog', 'other'];
 
 interface Props {
   profile: UserProfile;
@@ -14,7 +12,7 @@ interface Props {
 export const PersonalInfoSection: React.FC<Props> = ({ profile, onChange }) => {
   const { t } = useI18n();
   const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const siteKindOptions = SITE_KIND_VALUES.map((k) => ({ value: k, label: k }));
+  const siteKindOptions = SITE_KINDS.map((k) => ({ value: k, label: k }));
 
   const result = personalInfoSchema.safeParse(profile);
   const errors: Record<string, string> = {};
