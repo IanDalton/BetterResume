@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   fetchEvalFixtures,
@@ -7,12 +7,20 @@ import {
   type EvalResult,
 } from '../../services/api';
 import { ModelPicker } from '../../components/admin/ModelPicker';
+import { ResultsTable, RunHistory, ModelComparison } from '../../components/admin';
 import { Button, Card, CardContent, CardHeader, CardTitle, Spinner, Textarea, useToast } from '../../components/ui';
 
 const MAX_MODELS = 5;
 const MAX_CELLS = 20;
 
 type DataSource = 'fixture' | 'mine';
+type SubTab = 'new' | 'history' | 'compare';
+
+const SUB_TABS: Array<{ id: SubTab; label: string }> = [
+  { id: 'new', label: 'New run' },
+  { id: 'history', label: 'History' },
+  { id: 'compare', label: 'Compare' },
+];
 
 interface JdFixture {
   id: string;
@@ -72,6 +80,7 @@ function EvalCell({ result }: { result: EvalResult | undefined }) {
 }
 
 export function EvalsTab({ user }: { user: User }) {
+  const [subTab, setSubTab] = useState<SubTab>('new');
   const [fixtures, setFixtures] = useState<JdFixture[]>([]);
   const [judgeModel, setJudgeModel] = useState<string | null>(null);
   const [fixturesLoading, setFixturesLoading] = useState(false);
@@ -172,13 +181,44 @@ export function EvalsTab({ user }: { user: User }) {
 
   const runDisabled = running || totalCells === 0 || totalCells > MAX_CELLS;
 
+  // Once a run finishes, the "New run" pane swaps its live grid for a
+  // ResultsTable of the same cells (in run order) so the admin lands
+  // straight on the detail view without navigating to History.
+  const finishedResults = useMemo(() => {
+    if (running || runModels.length === 0) return [];
+    const out: EvalResult[] = [];
+    for (const m of runModels) {
+      for (const jd of runJdIds) {
+        const cell = cells[cellKey(m, jd)];
+        if (cell) out.push(cell);
+      }
+    }
+    return out;
+  }, [running, runModels, runJdIds, cells]);
+
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>New run</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
+      <nav className="flex gap-1 border-b border-neutral-200 dark:border-neutral-800">
+        {SUB_TABS.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            className={`px-3 py-2 text-sm border-b-2 -mb-px ${subTab === t.id
+              ? 'border-primary-500 text-primary-500'
+              : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      {subTab === 'new' && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>New run</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
           <div>
             <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">Models</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -296,46 +336,76 @@ export function EvalsTab({ user }: { user: User }) {
       {runModels.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Live results</CardTitle>
+            <CardTitle>{running ? 'Live results' : 'Results'}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-neutral-500 mb-3">
-              {doneCells} / {runTotalCells} cells complete
-              {runId && <span className="text-neutral-400"> · run {runId}</span>}
-            </p>
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-collapse text-sm">
-                <thead>
-                  <tr>
-                    <th className="text-left p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium">
-                      Model
-                    </th>
-                    {runJdIds.map(jd => (
-                      <th
-                        key={jd}
-                        className="text-center p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium"
-                      >
-                        {jd === 'custom' ? 'Custom JD' : fixtures.find(f => f.id === jd)?.label ?? jd}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {runModels.map(m => (
-                    <tr key={m}>
-                      <th className="text-left p-2 border-b border-neutral-100 dark:border-neutral-800 font-mono text-xs font-normal align-top">
-                        {m}
-                      </th>
-                      {runJdIds.map(jd => (
-                        <td key={jd} className="p-2 border-b border-neutral-100 dark:border-neutral-800">
-                          <EvalCell result={cells[cellKey(m, jd)]} />
-                        </td>
+            {running ? (
+              <>
+                <p className="text-sm text-neutral-500 mb-3">
+                  {doneCells} / {runTotalCells} cells complete
+                  {runId && <span className="text-neutral-400"> · run {runId}</span>}
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse text-sm">
+                    <thead>
+                      <tr>
+                        <th className="text-left p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium">
+                          Model
+                        </th>
+                        {runJdIds.map(jd => (
+                          <th
+                            key={jd}
+                            className="text-center p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium"
+                          >
+                            {jd === 'custom' ? 'Custom JD' : fixtures.find(f => f.id === jd)?.label ?? jd}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {runModels.map(m => (
+                        <tr key={m}>
+                          <th className="text-left p-2 border-b border-neutral-100 dark:border-neutral-800 font-mono text-xs font-normal align-top">
+                            {m}
+                          </th>
+                          {runJdIds.map(jd => (
+                            <td key={jd} className="p-2 border-b border-neutral-100 dark:border-neutral-800">
+                              <EvalCell result={cells[cellKey(m, jd)]} />
+                            </td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <ResultsTable results={finishedResults} getToken={getToken} />
+            )}
+          </CardContent>
+        </Card>
+      )}
+        </div>
+      )}
+
+      {subTab === 'history' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Run history</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RunHistory getToken={getToken} />
+          </CardContent>
+        </Card>
+      )}
+
+      {subTab === 'compare' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Model comparison</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ModelComparison getToken={getToken} />
           </CardContent>
         </Card>
       )}
