@@ -89,9 +89,19 @@ def test_get_eval_results_builds_dicts():
     assert results[0]["composite_score"] == 0.87
 
 
-def test_mark_running_evals_interrupted():
-    cur = FakeCursor(rows=[(3,)])
+def test_mark_running_evals_interrupted_returns_rowcount():
+    cur = FakeCursor(rowcount=3)
     with _patch_conn(cur):
-        DBStorage().mark_running_evals_interrupted()
+        result = DBStorage().mark_running_evals_interrupted()
     sql, _ = cur.executed[0]
     assert "UPDATE eval_runs" in sql and "interrupted" in sql
+    assert result == 3
+
+
+def test_mark_running_evals_interrupted_treats_undefined_rowcount_as_zero():
+    """psycopg leaves rowcount at -1 ('undefined') for some statements; that
+    must never surface as a nonsense negative count in startup logs."""
+    cur = FakeCursor(rowcount=-1)
+    with _patch_conn(cur):
+        result = DBStorage().mark_running_evals_interrupted()
+    assert result == 0

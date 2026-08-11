@@ -1062,7 +1062,7 @@ class DBStorage:
                 cur.execute(
                     "UPDATE eval_runs SET status = 'interrupted', finished_at = NOW() WHERE status = 'running'"
                 )
-                return cur.rowcount or 0
+                return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
     def get_eval_model_comparison(self) -> List[Dict[str, Any]]:
         """Per-model aggregate across every stored eval result."""
