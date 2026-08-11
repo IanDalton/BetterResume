@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Dialog, Input, Button, Spinner } from '../ui';
 import { fetchOpenRouterModels, type CatalogModel } from '../../services/api';
 
@@ -14,7 +14,10 @@ function formatPrice(p: number | null): string {
 
 export interface ModelPickerProps {
   open: boolean;
-  idToken: string;
+  /** Called fresh for every catalog request the picker makes (initial load,
+   * each debounced search, each tools-only toggle) -- never resolved once and
+   * cached, so a long-lived picker session can't reuse a stale token. */
+  getToken: () => Promise<string>;
   initialValue: string | null;
   onSelect: (modelString: string) => void;
   onClose: () => void;
@@ -24,7 +27,7 @@ export interface ModelPickerProps {
  * tool-capable-only by default) or accepts a free-typed model string. The
  * free-text path must keep working even when the catalog fetch 503s -- an
  * admin locked out of the catalog must still be able to change models. */
-export function ModelPicker({ open, idToken, initialValue, onSelect, onClose }: ModelPickerProps) {
+export function ModelPicker({ open, getToken, initialValue, onSelect, onClose }: ModelPickerProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [toolsOnly, setToolsOnly] = useState(true);
@@ -32,6 +35,13 @@ export function ModelPicker({ open, idToken, initialValue, onSelect, onClose }: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [freeText, setFreeText] = useState('');
+
+  // Read via a ref rather than depending on `getToken` directly in the fetch
+  // effect below, so the picker's request cadence never depends on whether
+  // the caller happened to memoize the getter -- it just always calls
+  // whatever the latest one is, fresh, per request.
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
 
   // Reset transient state each time the picker opens.
   useEffect(() => {
@@ -55,7 +65,8 @@ export function ModelPicker({ open, idToken, initialValue, onSelect, onClose }: 
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchOpenRouterModels(idToken, { toolsOnly, q: debouncedQuery || undefined })
+    getTokenRef.current()
+      .then(token => fetchOpenRouterModels(token, { toolsOnly, q: debouncedQuery || undefined }))
       .then(list => { if (!cancelled) setModels(list); })
       .catch(e => {
         if (cancelled) return;
@@ -64,7 +75,7 @@ export function ModelPicker({ open, idToken, initialValue, onSelect, onClose }: 
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [open, idToken, toolsOnly, debouncedQuery]);
+  }, [open, toolsOnly, debouncedQuery]);
 
   const handleFreeText = () => {
     const trimmed = freeText.trim();
