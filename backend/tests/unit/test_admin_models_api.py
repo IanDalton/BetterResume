@@ -29,6 +29,21 @@ def test_models_requires_auth():
     assert TestClient(app).get("/admin/models").status_code == 401
 
 
+def test_get_model_config_requires_auth():
+    app = FastAPI()
+    app.include_router(admin_router.router)
+    assert TestClient(app).get("/admin/model-config").status_code == 401
+
+
+def test_put_model_config_requires_auth():
+    app = FastAPI()
+    app.include_router(admin_router.router)
+    resp = TestClient(app).put("/admin/model-config", json={
+        "task": "generation", "primary": "openrouter:x", "fallback": None,
+    })
+    assert resp.status_code == 401
+
+
 def test_models_defaults_to_tool_capable_only():
     with patch("api.routers.admin.fetch_models", AsyncMock(return_value=CATALOG)):
         resp = _client().get("/admin/models")
