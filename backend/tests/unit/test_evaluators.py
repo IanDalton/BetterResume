@@ -1,7 +1,9 @@
 import copy
 
-from tests.evaluators.ats_evaluator import ATSEvaluator
-from tests.evaluators.schema_evaluator import SchemaEvaluator
+import pytest
+
+from evals.evaluators.ats_evaluator import ATSEvaluator
+from evals.evaluators.schema_evaluator import SchemaEvaluator
 from tests.fixtures.job_descriptions import JD_SOFTWARE_ENGINEER_SENIOR
 
 
@@ -62,7 +64,7 @@ def test_schema_score_is_high_for_valid_resume(sample_resume_output):
 
 
 def test_composite_score_without_judge(sample_resume_output):
-    from tests.evaluators.report import ResumeEvaluationReport
+    from evals.evaluators.report import ResumeEvaluationReport
     schema = SchemaEvaluator().evaluate(sample_resume_output)
     ats = ATSEvaluator().evaluate(sample_resume_output, JD_SOFTWARE_ENGINEER_SENIOR)
     report = ResumeEvaluationReport(
@@ -73,3 +75,16 @@ def test_composite_score_without_judge(sample_resume_output):
     )
     assert 0.0 <= report.composite_score <= 1.0
     assert report.composite_score > 0.3
+
+
+async def test_llm_judge_aevaluate_uses_agent(sample_resume_output):
+    from pydantic_ai.models.test import TestModel
+    from evals.evaluators.llm_judge import LLMJudge
+
+    judge = LLMJudge(judge_model=TestModel(custom_output_args={
+        "relevance": 8, "quality": 7, "coherence": 9, "reasoning": "Solid match.",
+    }))
+    result = await judge.aevaluate(sample_resume_output, "Senior Python engineer")
+
+    assert result.relevance_score == 0.8
+    assert result.overall_score == pytest.approx((0.8 + 0.7 + 0.9) / 3, abs=1e-3)

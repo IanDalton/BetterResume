@@ -1,58 +1,8 @@
-JD_SOFTWARE_ENGINEER_SENIOR = """
-Senior Software Engineer – Platform Team
-Acme Corp, San Francisco, CA
-
-We are looking for a Senior Software Engineer to join our Platform team.
-
-Requirements:
-- 7+ years Python, distributed systems (Kafka, Kubernetes)
-- Strong SQL, experience with CI/CD pipelines
-- Experience mentoring junior engineers
-- Docker, microservices architecture
-
-Responsibilities:
-- Design and implement scalable microservices handling 10M+ events/day
-- Lead technical reviews and write Architecture Decision Records (ADRs)
-- Optimize SQL query performance (target: <50ms p99 latency)
-- Mentor junior engineers through code reviews
-"""
-
-JD_DATA_ANALYST_JUNIOR = """
-Junior Data Analyst – Growth Team
-StartupXYZ, Remote
-
-We are looking for a data-driven analyst to support our growth initiatives.
-
-Requirements:
-- 2+ years SQL, Python (pandas, matplotlib, numpy)
-- Experience with Tableau or Looker for dashboards
-- Basic statistics and A/B testing knowledge
-- Nice to have: dbt, Airflow, BigQuery
-
-Responsibilities:
-- Build and maintain reporting dashboards
-- Analyze user funnel metrics and identify drop-off points
-- Partner with product and engineering on experiment design
-"""
-
-JD_PRODUCT_MANAGER = """
-Product Manager – Consumer Mobile
-BigCo, New York, NY
-
-We are hiring a Product Manager to lead our consumer mobile experience.
-
-Requirements:
-- 5+ years PM experience in consumer products
-- Experience with A/B testing, OKR frameworks, and roadmap planning
-- Proficiency with Jira, Figma, and stakeholder communication
-- MBA preferred but not required
-
-Responsibilities:
-- Define and prioritize product roadmap in collaboration with engineering and design
-- Run A/B tests to validate product hypotheses
-- Lead cross-functional teams of 10+ people
-- Report on OKRs and present to executive leadership
-"""
+from evals.fixtures import (  # noqa: F401
+    JD_SOFTWARE_ENGINEER_SENIOR,
+    JD_DATA_ANALYST_JUNIOR,
+    JD_PRODUCT_MANAGER,
+)
 
 JD_SPANISH_LANGUAGE = """
 Desarrollador Backend Senior – Fintech

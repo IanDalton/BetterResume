@@ -51,14 +51,22 @@ class LLMJudge:
         )
 
     def evaluate(self, resume: ResumeOutputFormat, job_description: str) -> LLMJudgeResult:
-        resume_json = resume.model_dump_json(indent=2)
-        user_msg = (
+        result = self._agent.run_sync(self._user_message(resume, job_description))
+        return self._from_scores(result.output)
+
+    async def aevaluate(self, resume: ResumeOutputFormat, job_description: str) -> LLMJudgeResult:
+        """Async variant. Required by the API-triggered runner: `run_sync` raises
+        when called from inside a running event loop."""
+        result = await self._agent.run(self._user_message(resume, job_description))
+        return self._from_scores(result.output)
+
+    @staticmethod
+    def _user_message(resume: ResumeOutputFormat, job_description: str) -> str:
+        return (
             f"JOB DESCRIPTION:\n{job_description}\n\n"
-            f"RESUME JSON:\n{resume_json}\n\n"
+            f"RESUME JSON:\n{resume.model_dump_json(indent=2)}\n\n"
             "Evaluate the resume."
         )
-        result = self._agent.run_sync(user_msg)
-        return self._from_scores(result.output)
 
     @staticmethod
     def _from_scores(scores: _JudgeScores) -> LLMJudgeResult:

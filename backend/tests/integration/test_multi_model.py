@@ -14,10 +14,10 @@ import pytest
 
 pytestmark = pytest.mark.timeout(600)
 
-from tests.evaluators.ats_evaluator import ATSEvaluator
-from tests.evaluators.llm_judge import LLMJudge
-from tests.evaluators.report import ResumeEvaluationReport, print_comparison_table
-from tests.evaluators.schema_evaluator import SchemaEvaluator
+from evals.evaluators.ats_evaluator import ATSEvaluator
+from evals.evaluators.llm_judge import LLMJudge
+from evals.evaluators.report import ResumeEvaluationReport, print_comparison_table
+from evals.evaluators.schema_evaluator import SchemaEvaluator
 from tests.fixtures.job_descriptions import JD_SOFTWARE_ENGINEER_SENIOR
 
 
