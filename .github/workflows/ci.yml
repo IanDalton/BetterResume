@@ -26,6 +26,10 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests
+        # api/config.py creates DATA_DIR at import time and defaults to /app/data,
+        # which only exists inside the container image. Point it at the workspace.
+        env:
+          DATA_DIR: ${{ github.workspace }}/backend/data
         run: pytest
 
   frontend-tests:
