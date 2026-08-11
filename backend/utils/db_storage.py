@@ -7,6 +7,7 @@ import re
 from collections import Counter
 import psycopg
 from psycopg.adapt import Loader
+from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
 from pgvector.psycopg import register_vector, register_vector_async
 from typing import Optional, Dict, Any, Tuple, List
@@ -353,6 +354,15 @@ class DBStorage:
                             status TEXT NOT NULL DEFAULT 'success',
                             error TEXT,
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS app_settings (
+                            key         TEXT PRIMARY KEY,
+                            value       JSONB NOT NULL,
+                            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_by  TEXT
                         );
                     """)
 
@@ -823,6 +833,64 @@ class DBStorage:
         except Exception as e:
             self.logger.exception("Failed to record generation event: %s", e)
             raise
+
+    # ------------------------------------------------------------------
+    # Application settings (key/value, used for runtime model configuration)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _coerce_json(value):
+        """psycopg returns jsonb as a dict when the adapter is registered and a
+        str otherwise; normalize both to a dict."""
+        if value is None or isinstance(value, dict):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return None
+
+    def get_app_setting(self, key: str) -> Optional[Dict[str, Any]]:
+        """Return the stored JSON value for `key`, or None if unset."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
+                row = cur.fetchone()
+        return self._coerce_json(row[0]) if row else None
+
+    def set_app_setting(self, key: str, value: Dict[str, Any], updated_by: Optional[str] = None) -> None:
+        """Upsert a settings row."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO app_settings (key, value, updated_by, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = NOW()
+                    """,
+                    (key, Json(value), updated_by),
+                )
+        self.logger.info("app_setting %s updated by %s", key, updated_by)
+
+    def get_app_settings_meta(self, prefix: str = "") -> Dict[str, Dict[str, Any]]:
+        """Return {key: {value, updated_at, updated_by}} for keys starting with `prefix`."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT key, value, updated_at, updated_by FROM app_settings WHERE key LIKE %s ORDER BY key",
+                    (f"{prefix}%",),
+                )
+                rows = cur.fetchall()
+        return {
+            r[0]: {
+                "value": self._coerce_json(r[1]),
+                "updated_at": r[2].isoformat() if r[2] else None,
+                "updated_by": r[3],
+            }
+            for r in rows
+        }
 
     def get_admin_stats(self, days: int = 30) -> Dict[str, Any]:
         """Aggregate statistics about stored resumes for the admin dashboard."""
