@@ -99,6 +99,20 @@ def _judge_for(model_string: Optional[str]):
     return model_string
 
 
+def _record_concessions(result: dict, model_string: str) -> None:
+    """Note what the model needed us to stop asking for (see `llm.model_routing`).
+
+    Read after the run rather than before: the concessions are discovered by the
+    first request that gets rejected, so a model's first cell is where they
+    appear.
+    """
+    from llm.model_routing import concessions_for
+
+    learned = concessions_for(model_string)
+    result["unforced_tool_choice"] = learned.unforced_tool_choice
+    result["allow_reasoning"] = learned.allow_reasoning
+
+
 def _vector_store_for(spec: EvalSpec):
     """(vector_store, user_id, db) for the spec's data source.
 
@@ -130,6 +144,7 @@ async def _run_cell(spec: EvalSpec, model_string: str, jd_id: str, jd_text: str,
         "input_tokens": None,
         "output_tokens": None,
         "fallback_used": False,
+        "unforced_tool_choice": False, "allow_reasoning": False,
         "schema_score": None, "schema_passed": None, "schema_errors": None,
         "ats_score": None, "ats_coverage": None, "missing_keywords": None,
         "judge_overall": None, "judge_relevance": None, "judge_quality": None,
@@ -148,6 +163,7 @@ async def _run_cell(spec: EvalSpec, model_string: str, jd_id: str, jd_text: str,
         )
         resume = await bot.generate_resume(jd_text)
         result["duration_ms"] = int((time.monotonic() - start) * 1000)
+        _record_concessions(result, model_string)
         result["fallback_used"] = bool(bot.last_fallback_used)
         result["input_tokens"] = bot.last_input_tokens
         result["output_tokens"] = bot.last_output_tokens
@@ -187,6 +203,9 @@ async def _run_cell(spec: EvalSpec, model_string: str, jd_id: str, jd_text: str,
         result["status"] = "success"
     except Exception as exc:
         result["duration_ms"] = int((time.monotonic() - start) * 1000)
+        # Recorded on failure too: a cell that failed *after* conceding is a
+        # different story from one that failed outright.
+        _record_concessions(result, model_string)
         result["error"] = f"{type(exc).__name__}: {exc}"[:2000]
         logger.warning("Eval cell failed model=%s jd=%s: %s", model_string, jd_id, exc)
     return result

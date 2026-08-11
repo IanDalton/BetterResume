@@ -135,7 +135,19 @@ class ModelConfigUpdate(BaseModel):
 
 
 class ModelCheckRequest(BaseModel):
-    model: str
+    models: List[str]
+
+
+MAX_MODEL_CHECKS = 10
+
+
+def _check_payload(model: str, result) -> dict:
+    return {
+        "model": model, "ok": result.ok, "detail": result.detail,
+        "forced_tool_choice": result.forced_tool_choice,
+        "reasoning_disabled": not result.concessions.allow_reasoning,
+        "message": result.message,
+    }
 
 
 def _model_config_payload() -> dict:
@@ -178,21 +190,25 @@ async def read_model_config(claims: dict = Depends(require_admin)):
 
 @router.post("/model-check")
 async def check_model(req: ModelCheckRequest, claims: dict = Depends(require_admin)):
-    """Ask a model to serve one minimal request in our exact shape.
+    """Ask each model to serve one minimal request in our exact shape.
 
-    Cheap (a few tokens) and the only reliable way to learn that a model cannot
-    do the forced tool call our agents require -- the catalog's
-    `supported_parameters` claims support that individual endpoints don't honour.
+    Cheap (a few tokens each) and the only reliable way to learn what a model
+    can actually do: the catalog's `supported_parameters` claims support that
+    individual endpoints don't honour. Used by the eval pre-flight (so a broken
+    model does not eat a paid run) and the model picker's Test action.
     """
-    result = await probe_model(req.model)
-    logger.info("Model check for %s by %s: ok=%s forced_tool_choice=%s",
-                req.model, claims.get("email"), result.ok, result.forced_tool_choice)
-    return {
-        "model": req.model, "ok": result.ok, "detail": result.detail,
-        "forced_tool_choice": result.forced_tool_choice,
-        "reasoning_disabled": not result.concessions.allow_reasoning,
-        "message": result.message,
-    }
+    models = list(dict.fromkeys(m for m in req.models if m.strip()))
+    if not models:
+        raise HTTPException(status_code=400, detail="No models to check")
+    if len(models) > MAX_MODEL_CHECKS:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_MODEL_CHECKS} models per check")
+    # Concurrent: an eval pre-flight checks every selected model, and the admin
+    # is waiting on the slowest one either way.
+    results = await asyncio.gather(*(probe_model(m) for m in models))
+    for model, result in zip(models, results):
+        logger.info("Model check for %s by %s: ok=%s concessions=%s",
+                    model, claims.get("email"), result.ok, result.concessions.describe() or "none")
+    return {"results": [_check_payload(m, r) for m, r in zip(models, results)]}
 
 
 @router.put("/model-config")

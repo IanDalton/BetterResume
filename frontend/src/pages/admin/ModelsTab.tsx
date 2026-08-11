@@ -3,6 +3,7 @@ import { User } from 'firebase/auth';
 import {
   fetchModelConfig,
   updateModelConfig,
+  checkModels,
   type ModelConfigResponse,
   type ModelTask,
   type TaskModelConfig,
@@ -17,8 +18,9 @@ const TASK_META: Array<{ id: ModelTask; label: string; blurb: string }> = [
   { id: 'judge', label: 'Judge', blurb: 'Scores resumes in evaluation runs. Pick a model you are not evaluating.' },
 ];
 
-function ModelSlot({ label, value, onChange, onClear, disabled }: {
-  label: string; value: string | null; onChange: () => void; onClear?: () => void; disabled?: boolean;
+function ModelSlot({ label, value, onChange, onClear, onTest, disabled }: {
+  label: string; value: string | null; onChange: () => void; onClear?: () => void;
+  onTest?: () => void; disabled?: boolean;
 }) {
   return (
     <div className="mt-3">
@@ -32,6 +34,15 @@ function ModelSlot({ label, value, onChange, onClear, disabled }: {
         >
           Change
         </button>
+        {onTest && value && (
+          <button
+            onClick={onTest}
+            disabled={disabled}
+            className="text-xs text-neutral-500 hover:underline disabled:opacity-50 disabled:pointer-events-none disabled:no-underline"
+          >
+            Test
+          </button>
+        )}
         {onClear && value && (
           <button
             onClick={onClear}
@@ -63,6 +74,8 @@ export function ModelsTab({ user }: { user: User }) {
   // A save the backend refused because the model failed its live check, kept so
   // the admin can store it anyway without re-picking it.
   const [rejected, setRejected] = useState<RejectedSave>(null);
+  // The model currently being probed by the Test action, if any.
+  const [testing, setTesting] = useState<string | null>(null);
   // Tasks with a save currently in flight -- disables that task's Change/Clear
   // controls so two overlapping saves for the same task (e.g. clicking Clear
   // on fallback right after picking a new primary) can never both be started
@@ -95,6 +108,23 @@ export function ModelsTab({ user }: { user: User }) {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [getToken]);
+
+  /** Probe a model without saving anything -- for checking a slot that is
+   *  already stored, or one saved before the check existed. */
+  const testModel = async (model: string) => {
+    setTesting(model);
+    try {
+      const [result] = await checkModels(await getToken(), [model]);
+      toast({
+        title: result.ok ? `${model} works` : `${model} cannot run`,
+        description: result.message,
+      });
+    } catch (e: any) {
+      setError(e.message === 'forbidden' ? 'Access denied: this account is not authorized.' : e.message);
+    } finally {
+      setTesting(null);
+    }
+  };
 
   const applyModel = async (
     task: ModelTask, slot: 'primary' | 'fallback', model: string | null, skipCheck = false,
@@ -175,7 +205,8 @@ export function ModelsTab({ user }: { user: User }) {
                   label="Primary"
                   value={t.primary}
                   onChange={() => setPicker({ task: meta.id, slot: 'primary' })}
-                  disabled={pending}
+                  onTest={() => testModel(t.primary)}
+                  disabled={pending || testing !== null}
                 />
                 {t.supports_fallback && (
                   <ModelSlot
@@ -183,7 +214,8 @@ export function ModelsTab({ user }: { user: User }) {
                     value={t.fallback}
                     onChange={() => setPicker({ task: meta.id, slot: 'fallback' })}
                     onClear={() => applyModel(meta.id, 'fallback', null)}
-                    disabled={pending}
+                    onTest={t.fallback ? () => testModel(t.fallback!) : undefined}
+                    disabled={pending || testing !== null}
                   />
                 )}
 

@@ -236,3 +236,68 @@ async def test_on_cell_failure_for_one_cell_does_not_abort_the_run(sample_resume
     # Both cells still persisted despite one on_cell callback raising.
     assert {r["model"] for r in db.results} == {"test:bad", "test:good"}
     assert db.finished == [(run_id, "complete")]
+
+
+# ---------------------------------------------------------------------------
+# Routing concessions (see llm/model_routing.py)
+#
+# A score means something different when the model had to be given a
+# concession to produce it, so each cell records what its model needed.
+# ---------------------------------------------------------------------------
+
+async def test_cell_records_the_concessions_its_model_needed(sample_resume_output):
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+    model_routing.remember("openrouter:needs/help", unforced_tool_choice=True, allow_reasoning=True)
+    try:
+        with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+                custom_output_args=sample_resume_output.model_dump())), \
+             patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+                custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+            await runner.run_eval(_spec(models=["openrouter:needs/help"]), db=db)
+    finally:
+        model_routing.reset_known_models()
+
+    result = db.results[0]
+    assert result["status"] == "success"
+    assert result["unforced_tool_choice"] is True
+    assert result["allow_reasoning"] is True
+
+
+async def test_cell_records_no_concessions_for_a_model_that_needed_none(sample_resume_output):
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        await runner.run_eval(_spec(models=["openrouter:clean/model"]), db=db)
+
+    assert db.results[0]["unforced_tool_choice"] is False
+    assert db.results[0]["allow_reasoning"] is False
+
+
+async def test_a_failed_cell_still_records_its_concessions():
+    """A cell that failed *after* conceding is a different story from one that
+    failed outright, so the flags are recorded on the error path too."""
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+    model_routing.remember("openrouter:needs/help", allow_reasoning=True)
+    try:
+        def _boom(name):
+            raise RuntimeError("provider exploded")
+
+        with patch.object(runner, "_model_for", side_effect=_boom):
+            await runner.run_eval(_spec(models=["openrouter:needs/help"]), db=db)
+    finally:
+        model_routing.reset_known_models()
+
+    result = db.results[0]
+    assert result["status"] == "error"
+    assert result["allow_reasoning"] is True

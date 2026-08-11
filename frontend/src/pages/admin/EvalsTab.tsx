@@ -5,7 +5,9 @@ import {
   fetchEvalRun,
   startEvalRun,
   streamEvalRun,
+  checkModels,
   type EvalResult,
+  type ModelCheckResult,
 } from '../../services/api';
 import { ModelPicker } from '../../components/admin/ModelPicker';
 import { ResultsTable, RunHistory, ModelComparison } from '../../components/admin';
@@ -80,6 +82,26 @@ function EvalCell({ result }: { result: EvalResult | undefined }) {
   );
 }
 
+/** What the pre-flight learned about one model: ready, ready with a routing
+ * concession (see backend/llm/model_routing.py), or unable to run at all. */
+function CheckBadge({ check }: { check: ModelCheckResult | undefined }) {
+  if (!check) return null;
+  const concessions = [
+    check.forced_tool_choice ? null : 'asks tool',
+    check.reasoning_disabled ? null : 'reasoning on',
+  ].filter(Boolean);
+  const [text, tone] = !check.ok
+    ? ['cannot run', 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300']
+    : concessions.length
+      ? [concessions.join(', '), 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300']
+      : ['ready', 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'];
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tone}`} title={check.message}>
+      {text}
+    </span>
+  );
+}
+
 export function EvalsTab({ user }: { user: User }) {
   const [subTab, setSubTab] = useState<SubTab>('new');
   const [fixtures, setFixtures] = useState<JdFixture[]>([]);
@@ -92,6 +114,14 @@ export function EvalsTab({ user }: { user: User }) {
   const [customJd, setCustomJd] = useState('');
   const [dataSource, setDataSource] = useState<DataSource>('fixture');
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Pre-flight results, keyed by model. A run costs real money per cell, so
+  // every selected model is asked to serve one tiny request first; a model
+  // that cannot is reported here instead of consuming its share of the run.
+  const [checks, setChecks] = useState<Record<string, ModelCheckResult>>({});
+  const [checking, setChecking] = useState(false);
+  // Set when a pre-flight found a broken model, so the next click means
+  // "run anyway" rather than silently repeating the same check.
+  const [checkBlocked, setCheckBlocked] = useState(false);
 
   const [cells, setCells] = useState<Record<string, EvalResult>>({});
   const [runId, setRunId] = useState<string | null>(null);
@@ -147,12 +177,56 @@ export function EvalsTab({ user }: { user: User }) {
     setPickerOpen(false);
   };
 
+  /** Probe the selected models. Returns the ones that cannot serve a run. */
+  const runPreflight = async (): Promise<ModelCheckResult[]> => {
+    setChecking(true);
+    try {
+      const results = await checkModels(await user.getIdToken(), selectedModels);
+      setChecks(Object.fromEntries(results.map(r => [r.model, r])));
+      return results.filter(r => !r.ok);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const checkNow = async () => {
+    setError(null);
+    try {
+      const broken = await runPreflight();
+      setCheckBlocked(broken.length > 0);
+      toast(broken.length
+        ? { title: `${broken.length} model(s) cannot run`, description: broken.map(b => b.model).join(', ') }
+        : { title: 'All selected models are ready' });
+    } catch (e: any) {
+      setError(e.message === 'forbidden' ? 'Access denied.' : e.message);
+    }
+  };
+
   const toggleJd = (id: string) => {
     setSelectedJds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
   };
 
   const start = async () => {
     setError(null);
+    // Pre-flight unless the admin already saw the failures and clicked again.
+    if (!checkBlocked) {
+      try {
+        const broken = await runPreflight();
+        if (broken.length > 0) {
+          setCheckBlocked(true);
+          setError(
+            `${broken.map(b => `${b.model} (${b.message})`).join('; ')}. ` +
+            'Deselect these, or press Run evaluation again to run anyway.'
+          );
+          return;
+        }
+      } catch (e: any) {
+        // A pre-flight that cannot run is not a reason to block the run the
+        // admin actually asked for -- note it and carry on.
+        setError(`Model pre-flight failed (${e.message}); running without it.`);
+      }
+    }
+    setCheckBlocked(false);
     setRunning(true);
     setCells({});
     setRunModels(selectedModels);
@@ -254,6 +328,7 @@ export function EvalsTab({ user }: { user: User }) {
                       className="inline-flex items-center gap-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-2.5 py-1 text-xs font-mono"
                     >
                       {m}
+                      <CheckBadge check={checks[m]} />
                       <button
                         type="button"
                         onClick={() => removeModel(m)}
@@ -277,6 +352,16 @@ export function EvalsTab({ user }: { user: User }) {
                 </div>
                 {selectedModels.length >= MAX_MODELS && (
                   <p className="text-xs text-neutral-500 mt-1">Maximum 5 models per run.</p>
+                )}
+                {selectedModels.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={checkNow}
+                    disabled={running || checking}
+                    className="text-xs text-primary-500 hover:underline mt-1 disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    {checking ? 'Checking…' : 'Check models'}
+                  </button>
                 )}
               </div>
 
@@ -354,9 +439,13 @@ export function EvalsTab({ user }: { user: User }) {
                 <p className="text-xs text-red-500 dark:text-red-400">Maximum 20 cells per run.</p>
               )}
 
-              <Button onClick={start} loading={running} disabled={runDisabled}>
-                Run evaluation
+              <Button onClick={start} loading={running || checking} disabled={runDisabled}>
+                {checkBlocked ? 'Run anyway' : 'Run evaluation'}
               </Button>
+              <p className="text-xs text-neutral-500">
+                Each model is asked to serve one tiny request before the run starts, so a model that
+                cannot do the job does not spend cells failing.
+              </p>
 
               {error && <p className="text-sm text-red-500 dark:text-red-400">{error}</p>}
             </CardContent>

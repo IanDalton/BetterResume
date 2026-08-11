@@ -286,6 +286,9 @@ export interface ModelComparisonRow {
   avg_ats: number | null;
   avg_judge: number | null;
   avg_duration_ms: number | null;
+  // True if any cell for this model needed that routing concession.
+  unforced_tool_choice: boolean;
+  allow_reasoning: boolean;
   last_run_at: string | null;
 }
 
@@ -333,6 +336,11 @@ export interface EvalResult {
   judge_reasoning: string | null;
   composite_score: number | null;
   resume_json: any;
+  // What this model needed us to stop asking for on this cell (see
+  // backend/llm/model_routing.py). Unlike the scores above these are always
+  // present, on the error path too.
+  unforced_tool_choice: boolean;
+  allow_reasoning: boolean;
 }
 
 /** Body of `POST /admin/evals`: the spec for a new evaluation run. */
@@ -381,16 +389,20 @@ export interface ModelCheckResult {
   detail: string | null;
   // False when the model only works with an unforced tool choice; still usable.
   forced_tool_choice: boolean;
+  // False when the model's endpoints refuse to run with reasoning disabled.
+  reasoning_disabled: boolean;
   message: string;
 }
 
-export async function checkModel(idToken: string, model: string): Promise<ModelCheckResult> {
+/** Runs one minimal live request per model, in the same shape a real run uses.
+ *  Costs a handful of tokens each; the backend probes them concurrently. */
+export async function checkModels(idToken: string, models: string[]): Promise<ModelCheckResult[]> {
   const res = await adminRequest(idToken, '/admin/model-check', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify({ models }),
   });
-  return res.json();
+  return (await res.json()).results;
 }
 
 export async function fetchEvalFixtures(

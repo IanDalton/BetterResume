@@ -170,7 +170,7 @@ def test_put_model_config_skip_check_stores_without_probing():
 def test_model_check_endpoint_reports_the_probe_result():
     with patch("api.routers.admin.probe_model",
                AsyncMock(return_value=ProbeResult(False, "ModelHTTPError: 404"))):
-        body = _client().post("/admin/model-check", json={"model": "openrouter:x/y"}).json()
+        body = _client().post("/admin/model-check", json={"models": ["openrouter:x/y"]}).json()["results"][0]
     assert body == {
         "model": "openrouter:x/y", "ok": False, "detail": "ModelHTTPError: 404",
         "forced_tool_choice": True, "reasoning_disabled": True,
@@ -183,7 +183,9 @@ def test_model_check_reports_a_model_that_must_keep_reasoning_enabled():
     every endpoint of a model that takes no reasoning parameter."""
     degraded = ProbeResult(True, concessions=Concessions(allow_reasoning=True))
     with patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)):
-        body = _client().post("/admin/model-check", json={"model": "openrouter:qwen/qwen3-coder-30b-a3b-instruct"}).json()
+        body = _client().post(
+            "/admin/model-check", json={"models": ["openrouter:qwen/qwen3-coder-30b-a3b-instruct"]}
+        ).json()["results"][0]
     assert body["ok"] is True
     assert body["reasoning_disabled"] is False
     assert "reasoning" in body["message"]
@@ -192,7 +194,7 @@ def test_model_check_reports_a_model_that_must_keep_reasoning_enabled():
 def test_model_check_reports_a_model_that_needs_an_unforced_tool_choice():
     degraded = ProbeResult(True, concessions=Concessions(unforced_tool_choice=True))
     with patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)):
-        body = _client().post("/admin/model-check", json={"model": "openrouter:qwen/qwen3.7-flash"}).json()
+        body = _client().post("/admin/model-check", json={"models": ["openrouter:qwen/qwen3.7-flash"]}).json()["results"][0]
     assert body["ok"] is True
     assert body["forced_tool_choice"] is False
     assert "forced tool choice" in body["message"]
@@ -223,8 +225,29 @@ def test_put_model_config_saves_a_model_that_needs_an_unforced_tool_choice():
 def test_model_check_requires_auth():
     app = FastAPI()
     app.include_router(admin_router.router)
-    resp = TestClient(app).post("/admin/model-check", json={"model": "openrouter:x/y"})
+    resp = TestClient(app).post("/admin/model-check", json={"models": ["openrouter:x/y"]})
     assert resp.status_code == 401
+
+
+def test_model_check_probes_every_model_concurrently():
+    """The eval pre-flight checks a whole selection at once."""
+    async def _probe(model):
+        return ProbeResult(model != "openrouter:bad", None if model != "openrouter:bad" else "nope")
+
+    with patch("api.routers.admin.probe_model", AsyncMock(side_effect=_probe)):
+        body = _client().post("/admin/model-check", json={
+            "models": ["openrouter:good", "openrouter:bad", "openrouter:good"],
+        }).json()
+    # Deduplicated, order preserved, one entry per distinct model.
+    assert [r["model"] for r in body["results"]] == ["openrouter:good", "openrouter:bad"]
+    assert [r["ok"] for r in body["results"]] == [True, False]
+
+
+def test_model_check_rejects_an_empty_or_oversized_request():
+    with patch("api.routers.admin.probe_model", AsyncMock(side_effect=AssertionError("must not probe"))):
+        assert _client().post("/admin/model-check", json={"models": []}).status_code == 400
+        too_many = [f"openrouter:m{i}" for i in range(admin_router.MAX_MODEL_CHECKS + 1)]
+        assert _client().post("/admin/model-check", json={"models": too_many}).status_code == 400
 
 
 def test_put_model_config_422_on_unknown_task():

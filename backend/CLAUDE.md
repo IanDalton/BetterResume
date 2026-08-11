@@ -64,7 +64,7 @@ Endpoints (all admin-only):
 - `GET /resume/admin/models?tools_only=true&q=""` — OpenRouter model catalog (normalized list with pricing/capabilities)
 - `GET /resume/admin/model-config` — current per-task (generation/translation/import/judge) primary/fallback models with metadata; `supports_fallback` is false for `judge`, which runs one standalone call
 - `PUT /resume/admin/model-config` — update primary/fallback for one task; stored in `app_settings` table. Both models are shape-validated and then probed live (`llm/model_probe.py`) before the write; a model that only works with an unforced tool choice is saved with a `notice`, only an outright failure is refused. `skip_check: true` stores without probing
-- `POST /resume/admin/model-check` — run the live probe against one model without saving it; returns `ok` / `forced_tool_choice` / `message`
+- `POST /resume/admin/model-check` — run the live probe against up to 10 models (`{"models": [...]}`, probed concurrently) without saving them; each result carries `ok` / `forced_tool_choice` / `reasoning_disabled` / `message`. Used by the eval pre-flight and the Models tab's Test action
 - `GET /resume/admin/evals/fixtures` — available job-description fixtures and the judge model currently configured for the `judge` task
 - `POST /resume/admin/evals` (status 202) — start an evaluation run in background; returns run_id immediately, streaming cells via `/stream`
 - `GET /resume/admin/evals` — past evaluation runs (newest first)
@@ -80,7 +80,7 @@ Endpoints (all admin-only):
   - `ats_evaluator.py` — `ATSEvaluator`: keyword coverage analysis (offline); scores how well a resume matches a job description
   - `llm_judge.py` — `LLMJudge`: LLM-as-judge scoring (relevance/quality/coherence); requires a real API key. With no explicit model it uses the dashboard's `judge` task setting, and applies the same OpenRouter routing settings as the generation agents.
   - `report.py` — `ResumeEvaluationReport`: composite scoring (combines schema/ATS/judge results with weighted formula)
-- `runner.py` — `EvalSpec`/`validate_spec`/`run_eval` orchestrate evaluation runs: `MAX_MODELS=5` / `MAX_CELLS=20` / `CONCURRENCY=3`. Each cell generates a resume for one (model, JD) pair, scores it, and persists immediately (failures are logged, not raised). Optionally calls `on_cell` callback (used by admin `/evals` endpoint for SSE streaming). `run_eval` is shared by both the pytest integration test (`tests/integration/test_multi_model.py`) and the admin dashboard.
+- `runner.py` — `EvalSpec`/`validate_spec`/`run_eval` orchestrate evaluation runs. Each cell also records the routing concessions its model needed (`unforced_tool_choice` / `allow_reasoning`, from `llm/model_routing.py`) on both the success and error paths, so a score is always read next to what it cost to get: `MAX_MODELS=5` / `MAX_CELLS=20` / `CONCURRENCY=3`. Each cell generates a resume for one (model, JD) pair, scores it, and persists immediately (failures are logged, not raised). Optionally calls `on_cell` callback (used by admin `/evals` endpoint for SSE streaming). `run_eval` is shared by both the pytest integration test (`tests/integration/test_multi_model.py`) and the admin dashboard.
   - **Multi-worker caveat**: `_EVAL_STREAMS` (per-process, in-memory queues for live results) is not shared across uvicorn/gunicorn workers; a `/stream` request on a different worker will 404 even if the run is in flight elsewhere. Clients must know this.
 
 ### Logging (`utils/logging_utils.py`)

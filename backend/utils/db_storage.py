@@ -411,6 +411,14 @@ class DBStorage:
                             created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         );
                     """)
+                    # Routing concessions the model needed for this cell (see
+                    # llm/model_routing.py). Recorded per cell because they are
+                    # discovered at run time and change what a score means: a
+                    # model scored with reasoning forced on costs more per
+                    # token, and one that only asks for its tool is less
+                    # reliable than the number alone suggests.
+                    cur.execute("ALTER TABLE eval_results ADD COLUMN IF NOT EXISTS unforced_tool_choice BOOLEAN NOT NULL DEFAULT FALSE;")
+                    cur.execute("ALTER TABLE eval_results ADD COLUMN IF NOT EXISTS allow_reasoning BOOLEAN NOT NULL DEFAULT FALSE;")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(run_id);")
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_model ON eval_results(model);")
 
@@ -954,7 +962,7 @@ class DBStorage:
         "schema_passed", "schema_errors", "ats_score", "ats_coverage",
         "missing_keywords", "judge_overall", "judge_relevance", "judge_quality",
         "judge_coherence", "judge_reasoning", "composite_score", "resume_json",
-        "created_at",
+        "unforced_tool_choice", "allow_reasoning", "created_at",
     )
 
     _EVAL_RUN_COLUMNS = (
@@ -1079,6 +1087,8 @@ class DBStorage:
                            AVG(ats_score)                                            AS avg_ats,
                            AVG(judge_overall)                                        AS avg_judge,
                            AVG(duration_ms)                                          AS avg_duration_ms,
+                           BOOL_OR(unforced_tool_choice)                             AS unforced_tool_choice,
+                           BOOL_OR(allow_reasoning)                                  AS allow_reasoning,
                            MAX(created_at)                                           AS last_run_at
                     FROM eval_results
                     GROUP BY model
@@ -1094,7 +1104,8 @@ class DBStorage:
                 "success_rate": _f(r[3]), "avg_composite": _f(r[4]),
                 "avg_schema": _f(r[5]), "avg_ats": _f(r[6]), "avg_judge": _f(r[7]),
                 "avg_duration_ms": int(r[8]) if r[8] is not None else None,
-                "last_run_at": r[9].isoformat() if r[9] else None,
+                "unforced_tool_choice": bool(r[9]), "allow_reasoning": bool(r[10]),
+                "last_run_at": r[11].isoformat() if r[11] else None,
             }
             for r in rows
         ]

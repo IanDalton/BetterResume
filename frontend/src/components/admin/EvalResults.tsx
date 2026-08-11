@@ -173,6 +173,20 @@ export interface ResultsTableProps {
   onPromote?: (model: string) => void;
 }
 
+/** Routing concessions a model needed for a run (see backend/llm/model_routing.py).
+ * Worth showing next to a score: a model graded with reasoning forced on costs
+ * more per token, and one that only asks for its tool is less reliable than the
+ * number alone suggests. */
+function ConcessionBadges({ unforced, reasoning }: { unforced: boolean; reasoning: boolean }) {
+  const tone = 'ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300';
+  return (
+    <>
+      {unforced && <span className={tone} title="Rejects a forced tool choice; the tool is requested, not required">asks tool</span>}
+      {reasoning && <span className={tone} title="Its endpoints will not accept reasoning disabled, so it runs with reasoning on">reasoning on</span>}
+    </>
+  );
+}
+
 export function ResultsTable({ results, getToken, onPromote }: ResultsTableProps) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'composite', dir: -1 });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -285,6 +299,7 @@ export function ResultsTable({ results, getToken, onPromote }: ResultsTableProps
                           fallback
                         </span>
                       )}
+                      <ConcessionBadges unforced={r.unforced_tool_choice} reasoning={r.allow_reasoning} />
                     </td>
                     <td className="p-2 text-xs text-neutral-600 dark:text-neutral-400">
                       {r.jd_id === 'custom' ? 'Custom JD' : r.jd_id ?? '—'}
@@ -603,7 +618,10 @@ export function ModelComparison({ getToken }: ModelComparisonProps) {
           <tbody>
             {sorted.map(row => (
               <tr key={row.model} className="border-b border-neutral-100 dark:border-neutral-800">
-                <td className="p-2 font-mono text-xs">{row.model}</td>
+                <td className="p-2 font-mono text-xs">
+                  {row.model}
+                  <ConcessionBadges unforced={row.unforced_tool_choice} reasoning={row.allow_reasoning} />
+                </td>
                 <td className="p-2 text-right">{row.runs}</td>
                 <td className="p-2 text-right">{row.cells}</td>
                 <td className="p-2 text-right font-mono">{row.success_rate == null ? '—' : `${(row.success_rate * 100).toFixed(0)}%`}</td>

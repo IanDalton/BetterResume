@@ -3,7 +3,7 @@ import {
   fetchOpenRouterModels,
   fetchModelConfig,
   updateModelConfig,
-  checkModel,
+  checkModels,
   startEvalRun,
   fetchEvalRuns,
   downloadEvalResume,
@@ -114,11 +114,18 @@ describe('admin model API', () => {
       .rejects.toThrow(/failed a live check/);
   });
 
-  it('POSTs a standalone model check', async () => {
-    const fetchMock = mockFetch({ json: async () => ({ model: 'openrouter:a', ok: true, detail: null, message: 'Model responded correctly' }) });
-    const result = await checkModel(TOKEN, 'openrouter:a');
-    expect(fetchMock.mock.calls[0][0]).toContain('/admin/model-check');
-    expect(result.ok).toBe(true);
+  it('POSTs a model check for every model at once', async () => {
+    const fetchMock = mockFetch({
+      json: async () => ({ results: [
+        { model: 'openrouter:a', ok: true, detail: null, forced_tool_choice: true, reasoning_disabled: true, message: 'Model responded correctly' },
+        { model: 'openrouter:b', ok: false, detail: 'boom', forced_tool_choice: true, reasoning_disabled: true, message: 'boom' },
+      ] }),
+    });
+    const results = await checkModels(TOKEN, ['openrouter:a', 'openrouter:b']);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/admin/model-check');
+    expect(JSON.parse(init.body)).toEqual({ models: ['openrouter:a', 'openrouter:b'] });
+    expect(results.map(r => r.ok)).toEqual([true, false]);
   });
 });
 
