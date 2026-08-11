@@ -6,8 +6,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot import Bot
+from llm import model_config
 from models.language import Language
 from models.resume import ResumeOutputFormat
+
+
+@pytest.fixture(autouse=True)
+def _fixed_model_config():
+    """Every `Bot(...)` construction below omits `model`, so `__init__` now
+    resolves generation/translation models via `get_model_config()` unconditionally
+    (previously this only happened when a caller explicitly asked for the
+    default). Pin it to a known, DB-independent config so these tests assert
+    against known models regardless of whether a Postgres happens to be
+    reachable on the machine running them."""
+    cfg = model_config.ModelConfig(
+        generation=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+        translation=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+        import_=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+    )
+    with patch("llm.agent.get_model_config", return_value=cfg):
+        yield
 
 
 @contextmanager

@@ -38,7 +38,10 @@ class Bot:
         Args:
             user_id: Owner of the stored experience/skills; required.
             vector_store: PGVectorStore (or compatible) backing the retrieval tool.
-            model: pydantic-ai model name or instance; defaults to `agent.DEFAULT_MODEL`.
+            model: pydantic-ai model name or instance, applied to both generation and
+                translation. When omitted, each task resolves independently from
+                `get_model_config()` (the admin-configured per-task model, falling back
+                to env vars and ultimately `agent.DEFAULT_MODEL`).
             db: Optional DB handle passed to the agent tools (defaults to DBStorage).
             auto_ingest: If True, loads jobs_csv into the store (if file exists).
             jobs_csv: Path to CSV to ingest.

@@ -15,6 +15,7 @@ def _clear_cache():
 
 
 def test_falls_back_to_env_when_no_row(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     monkeypatch.delenv("TRANSLATION_MODEL", raising=False)
     with patch("llm.model_config.DBStorage.get_app_setting", return_value=None):
@@ -24,6 +25,7 @@ def test_falls_back_to_env_when_no_row(monkeypatch):
 
 
 def test_env_task_override_used_when_present(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     monkeypatch.setenv("IMPORT_MODEL", "google-gla:gemini-2.5-flash-lite")
     with patch("llm.model_config.DBStorage.get_app_setting", return_value=None):
@@ -32,6 +34,7 @@ def test_env_task_override_used_when_present(monkeypatch):
 
 
 def test_stored_row_overrides_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     stored = {"primary": "openrouter:stored/x", "fallback": "google-gla:gemini-2.5-flash-lite"}
     with patch("llm.model_config.DBStorage.get_app_setting", return_value=stored):
@@ -41,6 +44,7 @@ def test_stored_row_overrides_env(monkeypatch):
 
 
 def test_result_is_cached_within_ttl(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     with patch("llm.model_config.DBStorage.get_app_setting", return_value=None) as mocked:
         model_config.get_model_config(force_refresh=True)
@@ -51,6 +55,7 @@ def test_result_is_cached_within_ttl(monkeypatch):
 
 
 def test_cache_expires_after_ttl(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     fake_now = {"t": 1000.0}
     monkeypatch.setattr(model_config.time, "monotonic", lambda: fake_now["t"])
@@ -62,13 +67,28 @@ def test_cache_expires_after_ttl(monkeypatch):
 
 
 def test_db_failure_degrades_to_env(monkeypatch, caplog):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     with patch("llm.model_config.DBStorage.get_app_setting", side_effect=RuntimeError("db down")):
         cfg = model_config.get_model_config(force_refresh=True)
     assert cfg.generation.primary == "openrouter:env/primary"
 
 
+def test_no_database_url_skips_db_call_entirely(monkeypatch):
+    """With no DATABASE_URL configured, `_load_task` must not even attempt the
+    connection -- not fail fast, not hang on a dropped-packet network, just skip
+    it and use env defaults. This is what keeps `Bot(...)` construction (which
+    now resolves models unconditionally) hermetic in unit tests."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
+    with patch("llm.model_config.DBStorage.get_app_setting") as mocked:
+        cfg = model_config.get_model_config(force_refresh=True)
+    mocked.assert_not_called()
+    assert cfg.generation.primary == "openrouter:env/primary"
+
+
 def test_set_task_models_writes_and_invalidates(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/db")
     monkeypatch.setenv("DEFAULT_MODEL", "openrouter:env/primary")
     with patch("llm.model_config.DBStorage.set_app_setting") as setter, \
          patch("llm.model_config.DBStorage.get_app_setting", return_value=None):

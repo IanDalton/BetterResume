@@ -62,6 +62,11 @@ def _env_models(task: str) -> TaskModels:
 
 def _load_task(task: str) -> TaskModels:
     env = _env_models(task)
+    if not os.environ.get("DATABASE_URL"):
+        # Mirrors the early-out in `init_db_pool`: no configured database means
+        # nothing to read, so skip the connection attempt entirely rather than
+        # let it fail (or hang, on a dropped-packet network) on every call.
+        return env
     try:
         stored = DBStorage().get_app_setting(SETTING_KEYS[task])
     except Exception:
