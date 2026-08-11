@@ -18,7 +18,7 @@ pytest tests/unit/test_agent.py -v
 pytest --real-ai
 
 # Run tests against specific models, always use cheap models like haiku or gemini flash - lite
-pytest --models "google-gla:gemini-2.5-flash-lite,google-gla:gemini-3.1-flash-lite"
+pytest --models "google:gemini-2.5-flash-lite,google:gemini-3.1-flash-lite"
 
 # Start full local dev stack (postgres + embedding service + backend)
 docker-compose up
@@ -39,8 +39,10 @@ docker-compose up
 6. Each generation is recorded in `generation_events` (model, format, language, duration, status) for the admin dashboard
 
 ### LLM / Agent Layer (`llm/`)
-- `model_config.py` — runtime per-task model settings (`generation` / `translation` / `import`), stored in the `app_settings` table and TTL-cached for 30s. Env vars (`DEFAULT_MODEL`, `TRANSLATION_MODEL`, `IMPORT_MODEL`, `*_FALLBACK_MODEL`) seed the values and are the last resort if the database is unreachable; a stored value always wins. A `*_FALLBACK_MODEL` left unset (no env var, no stored `app_settings` row) disables the fallback for that task entirely -- `.env.template` ships `GENERATION_FALLBACK_MODEL` set by default (generation is the highest-traffic, user-facing path); `TRANSLATION_FALLBACK_MODEL`/`IMPORT_FALLBACK_MODEL` are opt-in.
-- `agent.py` — module-level pydantic-ai `Agent` singletons: `generation_agent` (tools + structured output), `translation_agent` (no tools), and `resume_import_agent` (structured extraction). No model is bound at construction; the `generate()` / `translate()` / `extract_resume_fields()` module functions resolve one per run (default `DEFAULT_MODEL`), so importing never needs credentials. `ResumeDeps` dataclass carries user_id/vector_store/db into tools. Forced retrieval (the old `tool_choice="any"`) is an output validator that raises `ModelRetry` if `search_experience` was never called. `normalize_model_name` maps legacy `google_genai:` prefixes to `google-gla:`. OpenRouter runs set `openrouter_provider={"require_parameters": True}` so OpenRouter skips providers that reject our tool-call parameters. Failures are covered in two layers: `FallbackModel` for `ModelAPIError`, plus an explicit `UnexpectedModelBehavior` catch for output-retry exhaustion (raised above the model layer, where FallbackModel cannot see it).
+- `model_config.py` — runtime per-task model settings (`generation` / `translation` / `import` / `judge`), stored in the `app_settings` table and TTL-cached for 30s. Env vars (`DEFAULT_MODEL`, `TRANSLATION_MODEL`, `IMPORT_MODEL`, `JUDGE_MODEL`, `*_FALLBACK_MODEL`) seed the values and are the last resort if the database is unreachable; a stored value always wins. A `*_FALLBACK_MODEL` left unset (no env var, no stored `app_settings` row) disables the fallback for that task entirely -- `.env.template` ships `GENERATION_FALLBACK_MODEL` set by default (generation is the highest-traffic, user-facing path); `TRANSLATION_FALLBACK_MODEL`/`IMPORT_FALLBACK_MODEL` are opt-in, and `judge` has no fallback at all. `judge` is the one task that does not inherit `DEFAULT_MODEL` -- grading a resume with the model that wrote it is self-grading -- so it falls back to `SHIPPED_JUDGE_MODEL`.
+- `model_names.py` — `normalize_model_string` / `validate_model_string`: the one place provider prefixes are mapped (legacy → current) and checked against pydantic-ai's provider registry. Separate from `agent.py` so `model_config.py` can validate what it stores without a circular import; `set_task_models` rejects unknown providers at write time rather than letting the run fail later.
+- `model_probe.py` — `probe_model`: one minimal request in our exact shape (structured output + a function tool, so pydantic-ai sends `tool_choice="required"`, plus the OpenRouter settings). The admin `PUT /model-config` runs it on the primary and fallback before storing them; `POST /model-check` exposes it standalone. A model can advertise `tools`/`tool_choice` in the OpenRouter catalog and still have no endpoint that accepts `tool_choice: "required"` (observed on `qwen/qwen3.7-flash`, which 404s), so a live request is the only reliable check.
+- `agent.py` — module-level pydantic-ai `Agent` singletons: `generation_agent` (tools + structured output), `translation_agent` (no tools), and `resume_import_agent` (structured extraction). No model is bound at construction; the `generate()` / `translate()` / `extract_resume_fields()` module functions resolve one per run (default `DEFAULT_MODEL`), so importing never needs credentials. `ResumeDeps` dataclass carries user_id/vector_store/db into tools. Forced retrieval (the old `tool_choice="any"`) is an output validator that raises `ModelRetry` if `search_experience` was never called. `normalize_model_name` (thin wrapper over `llm/model_names.py`) maps legacy prefixes — `google_genai:`, `google-gla:`, bare `gemini-*` — onto `google:`, the name pydantic-ai uses for the Gemini API. OpenRouter runs set `openrouter_provider={"require_parameters": True}` so OpenRouter skips providers that reject our tool-call parameters. Failures are covered in two layers: `FallbackModel` for `ModelAPIError`, plus an explicit `UnexpectedModelBehavior` catch for output-retry exhaustion (raised above the model layer, where FallbackModel cannot see it).
 - `vector_store.py` — `PGVectorStore`: pgvector similarity search / upsert / delete, async-first with sync wrappers
 - `embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding endpoint (`EMBEDDING_SERVICE_URL`)
 - `openrouter_catalog.py` — Fetches and caches the OpenRouter model catalog (tool-capable models) for the admin picker; uses `CatalogModel` dataclass with pricing/context info
@@ -59,9 +61,10 @@ Endpoints (all admin-only):
 - `GET /resume/admin/stats?days=N` — aggregated generation statistics
 - `GET /resume/admin/logs/export` — all generation events as CSV
 - `GET /resume/admin/models?tools_only=true&q=""` — OpenRouter model catalog (normalized list with pricing/capabilities)
-- `GET /resume/admin/model-config` — current per-task (generation/translation/import) primary/fallback models with metadata
-- `PUT /resume/admin/model-config` — update primary/fallback for one task; stored in `app_settings` table
-- `GET /resume/admin/evals/fixtures` — available job-description fixtures and default judge model
+- `GET /resume/admin/model-config` — current per-task (generation/translation/import/judge) primary/fallback models with metadata; `supports_fallback` is false for `judge`, which runs one standalone call
+- `PUT /resume/admin/model-config` — update primary/fallback for one task; stored in `app_settings` table. Both models are shape-validated and then probed live (`llm/model_probe.py`) before the write; `skip_check: true` stores without probing
+- `POST /resume/admin/model-check` — run the live probe against one model without saving it
+- `GET /resume/admin/evals/fixtures` — available job-description fixtures and the judge model currently configured for the `judge` task
 - `POST /resume/admin/evals` (status 202) — start an evaluation run in background; returns run_id immediately, streaming cells via `/stream`
 - `GET /resume/admin/evals` — past evaluation runs (newest first)
 - `GET /resume/admin/evals/compare` — per-model aggregate across all stored eval results
@@ -74,7 +77,7 @@ Endpoints (all admin-only):
 - `evaluators/` — four scoring modules:
   - `schema_evaluator.py` — `SchemaEvaluator`: validates structural correctness of `ResumeOutputFormat` (offline, deterministic)
   - `ats_evaluator.py` — `ATSEvaluator`: keyword coverage analysis (offline); scores how well a resume matches a job description
-  - `llm_judge.py` — `LLMJudge`: LLM-as-judge scoring (relevance/quality/coherence); requires a real API key
+  - `llm_judge.py` — `LLMJudge`: LLM-as-judge scoring (relevance/quality/coherence); requires a real API key. With no explicit model it uses the dashboard's `judge` task setting, and applies the same OpenRouter routing settings as the generation agents.
   - `report.py` — `ResumeEvaluationReport`: composite scoring (combines schema/ATS/judge results with weighted formula)
 - `runner.py` — `EvalSpec`/`validate_spec`/`run_eval` orchestrate evaluation runs: `MAX_MODELS=5` / `MAX_CELLS=20` / `CONCURRENCY=3`. Each cell generates a resume for one (model, JD) pair, scores it, and persists immediately (failures are logged, not raised). Optionally calls `on_cell` callback (used by admin `/evals` endpoint for SSE streaming). `run_eval` is shared by both the pytest integration test (`tests/integration/test_multi_model.py`) and the admin dashboard.
   - **Multi-worker caveat**: `_EVAL_STREAMS` (per-process, in-memory queues for live results) is not shared across uvicorn/gunicorn workers; a `/stream` request on a different worker will 404 even if the run is in flight elsewhere. Clients must know this.

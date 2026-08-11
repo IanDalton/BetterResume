@@ -115,6 +115,7 @@ def test_for_task_lookup():
         generation=model_config.TaskModels("a:1", None),
         translation=model_config.TaskModels("b:2", None),
         import_=model_config.TaskModels("c:3", None),
+        judge=model_config.TaskModels("d:4", None),
     )
     assert cfg.for_task("import").primary == "c:3"
     with pytest.raises(ValueError):

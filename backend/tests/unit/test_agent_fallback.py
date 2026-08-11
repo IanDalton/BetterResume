@@ -75,13 +75,13 @@ def _searching_then_malformed_model():
 
 def test_openrouter_settings_require_parameters():
     """Providers that cannot accept our tool-call params must be routed around."""
-    settings = agent._model_settings("openrouter:qwen/qwen3-coder-30b-a3b-instruct")
+    settings = agent.model_settings_for("openrouter:qwen/qwen3-coder-30b-a3b-instruct")
     assert settings["openrouter_provider"]["require_parameters"] is True
     assert settings["openrouter_reasoning"] == {"enabled": False}
 
 
 def test_non_openrouter_settings_untouched():
-    assert agent._model_settings("google-gla:gemini-2.5-flash-lite") is None
+    assert agent.model_settings_for("google-gla:gemini-2.5-flash-lite") is None
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +245,7 @@ async def test_model_none_resolves_from_config(stub_vector_store, sample_resume_
         generation=model_config.TaskModels("openrouter:configured/primary", "openrouter:configured/fallback"),
         translation=model_config.TaskModels("openrouter:t", None),
         import_=model_config.TaskModels("openrouter:i", None),
+        judge=model_config.TaskModels("openrouter:j", None),
     )
     with patch("llm.agent.get_model_config", return_value=cfg):
         primary, fallback = agent._resolve_model("generation", None)
@@ -254,6 +255,15 @@ async def test_model_none_resolves_from_config(stub_vector_store, sample_resume_
 
 def test_explicit_model_bypasses_config():
     with patch("llm.agent.get_model_config", side_effect=AssertionError("must not be consulted")):
+        primary, fallback = agent._resolve_model("generation", "openrouter:explicit/x")
+    assert primary == "openrouter:explicit/x"
+    assert fallback is None
+
+
+def test_explicit_legacy_model_is_normalized():
+    """A caller (or a stored setting) still saying `google-gla:` must resolve to
+    the provider pydantic-ai actually knows, not be passed through to fail."""
+    with patch("llm.agent.get_model_config", side_effect=AssertionError("must not be consulted")):
         primary, fallback = agent._resolve_model("generation", "google-gla:gemini-2.5-flash-lite")
-    assert primary == "google-gla:gemini-2.5-flash-lite"
+    assert primary == "google:gemini-2.5-flash-lite"
     assert fallback is None

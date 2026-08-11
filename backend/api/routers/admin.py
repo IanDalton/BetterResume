@@ -17,7 +17,9 @@ from api.auth import require_admin
 from api.utils import SSE_HEADERS, _make_writer, sse_event
 from evals.fixtures import list_fixtures
 from evals.runner import EvalSpec, EvalSpecError, run_eval, validate_spec
-from llm.model_config import TASKS, get_model_config, set_task_models
+from llm.model_config import TASKS, TASKS_WITH_FALLBACK, get_model_config, set_task_models
+from llm.model_names import validate_model_string
+from llm.model_probe import probe_model
 from llm.openrouter_catalog import CatalogUnavailable, fetch_models
 from models.resume import ResumeOutputFormat
 from utils.db_storage import DBStorage
@@ -25,7 +27,13 @@ from utils.db_storage import DBStorage
 logger = logging.getLogger("betterresume.api.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite")
+def _configured_judge_model() -> str:
+    """The judge model currently set for the `judge` task in the dashboard.
+
+    Read per request rather than captured at import: the admin can change it at
+    any time, and the config layer already TTL-caches the lookup.
+    """
+    return get_model_config().for_task("judge").primary
 
 class _EvalStream:
     """Fan-out for one run's live cells to every concurrent /stream request.
@@ -116,9 +124,16 @@ async def export_logs(claims: dict = Depends(require_admin)):
 
 
 class ModelConfigUpdate(BaseModel):
-    task: Literal["generation", "translation", "import"]
+    task: Literal["generation", "translation", "import", "judge"]
     primary: str
     fallback: Optional[str] = None
+    # Set to skip the live compatibility probe -- for saving a model the probe
+    # rejected anyway (e.g. the provider is briefly down, or you know better).
+    skip_check: bool = False
+
+
+class ModelCheckRequest(BaseModel):
+    model: str
 
 
 def _model_config_payload() -> dict:
@@ -131,6 +146,7 @@ def _model_config_payload() -> dict:
         tasks[task] = {
             "primary": task_models.primary,
             "fallback": task_models.fallback,
+            "supports_fallback": task in TASKS_WITH_FALLBACK,
             "updated_at": row.get("updated_at"),
             "updated_by": row.get("updated_by"),
         }
@@ -158,9 +174,48 @@ async def read_model_config(claims: dict = Depends(require_admin)):
     return _model_config_payload()
 
 
+@router.post("/model-check")
+async def check_model(req: ModelCheckRequest, claims: dict = Depends(require_admin)):
+    """Ask a model to serve one minimal request in our exact shape.
+
+    Cheap (a few tokens) and the only reliable way to learn that a model cannot
+    do the forced tool call our agents require -- the catalog's
+    `supported_parameters` claims support that individual endpoints don't honour.
+    """
+    result = await probe_model(req.model)
+    logger.info("Model check for %s by %s: ok=%s", req.model, claims.get("email"), result.ok)
+    return {"model": req.model, "ok": result.ok, "detail": result.detail, "message": result.message}
+
+
 @router.put("/model-config")
 async def update_model_config(update: ModelConfigUpdate, claims: dict = Depends(require_admin)):
-    """Set the primary/fallback models for one task."""
+    """Set the primary/fallback models for one task.
+
+    The model is probed before it is stored: a model that cannot serve our
+    request shape would otherwise be accepted here and only fail later, on a
+    real user's generation, as an opaque provider error.
+    """
+    # Cheap checks (shape, known provider) before the paid one, so a typo comes
+    # back as a typo rather than as a failed request to a nonexistent model.
+    try:
+        for model in filter(None, (update.primary, update.fallback)):
+            validate_model_string(model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not update.skip_check:
+        # The fallback is checked too: `FallbackModel` resolves both sub-models
+        # up front, so a broken fallback breaks runs whose primary is healthy.
+        for model in filter(None, (update.primary, update.fallback)):
+            result = await probe_model(model)
+            if not result.ok:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{model} failed a live check and was not saved: {result.message}. "
+                        "Pick another model, or re-save with skip_check to store it anyway."
+                    ),
+                )
     try:
         set_task_models(update.task, update.primary, update.fallback, updated_by=claims.get("email"))
     except ValueError as exc:
@@ -174,7 +229,9 @@ class EvalRunRequest(BaseModel):
     jd_ids: List[str] = []
     custom_jd: Optional[str] = None
     data_source: str = "fixture"
-    judge_model: Optional[str] = DEFAULT_JUDGE_MODEL
+    # `None` means "use the dashboard's configured judge model"; an explicit
+    # empty string is how the UI asks for a run with no judge at all.
+    judge_model: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -199,7 +256,7 @@ def _eval_download_csv_path() -> str:
 @router.get("/evals/fixtures")
 async def eval_fixtures(claims: dict = Depends(require_admin)):
     """Job-description fixtures available for evaluation runs."""
-    return {"job_descriptions": list_fixtures(), "default_judge_model": DEFAULT_JUDGE_MODEL}
+    return {"job_descriptions": list_fixtures(), "default_judge_model": _configured_judge_model()}
 
 
 @router.post("/evals", status_code=202)
@@ -222,7 +279,7 @@ async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin))
         jd_ids=req.jd_ids,
         custom_jd=req.custom_jd,
         data_source=req.data_source,
-        judge_model=req.judge_model,
+        judge_model=_configured_judge_model() if req.judge_model is None else (req.judge_model or None),
         created_by=claims.get("email") or "admin",
         notes=req.notes,
     )

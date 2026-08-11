@@ -16,11 +16,15 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from llm.model_names import validate_model_string
 from utils.db_storage import DBStorage
 
 logger = logging.getLogger("betterresume.model_config")
 
-TASKS = ("generation", "translation", "import")
+TASKS = ("generation", "translation", "import", "judge")
+# Tasks whose model is used through `llm.agent`'s fallback machinery. The judge
+# runs a single standalone scoring call in `evals/`, so it has a primary only.
+TASKS_WITH_FALLBACK = ("generation", "translation", "import")
 SETTING_KEYS = {task: f"model.{task}" for task in TASKS}
 CACHE_TTL_SECONDS = 30.0
 
@@ -29,9 +33,13 @@ _ENV_VARS = {
     "generation": "DEFAULT_MODEL",
     "translation": "TRANSLATION_MODEL",
     "import": "IMPORT_MODEL",
+    "judge": "JUDGE_MODEL",
 }
 _ENV_FALLBACK_VARS = {task: f"{task.upper()}_FALLBACK_MODEL" for task in TASKS}
-_DEFAULT_MODEL_FALLBACK = "openrouter:wafer/fp4"
+SHIPPED_DEFAULT_MODEL = "openrouter:google/gemini-2.5-flash-lite"
+# The judge grades other models' output, so it deliberately does NOT inherit
+# DEFAULT_MODEL: scoring a model's resume with that same model is self-grading.
+SHIPPED_JUDGE_MODEL = "openrouter:google/gemini-2.5-flash-lite"
 
 _CACHE: Dict[str, Any] = {"value": None, "at": 0.0}
 
@@ -47,6 +55,7 @@ class ModelConfig:
     generation: TaskModels
     translation: TaskModels
     import_: TaskModels
+    judge: TaskModels
 
     def for_task(self, task: str) -> TaskModels:
         if task not in TASKS:
@@ -55,7 +64,9 @@ class ModelConfig:
 
 
 def _env_models(task: str) -> TaskModels:
-    default = os.environ.get("DEFAULT_MODEL") or _DEFAULT_MODEL_FALLBACK
+    default = SHIPPED_JUDGE_MODEL if task == "judge" else (
+        os.environ.get("DEFAULT_MODEL") or SHIPPED_DEFAULT_MODEL
+    )
     primary = os.environ.get(_ENV_VARS[task]) or default
     return TaskModels(primary=primary, fallback=os.environ.get(_ENV_FALLBACK_VARS[task]) or None)
 
@@ -87,6 +98,7 @@ def get_model_config(force_refresh: bool = False) -> ModelConfig:
         generation=_load_task("generation"),
         translation=_load_task("translation"),
         import_=_load_task("import"),
+        judge=_load_task("judge"),
     )
     _CACHE["value"] = config
     _CACHE["at"] = now
@@ -98,23 +110,22 @@ def invalidate_cache() -> None:
     _CACHE["at"] = 0.0
 
 
-def _validate_model_string(model: str) -> str:
-    model = (model or "").strip()
-    if ":" not in model or model.startswith(":") or model.endswith(":"):
-        raise ValueError(
-            f"Model {model!r} must be provider-prefixed, e.g. 'openrouter:qwen/qwen3-coder' "
-            "or 'google-gla:gemini-2.5-flash-lite'"
-        )
-    return model
-
-
 def set_task_models(task: str, primary: str, fallback: Optional[str], updated_by: Optional[str] = None) -> None:
-    """Persist the primary/fallback pair for one task and invalidate the cache."""
+    """Persist the primary/fallback pair for one task and invalidate the cache.
+
+    Both strings are normalized and their provider checked here: a row that
+    names a provider pydantic-ai cannot resolve would otherwise be accepted
+    silently and fail on every subsequent run -- and a bad *fallback* fails even
+    when the primary is healthy, because `FallbackModel` resolves both
+    sub-models before issuing a request.
+    """
     if task not in TASKS:
         raise ValueError(f"Unknown task {task!r}; expected one of {TASKS}")
+    if fallback and task not in TASKS_WITH_FALLBACK:
+        raise ValueError(f"Task {task!r} does not support a fallback model")
     value = {
-        "primary": _validate_model_string(primary),
-        "fallback": _validate_model_string(fallback) if fallback else None,
+        "primary": validate_model_string(primary),
+        "fallback": validate_model_string(fallback) if fallback else None,
     }
     DBStorage().set_app_setting(SETTING_KEYS[task], value, updated_by)
     invalidate_cache()

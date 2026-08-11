@@ -347,6 +347,9 @@ export function EvalsTab({ user }: { user: User }) {
                 {selectedModels.length} models × {jdIdsForRun.length} job descriptions = {totalCells} generations,
                 each with one judge call.
               </p>
+              <p className="text-xs text-neutral-500">
+                Judge: <span className="font-mono">{judgeModel ?? 'none'}</span> — change it under the Models tab.
+              </p>
               {totalCells > MAX_CELLS && (
                 <p className="text-xs text-red-500 dark:text-red-400">Maximum 20 cells per run.</p>
               )}

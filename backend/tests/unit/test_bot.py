@@ -23,6 +23,7 @@ def _fixed_model_config():
         generation=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
         translation=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
         import_=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+        judge=model_config.TaskModels("openrouter:judge/x", None),
     )
     with patch("llm.agent.get_model_config", return_value=cfg):
         yield

@@ -1,11 +1,11 @@
 import logging
-import os
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from llm.agent import normalize_model_name
+from llm.agent import model_settings_for, normalize_model_name
+from llm.model_config import get_model_config
 from models.resume import ResumeOutputFormat
 
 logger = logging.getLogger(__name__)
@@ -38,16 +38,25 @@ class LLMJudgeResult:
 
 
 class LLMJudge:
-    """LLM-as-judge evaluator. Requires a real API key. Only used in integration tests."""
+    """LLM-as-judge evaluator. Requires a real API key.
+
+    With no explicit `judge_model`, the model configured for the `judge` task in
+    the admin dashboard is used (env `JUDGE_MODEL` seeds it) -- the same
+    resolution every other task goes through, so the dashboard is the single
+    place a model is chosen.
+    """
 
     def __init__(self, judge_model: str = None):
-        model_string = judge_model or os.getenv(
-            "JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite"
-        )
+        model_string = judge_model or get_model_config().for_task("judge").primary
+        model = normalize_model_name(model_string)
         self._agent = Agent(
-            normalize_model_name(model_string),
+            model,
             output_type=_JudgeScores,
             instructions=_JUDGE_SYSTEM_PROMPT,
+            # Same OpenRouter routing constraints the generation agents use: the
+            # judge also needs forced tool calls for its structured output, so it
+            # must not be routed to a provider that rejects them.
+            model_settings=model_settings_for(model),
         )
 
     def evaluate(self, resume: ResumeOutputFormat, job_description: str) -> LLMJudgeResult:

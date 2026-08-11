@@ -3,7 +3,7 @@ Multi-model comparison test.
 
 Run with:
     pytest tests/integration/test_multi_model.py -v --real-ai \\
-      --models "google-gla:gemini-2.5-flash-lite,openai:gpt-4o-mini"
+      --models "google:gemini-2.5-flash-lite,openai:gpt-4o-mini"
 
 Thin wrapper over evals.runner so the CLI and the admin dashboard measure
 exactly the same thing.
@@ -42,7 +42,7 @@ async def test_multi_model_comparison(models_under_test):
         jd_ids=["senior_swe"],
         custom_jd=None,
         data_source="fixture",
-        judge_model=os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite"),
+        judge_model=os.getenv("JUDGE_MODEL", "google:gemini-2.5-flash-lite"),
         created_by="pytest",
     )
     await run_eval(spec, db=db)

@@ -24,7 +24,8 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
-from llm.model_config import get_model_config
+from llm.model_config import SHIPPED_DEFAULT_MODEL, get_model_config
+from llm.model_names import normalize_model_string
 from models.resume import ResumeOutputFormat
 from utils.file_io import load_prompt
 from utils.resume_import import (
@@ -35,41 +36,32 @@ from utils.resume_import import (
 
 logger = logging.getLogger("betterresume.agent")
 
-# Default model is configurable via the DEFAULT_MODEL env var (provider-prefixed,
-# e.g. "openrouter:wafer/fp4" or "google:gemini-2.5-flash-lite").
-DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "openrouter:wafer/fp4")
+# Last-resort default, used only when nothing is configured in the dashboard and
+# DEFAULT_MODEL is unset. Provider-prefixed; everything ships routed through
+# OpenRouter so a single API key covers every task.
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", SHIPPED_DEFAULT_MODEL)
 RETRIES = 3
 
 JOB_PROMPT = load_prompt("job_prompt")
 TRANSLATION_PROMPT = load_prompt("translation_prompt")
 RESUME_IMPORT_PROMPT = load_prompt("resume_import_prompt")
 
-# Older code/config used LangChain provider prefixes; map them onto pydantic-ai ones.
-_LEGACY_PROVIDER_MAP = {
-    "google_genai": "google",
-    "gemini": "google",
-    "google": "google",
-    "google-gla": "google-gla",
-}
-
 
 def normalize_model_name(model: Union[str, Model, None]) -> Union[str, Model]:
-    """Translate legacy provider prefixes (e.g. ``google_genai:``) to pydantic-ai names."""
+    """Translate legacy provider prefixes (e.g. ``google-gla:``) to pydantic-ai names.
+
+    `Model` instances and `None` (meaning `DEFAULT_MODEL`) pass through; the
+    string mapping itself lives in `llm.model_names` so `llm.model_config` can
+    share it without importing this module.
+    """
     if model is None:
         return DEFAULT_MODEL
     if not isinstance(model, str):
         return model
-    if ":" in model:
-        provider, name = model.split(":", 1)
-        provider = _LEGACY_PROVIDER_MAP.get(provider, provider)
-        return f"{provider}:{name}"
-    # Bare Gemini model names default to the Google provider
-    if model.startswith("gemini"):
-        return f"google:{model}"
-    return model
+    return normalize_model_string(model)
 
 
-def _model_settings(model: Union[str, Model]) -> Optional[dict]:
+def model_settings_for(model: Union[str, Model]) -> Optional[dict]:
     """Per-model run settings.
 
     For OpenRouter: disable reasoning tokens (latency), and set
@@ -140,8 +132,8 @@ def _combined_model_settings(primary: Union[str, Model], fallback: Union[str, Mo
     merging both sub-models' settings is safe in either direction.
     """
     if fallback is None:
-        return _model_settings(primary)
-    return {**(_model_settings(primary) or {}), **(_model_settings(fallback) or {})} or None
+        return model_settings_for(primary)
+    return {**(model_settings_for(primary) or {}), **(model_settings_for(fallback) or {})} or None
 
 
 def _reset_retry_deps(deps: Any) -> None:
@@ -186,7 +178,7 @@ async def _run_with_fallback(
             on_model_used(label, used_fallback)
 
     if fallback is None:
-        result = await agent_obj.run(prompt, model=primary, model_settings=_model_settings(primary), **run_kwargs)
+        result = await agent_obj.run(prompt, model=primary, model_settings=model_settings_for(primary), **run_kwargs)
         _report(_model_label(primary), False)
         return result
 
@@ -231,7 +223,7 @@ async def _run_with_fallback(
             _reset_retry_deps(deps_obj)
         try:
             result = await agent_obj.run(
-                prompt, model=fallback, model_settings=_model_settings(fallback), **run_kwargs
+                prompt, model=fallback, model_settings=model_settings_for(fallback), **run_kwargs
             )
         except Exception:
             logger.warning("Fallback model %s also failed; surfacing the primary error", _model_label(fallback))

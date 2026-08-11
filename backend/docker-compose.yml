@@ -53,7 +53,9 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-password}@postgres-br:5432/${DB_NAME:-better_resume}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      # Only needed if a task is pointed at a `google:` model instead of OpenRouter.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
     depends_on:
       postgres-br:

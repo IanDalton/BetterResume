@@ -261,11 +261,13 @@ export interface CatalogModel {
 export interface TaskModelConfig {
   primary: string;
   fallback: string | null;
+  // The judge runs one standalone scoring call, so it has no fallback slot.
+  supports_fallback: boolean;
   updated_at: string | null;
   updated_by: string | null;
 }
 
-export type ModelTask = 'generation' | 'translation' | 'import';
+export type ModelTask = 'generation' | 'translation' | 'import' | 'judge';
 
 export interface ModelConfigResponse {
   tasks: Record<ModelTask, TaskModelConfig>;
@@ -356,12 +358,32 @@ export async function fetchModelConfig(idToken: string): Promise<ModelConfigResp
 }
 
 export async function updateModelConfig(
-  idToken: string, task: ModelTask, primary: string, fallback: string | null
+  idToken: string, task: ModelTask, primary: string, fallback: string | null,
+  // The backend runs one live request against the model before storing it, so a
+  // model that cannot serve our request shape is rejected here rather than on a
+  // user's generation. Pass true to store it regardless.
+  skipCheck = false
 ): Promise<ModelConfigResponse> {
   const res = await adminRequest(idToken, '/admin/model-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task, primary, fallback }),
+    body: JSON.stringify({ task, primary, fallback, skip_check: skipCheck }),
+  });
+  return res.json();
+}
+
+export interface ModelCheckResult {
+  model: string;
+  ok: boolean;
+  detail: string | null;
+  message: string;
+}
+
+export async function checkModel(idToken: string, model: string): Promise<ModelCheckResult> {
+  const res = await adminRequest(idToken, '/admin/model-check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
   });
   return res.json();
 }

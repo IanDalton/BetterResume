@@ -51,7 +51,9 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 5. The router renders the output file with `WordResumeWriter` or `LatexResumeWriter` from `resume/`
 
 **Key subsystems:**
-- `llm/model_config.py` — runtime per-task model configuration, loaded from `app_settings` table; env vars seed the values only if no stored setting exists. Models are runtime-configurable via the admin dashboard rather than env-fixed.
+- `llm/model_config.py` — runtime per-task model configuration (`generation`/`translation`/`import`/`judge`), loaded from `app_settings` table; env vars seed the values only if no stored setting exists. Models are runtime-configurable via the admin dashboard rather than env-fixed.
+- `llm/model_names.py` — provider-prefix normalization (`google-gla:`/`google_genai:` → `google:`) and validation against pydantic-ai's provider registry, applied wherever a model string is stored or resolved
+- `llm/model_probe.py` — one minimal forced-tool-call request against a model, run before the dashboard stores it. The OpenRouter catalog advertises capabilities individual endpoints don't honour, so this is the only reliable way to catch a model that will 404 on every real generation.
 - `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service
@@ -67,14 +69,14 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 **Database:** PostgreSQL with pgvector extension. Connection pool managed via `psycopg-pool`. User experience data is stored as vector embeddings for semantic retrieval. `generation_events` records every generation (model, format, language, duration, status) for the admin dashboard.
 
 **Required environment variables** (see `.env.template`):
-- `DEFAULT_MODEL` — default LLM for all tasks (seeded into `app_settings`; runtime-configurable via admin dashboard)
+- `DEFAULT_MODEL` — default LLM for generation/translation/import (seeded into `app_settings`; runtime-configurable via admin dashboard). `JUDGE_MODEL` seeds the eval judge separately, so a model is never asked to grade its own output.
 - `DB_*` — PostgreSQL credentials
 - `EMBEDDING_SERVICE_URL` — OpenAI-compatible TEI embedding service endpoint
 - `FIREBASE_PROJECT_ID` — verify Firebase ID tokens for the admin dashboard
 - `ADMIN_EMAIL` — admin dashboard allowlist (defaults to daltioan@gmail.com)
 - `STRIPE_*` — Stripe public/secret keys
-- `OPENROUTER_API_KEY` — required when `DEFAULT_MODEL` uses OpenRouter (shipped default: `openrouter:wafer/fp4`); avoidable only by configuring a non-OpenRouter model
-- `GEMINI_API_KEY` — optional; enables Google Gemini model access
+- `OPENROUTER_API_KEY` — the only LLM credential a default deployment needs: every shipped model routes through OpenRouter (`openrouter:google/gemini-2.5-flash-lite`)
+- `GEMINI_API_KEY` — optional; only if a task is pointed at a `google:` model instead of OpenRouter (bridged to `GOOGLE_API_KEY` in `api/main.py`)
 - `LOG_LEVEL` / `LOG_FILE` — optional logging configuration
 
 ### Frontend: React 18 + TypeScript + Vite + Tailwind

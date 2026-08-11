@@ -14,6 +14,7 @@ const TASK_META: Array<{ id: ModelTask; label: string; blurb: string }> = [
   { id: 'generation', label: 'Generation', blurb: 'Writes the resume. Needs tool calling.' },
   { id: 'translation', label: 'Translation', blurb: 'Translates non-English resumes.' },
   { id: 'import', label: 'Import', blurb: 'Extracts data from uploaded resume PDFs.' },
+  { id: 'judge', label: 'Judge', blurb: 'Scores resumes in evaluation runs. Pick a model you are not evaluating.' },
 ];
 
 function ModelSlot({ label, value, onChange, onClear, disabled }: {
@@ -52,12 +53,16 @@ function formatUpdated(t: TaskModelConfig): string {
 }
 
 type PickerTarget = { task: ModelTask; slot: 'primary' | 'fallback' } | null;
+type RejectedSave = { task: ModelTask; slot: 'primary' | 'fallback'; model: string | null; reason: string } | null;
 
 export function ModelsTab({ user }: { user: User }) {
   const [config, setConfig] = useState<ModelConfigResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerTarget>(null);
+  // A save the backend refused because the model failed its live check, kept so
+  // the admin can store it anyway without re-picking it.
+  const [rejected, setRejected] = useState<RejectedSave>(null);
   // Tasks with a save currently in flight -- disables that task's Change/Clear
   // controls so two overlapping saves for the same task (e.g. clicking Clear
   // on fallback right after picking a new primary) can never both be started
@@ -91,7 +96,9 @@ export function ModelsTab({ user }: { user: User }) {
     return () => { cancelled = true; };
   }, [getToken]);
 
-  const applyModel = async (task: ModelTask, slot: 'primary' | 'fallback', model: string | null) => {
+  const applyModel = async (
+    task: ModelTask, slot: 'primary' | 'fallback', model: string | null, skipCheck = false,
+  ) => {
     // Config-not-loaded and already-in-flight are both made unreachable from
     // the UI (controls are disabled/absent until config loads and while a
     // save for this task is pending) -- this is a defensive second guard,
@@ -104,12 +111,22 @@ export function ModelsTab({ user }: { user: User }) {
 
     setPendingTasks(prev => new Set(prev).add(task));
     try {
-      const updated = await updateModelConfig(await getToken(), task, primary, fallback);
+      const updated = await updateModelConfig(await getToken(), task, primary, fallback, skipCheck);
       setConfig(updated);
       setError(null);
+      setRejected(null);
       toast({ title: `${task} model updated` });
     } catch (e: any) {
-      setError(e.message === 'forbidden' ? 'Access denied: this account is not authorized.' : e.message);
+      if (e.message === 'forbidden') {
+        setError('Access denied: this account is not authorized.');
+      } else {
+        setError(e.message);
+        // The save was refused by the live check, not by a transport failure --
+        // offer to store it anyway rather than making the admin guess.
+        if (/failed a live check/.test(e.message ?? '')) {
+          setRejected({ task, slot, model, reason: e.message });
+        }
+      }
     } finally {
       setPendingTasks(prev => {
         const next = new Set(prev);
@@ -123,9 +140,26 @@ export function ModelsTab({ user }: { user: User }) {
     <>
       {loading && <p className="text-sm text-neutral-500">Loading…</p>}
       {error && <p className="text-sm text-red-500 dark:text-red-400">{error}</p>}
+      {rejected && (
+        <div className="mt-2 flex gap-3 text-xs">
+          <button
+            className="text-primary-500 hover:underline"
+            onClick={() => {
+              const r = rejected;
+              setRejected(null);
+              applyModel(r.task, r.slot, r.model, true);
+            }}
+          >
+            Save {rejected.model ?? 'it'} anyway
+          </button>
+          <button className="text-neutral-500 hover:underline" onClick={() => { setRejected(null); setError(null); }}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {config && (
-        <div className="grid md:grid-cols-3 gap-4">
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
           {TASK_META.map(meta => {
             const t = config.tasks[meta.id];
             const pending = pendingTasks.has(meta.id);
@@ -143,13 +177,15 @@ export function ModelsTab({ user }: { user: User }) {
                   onChange={() => setPicker({ task: meta.id, slot: 'primary' })}
                   disabled={pending}
                 />
-                <ModelSlot
-                  label="Fallback"
-                  value={t.fallback}
-                  onChange={() => setPicker({ task: meta.id, slot: 'fallback' })}
-                  onClear={() => applyModel(meta.id, 'fallback', null)}
-                  disabled={pending}
-                />
+                {t.supports_fallback && (
+                  <ModelSlot
+                    label="Fallback"
+                    value={t.fallback}
+                    onChange={() => setPicker({ task: meta.id, slot: 'fallback' })}
+                    onClear={() => applyModel(meta.id, 'fallback', null)}
+                    disabled={pending}
+                  />
+                )}
 
                 <p className="text-[11px] text-neutral-500 mt-3 pt-3 border-t border-neutral-100 dark:border-neutral-800">
                   {formatUpdated(t)}
