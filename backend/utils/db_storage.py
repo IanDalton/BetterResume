@@ -356,6 +356,8 @@ class DBStorage:
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
+                    cur.execute("ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS requested_model TEXT;")
+                    cur.execute("ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS fallback_used BOOLEAN NOT NULL DEFAULT FALSE;")
 
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS app_settings (
@@ -815,6 +817,8 @@ class DBStorage:
         duration_ms: Optional[int] = None,
         status: str = "success",
         error: Optional[str] = None,
+        requested_model: Optional[str] = None,
+        fallback_used: bool = False,
     ):
         """Insert a resume generation event row (used by the admin dashboard)."""
         try:
@@ -822,10 +826,12 @@ class DBStorage:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO generation_events (user_id, model, format, language, duration_ms, status, error)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO generation_events
+                            (user_id, model, requested_model, format, language, duration_ms, status, error, fallback_used)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (user_id, model, format, language, duration_ms, status, (error or None) and str(error)[:2000]),
+                        (user_id, model, requested_model, format, language, duration_ms, status,
+                         (error or None) and str(error)[:2000], bool(fallback_used)),
                     )
             self.logger.info(
                 "Recorded generation event user=%s status=%s duration_ms=%s", user_id, status, duration_ms
@@ -936,6 +942,20 @@ class DBStorage:
                 stats["totals"]["successful_generations"] = success_gen
                 stats["totals"]["success_rate"] = round(success_gen / total_gen, 4) if total_gen else None
                 stats["totals"]["avg_duration_ms"] = int(avg_ms or 0)
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FILTER (WHERE fallback_used),
+                           COUNT(*)
+                    FROM generation_events
+                    WHERE created_at >= CURRENT_DATE - %s::int
+                    """,
+                    (days,),
+                )
+                fb_row = cur.fetchone() or (0, 0)
+                fallback_count, event_count = int(fb_row[0] or 0), int(fb_row[1] or 0)
+                stats["totals"]["fallback_generations"] = fallback_count
+                stats["totals"]["fallback_rate"] = round(fallback_count / event_count, 4) if event_count else None
 
                 cur.execute(
                     """
@@ -1163,7 +1183,7 @@ class DBStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, created_at, user_id, model, format,
+                    SELECT id, created_at, user_id, model, requested_model, fallback_used, format,
                            language, duration_ms, status, error
                     FROM generation_events
                     ORDER BY created_at DESC
@@ -1177,11 +1197,13 @@ class DBStorage:
                         "created_at": str(r[1]),
                         "user_id": r[2],
                         "model": r[3],
-                        "format": r[4],
-                        "language": r[5],
-                        "duration_ms": r[6],
-                        "status": r[7],
-                        "error": r[8],
+                        "requested_model": r[4],
+                        "fallback_used": r[5],
+                        "format": r[6],
+                        "language": r[7],
+                        "duration_ms": r[8],
+                        "status": r[9],
+                        "error": r[10],
                     }
                     for r in cur.fetchall()
                 ]

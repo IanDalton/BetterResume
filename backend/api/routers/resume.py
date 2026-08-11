@@ -45,17 +45,20 @@ SSE_HEADERS = {
 }
 
 
-def _record_generation(user_id, model, fmt, language, started_at, status, error=None):
+def _record_generation(user_id, model, fmt, language, started_at, status, error=None,
+                        requested_model=None, fallback_used=False):
     """Persist a generation event for admin statistics; never raises."""
     try:
         DBStorage().record_generation_event(
             user_id=user_id,
             model=str(model or ""),
+            requested_model=str(requested_model or "") or None,
             format=fmt,
             language=language,
             duration_ms=int((time.time() - started_at) * 1000),
             status=status,
             error=error,
+            fallback_used=bool(fallback_used),
         )
     except Exception:
         logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
@@ -176,9 +179,15 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     try:
         result = await bot.generate_resume(req.job_description)
     except Exception as exc:
-        _record_generation(user_id, bot.model, fmt, None, gen_start, "error", str(exc))
+        _record_generation(
+            user_id, bot.last_model_used or bot.generation_model, fmt, None, gen_start, "error", str(exc),
+            requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+        )
         raise
-    _record_generation(user_id, bot.model, fmt, result.language, gen_start, "success")
+    _record_generation(
+        user_id, bot.last_model_used or bot.generation_model, fmt, result.language, gen_start, "success",
+        requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+    )
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
         result.language,
@@ -311,8 +320,9 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                     try:
                         result_obj = event.get("result")
                         _record_generation(
-                            user_id, bot.model, fmt,
+                            user_id, bot.last_model_used or bot.generation_model, fmt,
                             getattr(result_obj, "language", None), gen_start, "success",
+                            requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
                         )
                         writer.write(result_obj, output=output_name, to_pdf=True)
                         files = _build_signed_files(user_id, fmt, out_dir)
@@ -330,7 +340,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")
-            _record_generation(user_id, bot.model, fmt, None, gen_start, "error", str(e))
+            _record_generation(
+                user_id, bot.last_model_used or bot.generation_model, fmt, None, gen_start, "error", str(e),
+                requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+            )
             yield sse_event({"stage": "error", "message": str(e)})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)

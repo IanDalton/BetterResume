@@ -33,8 +33,8 @@ async def export_logs(claims: dict = Depends(require_admin)):
         logger.exception("Failed to export generation logs")
         raise HTTPException(status_code=500, detail="Failed to export logs")
     buf = io.StringIO()
-    fields = ["id", "created_at", "user_id", "model", "format",
-              "language", "duration_ms", "status", "error"]
+    fields = ["id", "created_at", "user_id", "model", "requested_model", "fallback_used",
+              "format", "language", "duration_ms", "status", "error"]
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
