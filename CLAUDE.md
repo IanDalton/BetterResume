@@ -47,7 +47,7 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 1. Frontend POST `/resume/generate-resume/{user_id}` → `api/routers/resume.py`
 2. Router instantiates `Bot(user_id, vector_store=...)` with a per-user `PGVectorStore`
 3. The generation agent's `search_experience` tool does semantic search against the user's stored experience/skills in pgvector; `get_latest_job_experience` anchors the timeline
-4. pydantic-ai calls Google Gemini (`google-gla:` provider) with retrieved context + job description, returning a validated `ResumeOutputFormat`
+4. pydantic-ai calls the configured generation model with retrieved context + job description, returning a validated `ResumeOutputFormat`
 5. The router renders the output file with `WordResumeWriter` or `LatexResumeWriter` from `resume/`
 
 **Key subsystems:**

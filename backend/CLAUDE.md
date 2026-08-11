@@ -34,7 +34,7 @@ docker-compose up
 1. `POST /resume/generate-resume/{user_id}` → `api/routers/resume.py`
 2. Router constructs a `Bot(user_id, vector_store=..., jobs_csv=...)` with a per-user `PGVectorStore`, then calls `generate_resume(jd)` or `generate_resume_progress(jd)` (streaming); both consume the same internal `_pipeline` generator
 3. The pydantic-ai generation agent calls `search_experience` (pgvector retrieval) and `get_latest_job_experience` tools
-4. The model (Google Gemini via `google-gla:` provider) returns a validated `ResumeOutputFormat`; non-English resumes go through the translation agent
+4. The configured generation model returns a validated `ResumeOutputFormat`; non-English resumes go through the translation agent
 5. The router renders the output file via `WordResumeWriter` or `LatexResumeWriter` (`_make_writer`)
 6. Each generation is recorded in `generation_events` (model, format, language, duration, status) for the admin dashboard
 
