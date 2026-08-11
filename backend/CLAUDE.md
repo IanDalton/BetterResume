@@ -92,14 +92,18 @@ Endpoints (all admin-only):
 Pydantic models: `ResumeOutputFormat`, `JobExperience`, `Education`, `Skill`, `Language`, `ResumeSection`
 
 ### API Routers (`api/routers/`)
-All mounted under `/resume` prefix:
+Mounted under `/resume` prefix:
 - `resume.py` — generation endpoints (generate, stream)
 - `jobs.py` — CRUD for user job entries
+- `languages.py` — user language preferences
+- `resume_import.py` — resume parsing and import
 - `profile.py` — user profile & picture upload
 - `users.py` — user management
-- `health.py` — health check
 - `donations.py` — Stripe webhook + payment intent
 - `admin.py` — admin statistics, model configuration, model catalog, evaluation runs/results (auth required)
+
+Mounted at root:
+- `health.py` — health check (`/health`)
 
 ### Configuration
 - `api/config.py` — directory paths (`DATA_DIR`, `OUTPUTS_BASE`, `UPLOADS_BASE`, `PROFILE_PICS_BASE`), supported image types, download signing secret

@@ -73,7 +73,7 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 - `FIREBASE_PROJECT_ID` — verify Firebase ID tokens for the admin dashboard
 - `ADMIN_EMAIL` — admin dashboard allowlist (defaults to daltioan@gmail.com)
 - `STRIPE_*` — Stripe public/secret keys
-- `OPENROUTER_API_KEY` — optional; enables OpenRouter model access
+- `OPENROUTER_API_KEY` — required when `DEFAULT_MODEL` uses OpenRouter (shipped default: `openrouter:wafer/fp4`); avoidable only by configuring a non-OpenRouter model
 - `GEMINI_API_KEY` — optional; enables Google Gemini model access
 - `LOG_LEVEL` / `LOG_FILE` — optional logging configuration
 
@@ -86,9 +86,9 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 **Auth:** Firebase authentication via `AuthGate` component wrapping all protected routes. Firebase config lives in `src/services/firebase.ts`.
 
 **Key pages/components:**
-- `OnboardingWizard` — multi-step flow to collect user profile and experience
-- `EntryBuilder` — UI for building CSV-structured resume entries
 - `Home` — main UI triggering resume generation
+- `ProfileEditor` / Entry sections (`PersonalInfoSection`, `ExperienceSection`, `EducationSection`, `LanguagesSection`) — unified data-entry flow
+- `ResumeImportDialog` — resume parsing and LinkedIn PDF import
 - `Donate` / `DonateCheckout` — Stripe payment flow
 - `AdminDashboard` (`/admin`) — generation statistics; requires Firebase sign-in with the admin email; calls `/resume/admin/stats` with a bearer ID token
 
