@@ -78,6 +78,14 @@ function EvalCell({ result }: { result: EvalResult | undefined }) {
           fallback
         </span>
       )}
+      {result.judge_error && (
+        <span
+          className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+          title={`Judge failed: ${result.judge_error}. Composite is schema/ATS only.`}
+        >
+          no judge
+        </span>
+      )}
     </div>
   );
 }

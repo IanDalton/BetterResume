@@ -334,6 +334,10 @@ export interface EvalResult {
   judge_quality: number | null;
   judge_coherence: number | null;
   judge_reasoning: string | null;
+  // Set when generation succeeded but scoring it did not. The cell still
+  // counts as a success and keeps a composite (reweighted schema/ATS), so this
+  // is how you tell a judged score from an unjudged one.
+  judge_error: string | null;
   composite_score: number | null;
   resume_json: any;
   // What this model needed us to stop asking for on this cell (see

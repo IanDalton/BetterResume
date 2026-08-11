@@ -102,13 +102,22 @@ def _judge_for(model_string: Optional[str]):
 def _record_concessions(result: dict, model_string: str) -> None:
     """Note what the model needed us to stop asking for (see `llm.model_routing`).
 
-    Read after the run rather than before: the concessions are discovered by the
-    first request that gets rejected, so a model's first cell is where they
-    appear.
+    Read after the cell's generation rather than before: a concession is
+    discovered and applied *inside* the request that provokes it, so by the time
+    generation returns, the registry already reflects what this cell actually
+    did -- including the very first cell of the very first run for that model.
+
+    The lookup is normalized because that is the key the model layer registers
+    under: a spec naming `google-gla:x` would otherwise never match the
+    `google:x` the request was made with.
     """
+    from llm.agent import normalize_model_name
     from llm.model_routing import concessions_for
 
-    learned = concessions_for(model_string)
+    key = normalize_model_name(model_string)
+    learned = concessions_for(key) if isinstance(key, str) else None
+    if learned is None:
+        return
     result["unforced_tool_choice"] = learned.unforced_tool_choice
     result["allow_reasoning"] = learned.allow_reasoning
 
@@ -148,7 +157,7 @@ async def _run_cell(spec: EvalSpec, model_string: str, jd_id: str, jd_text: str,
         "schema_score": None, "schema_passed": None, "schema_errors": None,
         "ats_score": None, "ats_coverage": None, "missing_keywords": None,
         "judge_overall": None, "judge_relevance": None, "judge_quality": None,
-        "judge_coherence": None, "judge_reasoning": None,
+        "judge_coherence": None, "judge_reasoning": None, "judge_error": None,
         "composite_score": None, "resume_json": None,
     }
     start = time.monotonic()
@@ -185,17 +194,33 @@ async def _run_cell(spec: EvalSpec, model_string: str, jd_id: str, jd_text: str,
 
         judge_result = None
         if spec.judge_model:
-            judge_result = await LLMJudge(judge_model=_judge_for(spec.judge_model)).aevaluate(resume, jd_text)
-            result.update(
-                judge_overall=judge_result.overall_score,
-                judge_relevance=judge_result.relevance_score,
-                judge_quality=judge_result.quality_score,
-                judge_coherence=judge_result.coherence_score,
-                judge_reasoning=judge_result.reasoning,
-            )
+            # A judge failure must not discard a generation that succeeded. The
+            # expensive, interesting part of the cell is already done and
+            # scored on schema and ATS; losing all of it because the judge
+            # model was misconfigured or rate-limited is what made a whole
+            # eval grid read as `error` when only its scoring step broke.
+            try:
+                judge_result = await LLMJudge(judge_model=_judge_for(spec.judge_model)).aevaluate(resume, jd_text)
+                result.update(
+                    judge_overall=judge_result.overall_score,
+                    judge_relevance=judge_result.relevance_score,
+                    judge_quality=judge_result.quality_score,
+                    judge_coherence=judge_result.coherence_score,
+                    judge_reasoning=judge_result.reasoning,
+                )
+            except Exception as judge_exc:
+                result["judge_error"] = f"{type(judge_exc).__name__}: {judge_exc}"[:1000]
+                logger.warning(
+                    "Eval cell judge failed model=%s jd=%s (generation kept): %s",
+                    model_string, jd_id, judge_exc,
+                )
 
         # Reuse ResumeEvaluationReport's weighting rather than re-implementing it here,
         # so a dashboard run and the pytest/report path can never silently diverge.
+        # With `llm_judge=None` -- no judge configured, or a judge that failed --
+        # it reweights schema/ATS to fill the gap, so the composite stays
+        # meaningful. It is NOT comparable to a judged one, which is why
+        # `judge_error` is surfaced next to the score rather than swallowed.
         report = ResumeEvaluationReport(
             model=model_string, jd_name=jd_id, schema=schema, ats=ats, llm_judge=judge_result,
         )

@@ -97,7 +97,7 @@ def test_get_eval_results_builds_dicts():
     cur = FakeCursor(rows=[(
         "22222222-2222-2222-2222-222222222222", "11111111-1111-1111-1111-111111111111",
         "openrouter:a", "senior_swe", "success", None, 4200, 900, 700, False,
-        1.0, True, [], 0.8, 0.75, ["airflow"], 0.82, 0.8, 0.8, 0.9, "Good.", 0.87,
+        1.0, True, [], 0.8, 0.75, ["airflow"], 0.82, 0.8, 0.8, 0.9, "Good.", None, 0.87,
         {"language": "en"}, True, False, None,
     )])
     with _patch_conn(cur):

@@ -300,6 +300,14 @@ export function ResultsTable({ results, getToken, onPromote }: ResultsTableProps
                         </span>
                       )}
                       <ConcessionBadges unforced={r.unforced_tool_choice} reasoning={r.allow_reasoning} />
+                      {r.judge_error && (
+                        <span
+                          className="ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                          title={`Judge failed: ${r.judge_error}. Composite is schema/ATS only.`}
+                        >
+                          no judge
+                        </span>
+                      )}
                     </td>
                     <td className="p-2 text-xs text-neutral-600 dark:text-neutral-400">
                       {r.jd_id === 'custom' ? 'Custom JD' : r.jd_id ?? '—'}
