@@ -39,7 +39,8 @@ docker-compose up
 6. Each generation is recorded in `generation_events` (model, format, language, duration, status) for the admin dashboard
 
 ### LLM / Agent Layer (`llm/`)
-- `agent.py` — module-level pydantic-ai `Agent` singletons: `generation_agent` (tools + structured output) and `translation_agent` (no tools). No model is bound at construction; the `generate()` / `translate()` module functions resolve one per run (default `DEFAULT_MODEL`), so importing never needs credentials. `ResumeDeps` dataclass carries user_id/vector_store/db into tools. Forced retrieval (the old `tool_choice="any"`) is an output validator that raises `ModelRetry` if `search_experience` was never called. `normalize_model_name` maps legacy `google_genai:` prefixes to `google-gla:`.
+- `model_config.py` — runtime per-task model settings (`generation` / `translation` / `import`), stored in the `app_settings` table and TTL-cached for 30s. Env vars (`DEFAULT_MODEL`, `TRANSLATION_MODEL`, `IMPORT_MODEL`, `*_FALLBACK_MODEL`) seed the values and are the last resort if the database is unreachable; a stored value always wins.
+- `agent.py` — module-level pydantic-ai `Agent` singletons: `generation_agent` (tools + structured output), `translation_agent` (no tools), and `resume_import_agent` (structured extraction). No model is bound at construction; the `generate()` / `translate()` / `extract_resume_fields()` module functions resolve one per run (default `DEFAULT_MODEL`), so importing never needs credentials. `ResumeDeps` dataclass carries user_id/vector_store/db into tools. Forced retrieval (the old `tool_choice="any"`) is an output validator that raises `ModelRetry` if `search_experience` was never called. `normalize_model_name` maps legacy `google_genai:` prefixes to `google-gla:`. OpenRouter runs set `openrouter_provider={"require_parameters": True}` so OpenRouter skips providers that reject our tool-call parameters. Failures are covered in two layers: `FallbackModel` for `ModelAPIError`, plus an explicit `UnexpectedModelBehavior` catch for output-retry exhaustion (raised above the model layer, where FallbackModel cannot see it).
 - `vector_store.py` — `PGVectorStore`: pgvector similarity search / upsert / delete, async-first with sync wrappers
 - `embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding endpoint (`EMBEDDING_SERVICE_URL`)
 
@@ -78,7 +79,8 @@ All mounted under `/resume` prefix:
 
 ### Configuration
 - `api/config.py` — directory paths (`DATA_DIR`, `OUTPUTS_BASE`, `UPLOADS_BASE`, `PROFILE_PICS_BASE`), supported image types, download signing secret
-- `.env.template` — required env vars: `GEMINI_API_KEY`, `DB_HOST/PORT/NAME/USER/PASSWORD`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `FIREBASE_PROJECT_ID`, `ADMIN_EMAIL`
+- `.env.template` — required env vars: `GEMINI_API_KEY`, `DB_HOST/PORT/NAME/USER/PASSWORD`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `FIREBASE_PROJECT_ID`, `ADMIN_EMAIL`, and model configuration (`DEFAULT_MODEL`, `TRANSLATION_MODEL`, `IMPORT_MODEL`, `*_FALLBACK_MODEL`)
+- `app_settings` table — runtime configuration (e.g. active LLM models per task); persisted alongside schema in `utils/db_storage.py`
 
 ### Testing (`tests/`)
 - `pytest.ini` — `asyncio_mode = auto`, 120s timeout

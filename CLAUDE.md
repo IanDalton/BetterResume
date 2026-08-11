@@ -51,6 +51,7 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 5. The router renders the output file with `WordResumeWriter` or `LatexResumeWriter` from `resume/`
 
 **Key subsystems:**
+- `llm/model_config.py` — runtime per-task model configuration, loaded from `app_settings` table; env vars seed the values only if no stored setting exists. Models are runtime-configurable via the admin dashboard rather than env-fixed.
 - `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service
