@@ -9,6 +9,7 @@ from api.auth import require_admin
 from api.routers import admin as admin_router
 from llm import model_config
 from llm.model_probe import ProbeResult
+from llm.model_routing import Concessions
 from llm.openrouter_catalog import CatalogModel, CatalogUnavailable
 
 CATALOG = [
@@ -172,17 +173,29 @@ def test_model_check_endpoint_reports_the_probe_result():
         body = _client().post("/admin/model-check", json={"model": "openrouter:x/y"}).json()
     assert body == {
         "model": "openrouter:x/y", "ok": False, "detail": "ModelHTTPError: 404",
-        "forced_tool_choice": True, "message": "ModelHTTPError: 404",
+        "forced_tool_choice": True, "reasoning_disabled": True,
+        "message": "ModelHTTPError: 404",
     }
 
 
+def test_model_check_reports_a_model_that_must_keep_reasoning_enabled():
+    """`reasoning={"enabled": false}` under `require_parameters` disqualifies
+    every endpoint of a model that takes no reasoning parameter."""
+    degraded = ProbeResult(True, concessions=Concessions(allow_reasoning=True))
+    with patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)):
+        body = _client().post("/admin/model-check", json={"model": "openrouter:qwen/qwen3-coder-30b-a3b-instruct"}).json()
+    assert body["ok"] is True
+    assert body["reasoning_disabled"] is False
+    assert "reasoning" in body["message"]
+
+
 def test_model_check_reports_a_model_that_needs_an_unforced_tool_choice():
-    degraded = ProbeResult(True, forced_tool_choice=False)
+    degraded = ProbeResult(True, concessions=Concessions(unforced_tool_choice=True))
     with patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)):
         body = _client().post("/admin/model-check", json={"model": "openrouter:qwen/qwen3.7-flash"}).json()
     assert body["ok"] is True
     assert body["forced_tool_choice"] is False
-    assert "forced tool calls" in body["message"]
+    assert "forced tool choice" in body["message"]
 
 
 def test_put_model_config_saves_a_model_that_needs_an_unforced_tool_choice():
@@ -194,7 +207,7 @@ def test_put_model_config_saves_a_model_that_needs_an_unforced_tool_choice():
         import_=model_config.TaskModels("openrouter:i", None),
         judge=model_config.TaskModels("openrouter:j", None),
     )
-    degraded = ProbeResult(True, forced_tool_choice=False)
+    degraded = ProbeResult(True, concessions=Concessions(unforced_tool_choice=True))
     with patch("api.routers.admin.set_task_models") as setter, \
          patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)), \
          patch("api.routers.admin.get_model_config", return_value=cfg), \
@@ -204,7 +217,7 @@ def test_put_model_config_saves_a_model_that_needs_an_unforced_tool_choice():
         })
     assert resp.status_code == 200
     setter.assert_called_once()
-    assert "forced tool calls" in resp.json()["notice"]
+    assert "forced tool choice" in resp.json()["notice"]
 
 
 def test_model_check_requires_auth():

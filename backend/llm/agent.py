@@ -26,7 +26,7 @@ from pydantic_ai.models import Model
 
 from llm.model_config import SHIPPED_DEFAULT_MODEL, get_model_config
 from llm.model_names import normalize_model_string
-from llm.tool_forcing import prepare as prepare_model
+from llm.model_routing import prepare as prepare_model
 from models.resume import ResumeOutputFormat
 from utils.file_io import load_prompt
 from utils.resume_import import (

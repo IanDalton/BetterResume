@@ -53,8 +53,8 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 **Key subsystems:**
 - `llm/model_config.py` — runtime per-task model configuration (`generation`/`translation`/`import`/`judge`), loaded from `app_settings` table; env vars seed the values only if no stored setting exists. Models are runtime-configurable via the admin dashboard rather than env-fixed.
 - `llm/model_names.py` — provider-prefix normalization (`google-gla:`/`google_genai:` → `google:`) and validation against pydantic-ai's provider registry, applied wherever a model string is stored or resolved
-- `llm/tool_forcing.py` — models whose endpoints reject a forced `tool_choice` are retried once with an unforced one and remembered, so they work instead of 404ing on every request
-- `llm/model_probe.py` — one minimal request against a model in the production shape, run before the dashboard stores it. The OpenRouter catalog advertises capabilities individual endpoints don't honour, so this is the only reliable way to know whether a model works, works only unforced, or not at all.
+- `llm/model_routing.py` — the OpenRouter routing demands we send (`require_parameters`, reasoning disabled, forced `tool_choice`) disqualify many capable models; a rejected request is retried with one demand dropped and the concession remembered, so those models work instead of failing every request
+- `llm/model_probe.py` — one minimal request against a model in the production shape, run before the dashboard stores it. The OpenRouter catalog advertises capabilities individual endpoints don't honour, so this is the only reliable way to know whether a model works, works with a routing concession, or not at all.
 - `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service

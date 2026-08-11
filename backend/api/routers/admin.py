@@ -189,7 +189,9 @@ async def check_model(req: ModelCheckRequest, claims: dict = Depends(require_adm
                 req.model, claims.get("email"), result.ok, result.forced_tool_choice)
     return {
         "model": req.model, "ok": result.ok, "detail": result.detail,
-        "forced_tool_choice": result.forced_tool_choice, "message": result.message,
+        "forced_tool_choice": result.forced_tool_choice,
+        "reasoning_disabled": not result.concessions.allow_reasoning,
+        "message": result.message,
     }
 
 
@@ -223,9 +225,9 @@ async def update_model_config(update: ModelConfigUpdate, claims: dict = Depends(
                         "Pick another model, or re-save with skip_check to store it anyway."
                     ),
                 )
-            if not result.forced_tool_choice:
-                # Usable, but worth saying out loud: the agent asks for the tool
-                # rather than requiring it, so weaker models may need retries.
+            if result.concessions:
+                # Usable, but worth saying out loud: each concession costs
+                # something (retries on weaker models, or reasoning tokens).
                 notices.append(f"{model}: {result.message}")
     try:
         set_task_models(update.task, update.primary, update.fallback, updated_by=claims.get("email"))

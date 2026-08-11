@@ -13,7 +13,7 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from llm import tool_forcing
+from llm import model_routing
 from llm.model_probe import probe_model
 
 TOOL_CHOICE_404 = ModelHTTPError(
@@ -47,18 +47,18 @@ async def test_probe_reports_a_model_that_needs_an_unforced_tool_choice(monkeypa
     """The exact production failure. The model works once the tool choice is
     degraded, so the probe passes it -- and says so."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    tool_forcing.reset_known_models()
+    model_routing.reset_known_models()
 
     def build(model_string, *, forced):
         return _raising_model(TOOL_CHOICE_404) if forced else _answering_model()
 
-    monkeypatch.setattr(tool_forcing, "build_openrouter_model", build)
+    monkeypatch.setattr(model_routing, "build_openrouter_model", build)
     result = await probe_model("openrouter:qwen/qwen3.7-flash")
 
     assert result.ok is True
     assert result.forced_tool_choice is False
-    assert "forced tool calls" in result.message
-    tool_forcing.reset_known_models()
+    assert "forced tool choice" in result.message
+    model_routing.reset_known_models()
 
 
 async def test_probe_fails_a_model_that_fails_even_unforced():
@@ -112,10 +112,10 @@ def test_probe_result_message_is_human_readable():
 async def test_probe_degrades_the_reported_model_for_real():
     """Live check against the model from the production report: it rejects a
     forced tool choice, and works once that is degraded."""
-    tool_forcing.reset_known_models()
+    model_routing.reset_known_models()
     try:
         result = await probe_model("openrouter:qwen/qwen3.7-flash")
     finally:
-        tool_forcing.reset_known_models()
+        model_routing.reset_known_models()
     assert result.ok is True
     assert result.forced_tool_choice is False

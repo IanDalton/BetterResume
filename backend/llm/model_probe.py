@@ -6,24 +6,24 @@ requests. `qwen/qwen3.7-flash`, for example, advertises `tools` *and*
 `tool_choice: "auto"` and nothing else.
 
 The probe runs one request through exactly the production path, including the
-`llm.tool_forcing` degrade, so it reports three distinct outcomes: the model
-works, the model works but only with an unforced tool choice (`ok=True`,
-`forced_tool_choice=False`), or the model does not work at all. Cheap (a handful
-of tokens), and it happens when an admin picks the model rather than on a real
-user's generation.
+`llm.model_routing` concessions, so it reports what the model needs: it works
+as-is, it works but only if we stop forcing its tool choice and/or stop
+disabling its reasoning (`ok=True` with `concessions`), or it does not work at
+all. Cheap (a handful of tokens), and it happens when an admin picks the model
+rather than on a real user's generation.
 """
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from llm.agent import model_settings_for, normalize_model_name
-from llm.tool_forcing import forcing_disabled
-from llm.tool_forcing import prepare as prepare_model
+from llm.agent import RETRIES, model_settings_for, normalize_model_name
+from llm.model_routing import Concessions, concessions_for
+from llm.model_routing import prepare as prepare_model
 
 logger = logging.getLogger("betterresume.model_probe")
 
@@ -42,7 +42,9 @@ class _ProbeOutput(BaseModel):
 probe_agent = Agent(
     output_type=_ProbeOutput,
     instructions="Reply by calling the output tool with the answer 'ready'.",
-    retries=1,
+    # Same output-retry budget as the real agents, so the probe is neither
+    # stricter nor more forgiving than the runs it is vouching for.
+    retries=RETRIES,
 )
 
 
@@ -56,19 +58,20 @@ def probe_ping() -> str:
 class ProbeResult:
     ok: bool
     detail: Optional[str] = None
-    # False when the model had to be asked (`tool_choice: "auto"`) rather than
-    # forced to call its tool. Still usable -- just worth telling the admin.
-    forced_tool_choice: bool = True
+    # What the model needed us to stop asking for. Still usable either way --
+    # just worth telling the admin, since both concessions cost something.
+    concessions: Concessions = field(default_factory=Concessions)
+
+    @property
+    def forced_tool_choice(self) -> bool:
+        return not self.concessions.unforced_tool_choice
 
     @property
     def message(self) -> str:
         if not self.ok:
             return self.detail or "Model check failed"
-        if not self.forced_tool_choice:
-            return (
-                "Model responded correctly, but it rejects forced tool calls; "
-                "requests to it will ask for the tool instead of requiring it"
-            )
+        if self.concessions:
+            return f"Model responded correctly, but it {self.concessions.describe()}"
         return "Model responded correctly"
 
 
@@ -99,5 +102,5 @@ async def probe_model(model: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> Pro
         detail = f"{type(exc).__name__}: {exc}"
         logger.info("Model probe failed for %s: %s", model, detail)
         return ProbeResult(False, detail[:500])
-    forced = not (isinstance(resolved, str) and forcing_disabled(resolved))
-    return ProbeResult(True, forced_tool_choice=forced)
+    learned = concessions_for(resolved) if isinstance(resolved, str) else Concessions()
+    return ProbeResult(True, concessions=learned)
