@@ -88,11 +88,15 @@ async def fetch_models(force_refresh: bool = False) -> List[CatalogModel]:
             response = await client.get(MODELS_URL, headers=headers)
         response.raise_for_status()
         payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError(f"Expected dict payload, got {type(payload).__name__}")
+        data = payload.get("data") or []
     except Exception as exc:
         logger.warning("OpenRouter model feed unavailable: %s", exc)
         raise CatalogUnavailable(str(exc)) from exc
 
-    models = [m for m in (_parse_entry(e) for e in payload.get("data") or []) if m is not None]
+    models = [m for m in (_parse_entry(e) for e in data) if m is not None]
+    models.sort(key=lambda m: m.id)
     _CACHE["value"] = models
     _CACHE["at"] = now
     logger.info("Fetched %d models from OpenRouter", len(models))

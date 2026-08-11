@@ -52,7 +52,9 @@ async def test_parses_models_and_capabilities():
 async def test_model_string_is_provider_prefixed():
     with _mock_get():
         models = await catalog.fetch_models(force_refresh=True)
-    assert models[0].model_string == "openrouter:qwen/qwen3-coder-30b-a3b-instruct"
+    by_id = {m.id: m for m in models}
+    qwen = by_id["qwen/qwen3-coder-30b-a3b-instruct"]
+    assert qwen.model_string == "openrouter:qwen/qwen3-coder-30b-a3b-instruct"
 
 
 async def test_prices_normalized_to_per_million_tokens():
@@ -104,3 +106,17 @@ async def test_as_dict_shape():
         "id", "model_string", "name", "context_length",
         "prompt_price", "completion_price", "supports_tools", "supports_structured_outputs",
     }
+
+
+async def test_non_dict_payload_raises_catalog_unavailable():
+    # Test that non-dict payloads (e.g., arrays, null) raise CatalogUnavailable
+    with _mock_get(payload=[]):
+        with pytest.raises(catalog.CatalogUnavailable):
+            await catalog.fetch_models(force_refresh=True)
+
+
+async def test_null_payload_raises_catalog_unavailable():
+    # Test that null payload raises CatalogUnavailable
+    with _mock_get(payload=None):
+        with pytest.raises(catalog.CatalogUnavailable):
+            await catalog.fetch_models(force_refresh=True)
