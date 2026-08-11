@@ -55,11 +55,13 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 - `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service
+- `llm/openrouter_catalog.py` — OpenRouter model catalog client (tool-capable models with pricing)
+- `evals/` — Evaluation harness: deterministic fixtures, evaluation runners (schema/ATS/LLM-judge scoring), shared by CLI integration tests and admin dashboard
 - `resume/` — Format-specific writers (Word, LaTeX) over a shared base writer
 - `models/` — Pydantic models for `Resume`, `JobExperience`, `Education`, `Skill`
-- `utils/db_storage.py` — PostgreSQL interaction (pgvector queries, user data, generation events, admin stats)
+- `utils/db_storage.py` — PostgreSQL interaction (pgvector queries, user data, generation events, eval runs/results, admin stats)
 - `api/auth.py` — Firebase ID-token verification (PyJWT against Google certs); `require_admin` dependency
-- `api/routers/admin.py` — `/resume/admin/stats` endpoint (admin-only)
+- `api/routers/admin.py` — admin endpoints: stats, logs, model catalog, model config, evaluation runs/results (all admin-only)
 - `prompts/` — Plain-text prompt templates loaded at runtime
 
 **Database:** PostgreSQL with pgvector extension. Connection pool managed via `psycopg-pool`. User experience data is stored as vector embeddings for semantic retrieval. `generation_events` records every generation (model, format, language, duration, status) for the admin dashboard.
