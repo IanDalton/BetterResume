@@ -3,6 +3,7 @@ import csv
 import io
 import logging
 import os
+import shutil
 import tempfile
 import uuid
 from typing import Dict, List, Literal, Optional
@@ -10,6 +11,7 @@ from typing import Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from api.auth import require_admin
 from api.utils import SSE_HEADERS, _make_writer, sse_event
@@ -26,9 +28,27 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite")
 
 # Live cell queues for in-flight runs, keyed by run_id, so /stream can follow a
-# run started by POST /evals. Dropped when the run finishes; history endpoints
-# serve anything older.
+# run started by POST /evals. Populated by the run's own background task (see
+# `start_eval`) via `_on_cell`, and popped by that same task the moment the
+# run finishes -- deliberately with no replay grace window, so a run that
+# nobody ever streams can't leak a queue of up to MAX_CELLS cell dicts (each
+# carrying a full resume_json) forever. A client that connects to /stream
+# after the run has already finished gets a 404 and should fall back to
+# GET /evals/{run_id} for the completed results.
+#
+# NOTE: this is process-local, in-memory state. With more than one
+# uvicorn/gunicorn worker, a /stream request can land on a worker that never
+# saw the POST that started the run, and will 404 even though the run is
+# genuinely in flight on a sibling worker. That's inherent to this design,
+# not something to work around here -- whatever consumes /stream (e.g. a
+# live results grid) needs to know this going in.
 _EVAL_STREAMS: Dict[str, "asyncio.Queue[dict]"] = {}
+
+# Strong references to in-flight run tasks. asyncio only holds a weak
+# reference to whatever asyncio.create_task() returns, so a bare, otherwise
+# unreferenced task can be garbage-collected mid-run. Discarded via the
+# task's own done-callback once it finishes.
+_RUNNING_EVAL_TASKS: set = set()
 
 
 @router.get("/stats")
@@ -154,19 +174,18 @@ async def eval_fixtures(claims: dict = Depends(require_admin)):
 
 @router.post("/evals", status_code=202)
 async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin)):
-    """Run an evaluation and return its id.
+    """Start an evaluation run in the background; returns its id immediately.
 
-    This awaits `run_eval` inline rather than firing it via
-    `asyncio.create_task` and returning a locally-minted id immediately: a
-    bare `create_task` is only scheduled once something here yields control
-    back to the event loop, which never happens before `return` -- so the
-    response would carry an id `run_eval` never actually saw. Awaiting
-    keeps the two in lockstep at the cost of a request that stays open for
-    the run's full duration (bounded by `MAX_CELLS`=20 cells at
-    `CONCURRENCY`=3 in `evals.runner`, acceptable for an admin-only tool).
-    Other requests on the same event loop -- including a concurrent
-    `GET .../stream` -- are still served while this await is pending; cells
-    land in `queue` via `_on_cell` as each one finishes.
+    The response carries the id minted *here*, not whatever `run_eval`
+    eventually returns. A paid, multi-cell run can take minutes (up to
+    `MAX_CELLS`=20 cells at `CONCURRENCY`=3 in `evals.runner`, each cell a
+    generation call plus a judge call) -- well past most proxy/gateway read
+    timeouts (nginx defaults to 60s, Cloudflare cuts at 100s). Awaiting the
+    run inline would risk the admin never learning the run_id at all while
+    the server keeps paying for the run regardless (uvicorn does not cancel
+    a handler on client disconnect), and would make `GET .../stream`
+    unreachable by construction, since the id would only be known after the
+    last cell finished -- exactly when there is nothing left to stream.
     """
     spec = EvalSpec(
         models=req.models,
@@ -182,7 +201,8 @@ async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin))
     except EvalSpecError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Mint the id here so `queue` is registered before any cell can land.
+    # Mint the id here so `queue` is registered, and the client can start
+    # streaming, before the run itself has done anything.
     run_id = str(uuid.uuid4())
     queue: "asyncio.Queue[dict]" = asyncio.Queue()
     _EVAL_STREAMS[run_id] = queue
@@ -190,12 +210,24 @@ async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin))
     async def _on_cell(result: dict):
         await queue.put(result)
 
-    try:
-        run_id = await run_eval(spec, on_cell=_on_cell, run_id=run_id)
-    except Exception:
-        logger.exception("Eval run %s failed", run_id)
-    finally:
-        await queue.put({"_done": True})
+    async def _run():
+        try:
+            await run_eval(spec, on_cell=_on_cell, run_id=run_id)
+        except Exception as exc:
+            # This is not a normal empty run: run_eval either never got as
+            # far as recording a row, or died mid-run, so GET /evals/{run_id}
+            # may 404 with nothing to show for it. Make that distinguishable
+            # to anyone still attached to the stream rather than letting the
+            # run silently vanish behind an already-returned 202.
+            logger.exception("Eval run %s failed", run_id)
+            await queue.put({"_error": True, "message": f"{type(exc).__name__}: {exc}"})
+        finally:
+            await queue.put({"_done": True})
+            _EVAL_STREAMS.pop(run_id, None)
+
+    task = asyncio.create_task(_run())
+    _RUNNING_EVAL_TASKS.add(task)
+    task.add_done_callback(_RUNNING_EVAL_TASKS.discard)
 
     logger.info("Eval run %s requested by %s: %d model(s)", run_id, claims.get("email"), len(req.models))
     return {"run_id": run_id}
@@ -234,11 +266,17 @@ async def stream_eval(run_id: str, claims: dict = Depends(require_admin)):
         try:
             while True:
                 item = await queue.get()
+                if item.get("_error"):
+                    yield sse_event({"message": item.get("message")}, event="error")
+                    continue
                 if item.get("_done"):
                     yield sse_event({}, event="done")
                     return
                 yield sse_event(item, event="cell")
         finally:
+            # Idempotent: the run's own background task already pops this on
+            # completion (see the `_EVAL_STREAMS` module docstring); this
+            # covers a client that disconnects mid-stream instead.
             _EVAL_STREAMS.pop(run_id, None)
 
     return StreamingResponse(_events(), media_type="text/event-stream", headers=SSE_HEADERS)
@@ -254,12 +292,24 @@ async def download_eval_resume(result_id: str, format: str = "word", claims: dic
         raise HTTPException(status_code=400, detail="This result has no generated resume")
 
     resume = ResumeOutputFormat.model_validate(result["resume_json"])
-    writer = _make_writer(format.lower(), csv_path=_eval_download_csv_path(), profile_path=None, profile=None)
+    csv_path = _eval_download_csv_path()
+    try:
+        writer = _make_writer(format.lower(), csv_path=csv_path, profile_path=None, profile=None)
+    finally:
+        # BaseWriter.__init__ reads the CSV eagerly (see _eval_download_csv_path's
+        # docstring), so it's safe to remove the moment the writer exists.
+        os.unlink(csv_path)
+
     out_dir = tempfile.mkdtemp(prefix="eval_resume_")
     output = os.path.join(out_dir, f"eval_{result_id}{writer.file_ending}")
     try:
         writer.write(resume, output=output, to_pdf=True)
     except Exception:
         logger.exception("Failed rendering eval resume %s", result_id)
+        shutil.rmtree(out_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail="Failed to render resume")
-    return FileResponse(output, filename=os.path.basename(output))
+    return FileResponse(
+        output,
+        filename=os.path.basename(output),
+        background=BackgroundTask(shutil.rmtree, out_dir, ignore_errors=True),
+    )
