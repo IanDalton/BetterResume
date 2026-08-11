@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchEvalComparison,
   fetchEvalRun,
@@ -318,11 +318,11 @@ export function ResultsTable({ results, getToken, onPromote }: ResultsTableProps
                             </div>
                           )}
 
-                          {r.missing_keywords.length > 0 && (
+                          {(r.missing_keywords?.length ?? 0) > 0 && (
                             <div>
                               <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1">Missing keywords</p>
                               <div className="flex flex-wrap gap-1.5">
-                                {r.missing_keywords.map(k => (
+                                {r.missing_keywords?.map(k => (
                                   <span
                                     key={k}
                                     className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
@@ -420,6 +420,13 @@ export function RunHistory({ getToken, onOpenRun }: RunHistoryProps) {
   const [openResults, setOpenResults] = useState<EvalResult[] | null>(null);
   const [openLoading, setOpenLoading] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
+  // Bumped on every `openRow` call and compared after each await below, so a
+  // slow response for a run the admin already clicked away from (e.g. click
+  // run A, then click run B before A's fetch resolves) can never overwrite
+  // what's currently on screen -- the same "cancelled" idea the mount-effect
+  // fetches elsewhere in this file use, adapted for an imperative handler
+  // that can be invoked repeatedly rather than a `useEffect` cleanup.
+  const openRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -441,6 +448,7 @@ export function RunHistory({ getToken, onOpenRun }: RunHistoryProps) {
       setOpenRunId(null);
       return;
     }
+    const requestId = ++openRequestRef.current;
     setOpenRunId(run.id);
     onOpenRun?.(run.id);
     setOpenLoading(true);
@@ -450,12 +458,14 @@ export function RunHistory({ getToken, onOpenRun }: RunHistoryProps) {
     try {
       const token = await getToken();
       const { run: fetchedRun, results } = await fetchEvalRun(token, run.id);
+      if (openRequestRef.current !== requestId) return; // superseded by a later click
       setOpenRun(fetchedRun);
       setOpenResults(results);
     } catch (e: any) {
+      if (openRequestRef.current !== requestId) return;
       setOpenError(e.message === 'forbidden' ? 'Access denied.' : e.message);
     } finally {
-      setOpenLoading(false);
+      if (openRequestRef.current === requestId) setOpenLoading(false);
     }
   };
 

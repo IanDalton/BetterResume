@@ -219,172 +219,172 @@ export function EvalsTab({ user }: { user: User }) {
               <CardTitle>New run</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">Models</p>
-            <div className="flex flex-wrap items-center gap-2">
-              {selectedModels.map(m => (
-                <span
-                  key={m}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-2.5 py-1 text-xs font-mono"
-                >
-                  {m}
-                  <button
-                    type="button"
-                    onClick={() => removeModel(m)}
-                    disabled={running}
-                    aria-label={`Remove ${m}`}
-                    className="text-neutral-400 hover:text-red-500 disabled:opacity-50 disabled:pointer-events-none"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => setPickerOpen(true)}
-                disabled={running || selectedModels.length >= MAX_MODELS}
-              >
-                Add model
-              </Button>
-            </div>
-            {selectedModels.length >= MAX_MODELS && (
-              <p className="text-xs text-neutral-500 mt-1">Maximum 5 models per run.</p>
-            )}
-          </div>
-
-          <div>
-            <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">
-              Job descriptions
-            </p>
-            {fixturesLoading && <p className="text-sm text-neutral-500">Loading fixtures…</p>}
-            {fixturesError && <p className="text-sm text-red-500 dark:text-red-400">{fixturesError}</p>}
-            {!fixturesLoading && !fixturesError && (
-              <div className="space-y-1.5 mb-3">
-                {fixtures.map(f => (
-                  <label key={f.id} className="flex items-start gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 accent-primary-500"
-                      checked={selectedJds.includes(f.id)}
-                      onChange={() => toggleJd(f.id)}
-                      disabled={running || customJd.trim() !== ''}
-                    />
-                    <span>
-                      <span className="font-medium">{f.label}</span>
-                      <span className="block text-xs text-neutral-500">{f.preview}</span>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">Models</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {selectedModels.map(m => (
+                    <span
+                      key={m}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-2.5 py-1 text-xs font-mono"
+                    >
+                      {m}
+                      <button
+                        type="button"
+                        onClick={() => removeModel(m)}
+                        disabled={running}
+                        aria-label={`Remove ${m}`}
+                        className="text-neutral-400 hover:text-red-500 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        ×
+                      </button>
                     </span>
-                  </label>
-                ))}
-              </div>
-            )}
-            <Textarea
-              placeholder="Paste a custom job description…"
-              value={customJd}
-              onChange={e => setCustomJd(e.target.value)}
-              disabled={running || selectedJds.length > 0}
-            />
-          </div>
-
-          <div>
-            <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">
-              Data source
-            </p>
-            <div className="flex gap-4 text-sm">
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  name="eval-data-source"
-                  className="accent-primary-500"
-                  checked={dataSource === 'fixture'}
-                  onChange={() => setDataSource('fixture')}
-                  disabled={running}
-                />
-                Fixture profile (deterministic)
-              </label>
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  name="eval-data-source"
-                  className="accent-primary-500"
-                  checked={dataSource === 'mine'}
-                  onChange={() => setDataSource('mine')}
-                  disabled={running}
-                />
-                My stored profile
-              </label>
-            </div>
-          </div>
-
-          <p className="text-xs text-neutral-500">
-            {selectedModels.length} models × {jdIdsForRun.length} job descriptions = {totalCells} generations,
-            each with one judge call.
-          </p>
-          {totalCells > MAX_CELLS && (
-            <p className="text-xs text-red-500 dark:text-red-400">Maximum 20 cells per run.</p>
-          )}
-
-          <Button onClick={start} loading={running} disabled={runDisabled}>
-            Run evaluation
-          </Button>
-
-          {error && <p className="text-sm text-red-500 dark:text-red-400">{error}</p>}
-        </CardContent>
-      </Card>
-
-      {runModels.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{running ? 'Live results' : 'Results'}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {running ? (
-              <>
-                <p className="text-sm text-neutral-500 mb-3">
-                  {doneCells} / {runTotalCells} cells complete
-                  {runId && <span className="text-neutral-400"> · run {runId}</span>}
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full border-collapse text-sm">
-                    <thead>
-                      <tr>
-                        <th className="text-left p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium">
-                          Model
-                        </th>
-                        {runJdIds.map(jd => (
-                          <th
-                            key={jd}
-                            className="text-center p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium"
-                          >
-                            {jd === 'custom' ? 'Custom JD' : fixtures.find(f => f.id === jd)?.label ?? jd}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {runModels.map(m => (
-                        <tr key={m}>
-                          <th className="text-left p-2 border-b border-neutral-100 dark:border-neutral-800 font-mono text-xs font-normal align-top">
-                            {m}
-                          </th>
-                          {runJdIds.map(jd => (
-                            <td key={jd} className="p-2 border-b border-neutral-100 dark:border-neutral-800">
-                              <EvalCell result={cells[cellKey(m, jd)]} />
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setPickerOpen(true)}
+                    disabled={running || selectedModels.length >= MAX_MODELS}
+                  >
+                    Add model
+                  </Button>
                 </div>
-              </>
-            ) : (
-              <ResultsTable results={finishedResults} getToken={getToken} />
-            )}
-          </CardContent>
-        </Card>
-      )}
+                {selectedModels.length >= MAX_MODELS && (
+                  <p className="text-xs text-neutral-500 mt-1">Maximum 5 models per run.</p>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">
+                  Job descriptions
+                </p>
+                {fixturesLoading && <p className="text-sm text-neutral-500">Loading fixtures…</p>}
+                {fixturesError && <p className="text-sm text-red-500 dark:text-red-400">{fixturesError}</p>}
+                {!fixturesLoading && !fixturesError && (
+                  <div className="space-y-1.5 mb-3">
+                    {fixtures.map(f => (
+                      <label key={f.id} className="flex items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 accent-primary-500"
+                          checked={selectedJds.includes(f.id)}
+                          onChange={() => toggleJd(f.id)}
+                          disabled={running || customJd.trim() !== ''}
+                        />
+                        <span>
+                          <span className="font-medium">{f.label}</span>
+                          <span className="block text-xs text-neutral-500">{f.preview}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <Textarea
+                  placeholder="Paste a custom job description…"
+                  value={customJd}
+                  onChange={e => setCustomJd(e.target.value)}
+                  disabled={running || selectedJds.length > 0}
+                />
+              </div>
+
+              <div>
+                <p className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400 mb-1.5">
+                  Data source
+                </p>
+                <div className="flex gap-4 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="eval-data-source"
+                      className="accent-primary-500"
+                      checked={dataSource === 'fixture'}
+                      onChange={() => setDataSource('fixture')}
+                      disabled={running}
+                    />
+                    Fixture profile (deterministic)
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="eval-data-source"
+                      className="accent-primary-500"
+                      checked={dataSource === 'mine'}
+                      onChange={() => setDataSource('mine')}
+                      disabled={running}
+                    />
+                    My stored profile
+                  </label>
+                </div>
+              </div>
+
+              <p className="text-xs text-neutral-500">
+                {selectedModels.length} models × {jdIdsForRun.length} job descriptions = {totalCells} generations,
+                each with one judge call.
+              </p>
+              {totalCells > MAX_CELLS && (
+                <p className="text-xs text-red-500 dark:text-red-400">Maximum 20 cells per run.</p>
+              )}
+
+              <Button onClick={start} loading={running} disabled={runDisabled}>
+                Run evaluation
+              </Button>
+
+              {error && <p className="text-sm text-red-500 dark:text-red-400">{error}</p>}
+            </CardContent>
+          </Card>
+
+          {runModels.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{running ? 'Live results' : 'Results'}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {running ? (
+                  <>
+                    <p className="text-sm text-neutral-500 mb-3">
+                      {doneCells} / {runTotalCells} cells complete
+                      {runId && <span className="text-neutral-400"> · run {runId}</span>}
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full border-collapse text-sm">
+                        <thead>
+                          <tr>
+                            <th className="text-left p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium">
+                              Model
+                            </th>
+                            {runJdIds.map(jd => (
+                              <th
+                                key={jd}
+                                className="text-center p-2 border-b border-neutral-200 dark:border-neutral-700 font-medium"
+                              >
+                                {jd === 'custom' ? 'Custom JD' : fixtures.find(f => f.id === jd)?.label ?? jd}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {runModels.map(m => (
+                            <tr key={m}>
+                              <th className="text-left p-2 border-b border-neutral-100 dark:border-neutral-800 font-mono text-xs font-normal align-top">
+                                {m}
+                              </th>
+                              {runJdIds.map(jd => (
+                                <td key={jd} className="p-2 border-b border-neutral-100 dark:border-neutral-800">
+                                  <EvalCell result={cells[cellKey(m, jd)]} />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <ResultsTable results={finishedResults} getToken={getToken} />
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

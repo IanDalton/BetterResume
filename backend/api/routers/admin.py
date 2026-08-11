@@ -303,7 +303,14 @@ async def download_eval_resume(result_id: str, format: str = "word", claims: dic
     out_dir = tempfile.mkdtemp(prefix="eval_resume_")
     output = os.path.join(out_dir, f"eval_{result_id}{writer.file_ending}")
     try:
-        writer.write(resume, output=output, to_pdf=True)
+        # `to_pdf=False`: the PDF conversion's *return value* was never used
+        # below anyway -- FileResponse always serves `output` (the pre-conversion
+        # .docx/.tex path), not whatever path/handle `write()` returns. Asking
+        # for a PDF here only bought wasted soffice/pdflatex work on every
+        # download, plus an extra failure mode: a pdflatex hiccup raises
+        # RuntimeError (see LatexResumeWriter.to_pdf) and turns into a 500 here
+        # even though a perfectly valid .tex had already been written to disk.
+        writer.write(resume, output=output, to_pdf=False)
     except Exception:
         logger.exception("Failed rendering eval resume %s", result_id)
         shutil.rmtree(out_dir, ignore_errors=True)

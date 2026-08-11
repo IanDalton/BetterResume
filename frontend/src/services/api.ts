@@ -307,12 +307,22 @@ export interface EvalResult {
   input_tokens: number | null;
   output_tokens: number | null;
   fallback_used: boolean;
+  // Every field below this line is seeded `None` for an errored cell (see
+  // backend/evals/runner.py `_run_cell`'s `result` dict, lines ~122-138) and
+  // only ever gets filled in on the success path -- an error cell arrives
+  // over the wire with all of these as `null`, never `[]` or `0`. Do not
+  // widen any of these back to a non-nullable type without re-auditing every
+  // place that reads it.
   schema_score: number | null;
   schema_passed: boolean | null;
+  schema_errors: string[] | null;
   ats_score: number | null;
   ats_coverage: number | null;
-  missing_keywords: string[];
+  missing_keywords: string[] | null;
   judge_overall: number | null;
+  judge_relevance: number | null;
+  judge_quality: number | null;
+  judge_coherence: number | null;
   judge_reasoning: string | null;
   composite_score: number | null;
   resume_json: any;
