@@ -18,11 +18,13 @@ from api.utils import (
     _build_request_signature,
     _load_resume_cache,
     _build_signed_files,
+    _make_writer,
     clean_output_dir,
     _save_resume_cache,
     get_profile_with_links,
     get_user_store,
     sse_event,
+    SSE_HEADERS,
     _hmac_sign
 )
 from utils.logging_utils import set_user_context
@@ -31,18 +33,9 @@ from utils.db_storage import DBStorage
 from bot import Bot
 from llm import agent
 from models.resume import ResumeOutputFormat
-from resume import LatexResumeWriter, WordResumeWriter
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
-
-SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "*",
-    "Access-Control-Allow-Methods": "*",
-}
 
 
 def _record_generation(user_id, model, fmt, language, started_at, status, error=None,
@@ -62,11 +55,6 @@ def _record_generation(user_id, model, fmt, language, started_at, status, error=
         )
     except Exception:
         logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
-
-
-def _make_writer(fmt: str, csv_path: str, profile_path, profile: dict = None):
-    writer_cls = LatexResumeWriter if fmt == "latex" else WordResumeWriter
-    return writer_cls(csv_location=csv_path, profile_image_path=profile_path, profile=profile)
 
 
 def _prepare_request(user_id: str, req: ResumeRequest, csv_path: str, profile_path):

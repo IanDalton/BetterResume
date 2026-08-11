@@ -1,18 +1,34 @@
+import asyncio
 import csv
 import io
 import logging
-from typing import Literal, Optional
+import os
+import tempfile
+import uuid
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from api.auth import require_admin
+from api.utils import SSE_HEADERS, _make_writer, sse_event
+from evals.fixtures import list_fixtures
+from evals.runner import EvalSpec, EvalSpecError, run_eval, validate_spec
 from llm.model_config import TASKS, get_model_config, set_task_models
 from llm.openrouter_catalog import CatalogUnavailable, fetch_models
+from models.resume import ResumeOutputFormat
 from utils.db_storage import DBStorage
 
 logger = logging.getLogger("betterresume.api.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite")
+
+# Live cell queues for in-flight runs, keyed by run_id, so /stream can follow a
+# run started by POST /evals. Dropped when the run finishes; history endpoints
+# serve anything older.
+_EVAL_STREAMS: Dict[str, "asyncio.Queue[dict]"] = {}
 
 
 @router.get("/stats")
@@ -101,3 +117,149 @@ async def update_model_config(update: ModelConfigUpdate, claims: dict = Depends(
         raise HTTPException(status_code=400, detail=str(exc))
     logger.info("Model config for %s changed by %s", update.task, claims.get("email"))
     return _model_config_payload()
+
+
+class EvalRunRequest(BaseModel):
+    models: List[str]
+    jd_ids: List[str] = []
+    custom_jd: Optional[str] = None
+    data_source: str = "fixture"
+    judge_model: Optional[str] = DEFAULT_JUDGE_MODEL
+    notes: Optional[str] = None
+
+
+def _eval_download_csv_path() -> str:
+    """A minimal, header-only CSV for `_make_writer`.
+
+    Eval resumes are rendered straight from a stored `resume_json` -- there is
+    no user CSV behind them. `BaseWriter.__init__` still unconditionally
+    `pd.read_csv()`s whatever path it is given (the frame it loads, `self.data`,
+    is never actually read by either writer subclass), so `csv_path=None`
+    raises a `TypeError` rather than being tolerated. Rather than coupling this
+    to the repo's dev-only `jobs.csv` fixture (which may not exist in every
+    deployment and carries unrelated personal placeholder data), synthesize an
+    empty one on demand.
+    """
+    fd, path = tempfile.mkstemp(prefix="eval_jobs_", suffix=".csv")
+    with os.fdopen(fd, "w", newline="") as fh:
+        fh.write("type,company,location,role,start_date,end_date,description\n")
+    return path
+
+
+@router.get("/evals/fixtures")
+async def eval_fixtures(claims: dict = Depends(require_admin)):
+    """Job-description fixtures available for evaluation runs."""
+    return {"job_descriptions": list_fixtures(), "default_judge_model": DEFAULT_JUDGE_MODEL}
+
+
+@router.post("/evals", status_code=202)
+async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin)):
+    """Run an evaluation and return its id.
+
+    This awaits `run_eval` inline rather than firing it via
+    `asyncio.create_task` and returning a locally-minted id immediately: a
+    bare `create_task` is only scheduled once something here yields control
+    back to the event loop, which never happens before `return` -- so the
+    response would carry an id `run_eval` never actually saw. Awaiting
+    keeps the two in lockstep at the cost of a request that stays open for
+    the run's full duration (bounded by `MAX_CELLS`=20 cells at
+    `CONCURRENCY`=3 in `evals.runner`, acceptable for an admin-only tool).
+    Other requests on the same event loop -- including a concurrent
+    `GET .../stream` -- are still served while this await is pending; cells
+    land in `queue` via `_on_cell` as each one finishes.
+    """
+    spec = EvalSpec(
+        models=req.models,
+        jd_ids=req.jd_ids,
+        custom_jd=req.custom_jd,
+        data_source=req.data_source,
+        judge_model=req.judge_model,
+        created_by=claims.get("email") or "admin",
+        notes=req.notes,
+    )
+    try:
+        validate_spec(spec)
+    except EvalSpecError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Mint the id here so `queue` is registered before any cell can land.
+    run_id = str(uuid.uuid4())
+    queue: "asyncio.Queue[dict]" = asyncio.Queue()
+    _EVAL_STREAMS[run_id] = queue
+
+    async def _on_cell(result: dict):
+        await queue.put(result)
+
+    try:
+        run_id = await run_eval(spec, on_cell=_on_cell, run_id=run_id)
+    except Exception:
+        logger.exception("Eval run %s failed", run_id)
+    finally:
+        await queue.put({"_done": True})
+
+    logger.info("Eval run %s requested by %s: %d model(s)", run_id, claims.get("email"), len(req.models))
+    return {"run_id": run_id}
+
+
+@router.get("/evals")
+async def list_evals(limit: int = Query(default=50, ge=1, le=200), claims: dict = Depends(require_admin)):
+    """Past evaluation runs, newest first."""
+    return {"runs": DBStorage().list_eval_runs(limit=limit)}
+
+
+@router.get("/evals/compare")
+async def compare_evals(claims: dict = Depends(require_admin)):
+    """Per-model aggregate across every stored eval result."""
+    return {"models": DBStorage().get_eval_model_comparison()}
+
+
+@router.get("/evals/{run_id}")
+async def get_eval(run_id: str, claims: dict = Depends(require_admin)):
+    """One run with all of its cells."""
+    db = DBStorage()
+    run = db.get_eval_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    return {"run": run, "results": db.get_eval_results(run_id)}
+
+
+@router.get("/evals/{run_id}/stream")
+async def stream_eval(run_id: str, claims: dict = Depends(require_admin)):
+    """SSE stream of cells for an in-flight run."""
+    queue = _EVAL_STREAMS.get(run_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="No in-flight run with that id")
+
+    async def _events():
+        try:
+            while True:
+                item = await queue.get()
+                if item.get("_done"):
+                    yield sse_event({}, event="done")
+                    return
+                yield sse_event(item, event="cell")
+        finally:
+            _EVAL_STREAMS.pop(run_id, None)
+
+    return StreamingResponse(_events(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.get("/evals/results/{result_id}/download")
+async def download_eval_resume(result_id: str, format: str = "word", claims: dict = Depends(require_admin)):
+    """Render a stored eval resume through the production writers."""
+    result = DBStorage().get_eval_result(result_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Eval result not found")
+    if not result.get("resume_json"):
+        raise HTTPException(status_code=400, detail="This result has no generated resume")
+
+    resume = ResumeOutputFormat.model_validate(result["resume_json"])
+    writer = _make_writer(format.lower(), csv_path=_eval_download_csv_path(), profile_path=None, profile=None)
+    out_dir = tempfile.mkdtemp(prefix="eval_resume_")
+    output = os.path.join(out_dir, f"eval_{result_id}{writer.file_ending}")
+    try:
+        writer.write(resume, output=output, to_pdf=True)
+    except Exception:
+        logger.exception("Failed rendering eval resume %s", result_id)
+        raise HTTPException(status_code=500, detail="Failed to render resume")
+    return FileResponse(output, filename=os.path.basename(output))
