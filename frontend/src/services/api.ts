@@ -271,6 +271,9 @@ export type ModelTask = 'generation' | 'translation' | 'import' | 'judge';
 
 export interface ModelConfigResponse {
   tasks: Record<ModelTask, TaskModelConfig>;
+  // Set by a save whose model passed its live check with a caveat -- currently
+  // only "this model rejects forced tool calls, so we ask instead".
+  notice?: string | null;
 }
 
 export interface ModelComparisonRow {
@@ -376,6 +379,8 @@ export interface ModelCheckResult {
   model: string;
   ok: boolean;
   detail: string | null;
+  // False when the model only works with an unforced tool choice; still usable.
+  forced_tool_choice: boolean;
   message: string;
 }
 

@@ -26,6 +26,7 @@ from pydantic_ai.models import Model
 
 from llm.model_config import SHIPPED_DEFAULT_MODEL, get_model_config
 from llm.model_names import normalize_model_string
+from llm.tool_forcing import prepare as prepare_model
 from models.resume import ResumeOutputFormat
 from utils.file_io import load_prompt
 from utils.resume_import import (
@@ -178,7 +179,9 @@ async def _run_with_fallback(
             on_model_used(label, used_fallback)
 
     if fallback is None:
-        result = await agent_obj.run(prompt, model=primary, model_settings=model_settings_for(primary), **run_kwargs)
+        result = await agent_obj.run(
+            prompt, model=prepare_model(primary), model_settings=model_settings_for(primary), **run_kwargs
+        )
         _report(_model_label(primary), False)
         return result
 
@@ -205,8 +208,8 @@ async def _run_with_fallback(
             return response
 
     layered = FallbackModel(
-        _TrackingModel(primary, primary_marker),
-        _TrackingModel(fallback, fallback_marker),
+        _TrackingModel(prepare_model(primary), primary_marker),
+        _TrackingModel(prepare_model(fallback), fallback_marker),
         fallback_on=(ModelAPIError,),
     )
     try:
@@ -223,7 +226,7 @@ async def _run_with_fallback(
             _reset_retry_deps(deps_obj)
         try:
             result = await agent_obj.run(
-                prompt, model=fallback, model_settings=model_settings_for(fallback), **run_kwargs
+                prompt, model=prepare_model(fallback), model_settings=model_settings_for(fallback), **run_kwargs
             )
         except Exception:
             logger.warning("Fallback model %s also failed; surfacing the primary error", _model_label(fallback))

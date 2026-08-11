@@ -3,14 +3,14 @@
 The OpenRouter catalog is not sufficient to tell whether a model can serve our
 requests. `qwen/qwen3.7-flash`, for example, advertises `tools` *and*
 `tool_choice` in `supported_parameters`, yet its only endpoint supports
-`tool_choice: "auto"` and nothing else -- so every real request 404s with
-"No endpoints found that support the provided 'tool_choice' value".
+`tool_choice: "auto"` and nothing else.
 
-Our agents always send `tool_choice: "required"`: structured output is an output
-tool and text output is disallowed, so pydantic-ai forces a tool call. The only
-reliable way to know a model can do that is to ask it once, which is what this
-module does -- cheaply (a handful of tokens), at the moment an admin picks the
-model, instead of on a real user's generation.
+The probe runs one request through exactly the production path, including the
+`llm.tool_forcing` degrade, so it reports three distinct outcomes: the model
+works, the model works but only with an unforced tool choice (`ok=True`,
+`forced_tool_choice=False`), or the model does not work at all. Cheap (a handful
+of tokens), and it happens when an admin picks the model rather than on a real
+user's generation.
 """
 
 import asyncio
@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from llm.agent import model_settings_for, normalize_model_name
+from llm.tool_forcing import forcing_disabled
+from llm.tool_forcing import prepare as prepare_model
 
 logger = logging.getLogger("betterresume.model_probe")
 
@@ -54,10 +56,20 @@ def probe_ping() -> str:
 class ProbeResult:
     ok: bool
     detail: Optional[str] = None
+    # False when the model had to be asked (`tool_choice: "auto"`) rather than
+    # forced to call its tool. Still usable -- just worth telling the admin.
+    forced_tool_choice: bool = True
 
     @property
     def message(self) -> str:
-        return "Model responded correctly" if self.ok else (self.detail or "Model check failed")
+        if not self.ok:
+            return self.detail or "Model check failed"
+        if not self.forced_tool_choice:
+            return (
+                "Model responded correctly, but it rejects forced tool calls; "
+                "requests to it will ask for the tool instead of requiring it"
+            )
+        return "Model responded correctly"
 
 
 async def probe_model(model: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> ProbeResult:
@@ -71,7 +83,14 @@ async def probe_model(model: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> Pro
     resolved = normalize_model_name(model)
     try:
         await asyncio.wait_for(
-            probe_agent.run("Say ready.", model=resolved, model_settings=model_settings_for(resolved)),
+            probe_agent.run(
+                "Say ready.",
+                # Goes through the same preparation as a real run, so a model
+                # that rejects forced tool calls degrades here exactly as it
+                # would in production -- and is remembered for this process.
+                model=prepare_model(resolved),
+                model_settings=model_settings_for(resolved),
+            ),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
@@ -80,4 +99,5 @@ async def probe_model(model: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> Pro
         detail = f"{type(exc).__name__}: {exc}"
         logger.info("Model probe failed for %s: %s", model, detail)
         return ProbeResult(False, detail[:500])
-    return ProbeResult(True)
+    forced = not (isinstance(resolved, str) and forcing_disabled(resolved))
+    return ProbeResult(True, forced_tool_choice=forced)

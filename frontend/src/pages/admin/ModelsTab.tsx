@@ -115,7 +115,7 @@ export function ModelsTab({ user }: { user: User }) {
       setConfig(updated);
       setError(null);
       setRejected(null);
-      toast({ title: `${task} model updated` });
+      toast({ title: `${task} model updated`, description: updated.notice ?? undefined });
     } catch (e: any) {
       if (e.message === 'forbidden') {
         setError('Access denied: this account is not authorized.');

@@ -36,7 +36,7 @@ React Router v7 with these routes:
 ### Admin Dashboard (`src/pages/AdminDashboard.tsx`, `/admin`)
 Firebase-gated (admin email allowlist) tab shell over `pages/admin/`:
 - `StatsTab` — generation stats (calls `fetchAdminStats` / `exportAdminLogs`)
-- `ModelsTab` — per-task model configuration via `ModelPicker` (calls `fetchModelConfig` / `updateModelConfig`)
+- `ModelsTab` — per-task model configuration (generation / translation / import / judge) via `ModelPicker` (calls `fetchModelConfig` / `updateModelConfig`). Saving runs a live check on the backend: a model that fails outright is refused with a "Save anyway" escape hatch (`skipCheck`), and one that only works with an unforced tool choice is saved with a notice.
 - `EvalsTab` — run evals across models/job descriptions, live-streamed results, run history, and model comparison (calls `fetchEvalFixtures`, `startEvalRun`, `streamEvalRun`, and the `EvalResults.tsx` components' calls)
 
 ### Data Types (`src/types.ts`)
@@ -65,7 +65,7 @@ All backend calls go through this module. Key functions:
 - `uploadProfilePicture(userId, file)` / `resolveProfilePictureUrl(userId)` — profile image management
 - `importResumePdf(userId, file)` — parse an uploaded resume/LinkedIn PDF into profile + entries
 - `fetchAdminStats(idToken, days)` / `exportAdminLogs(idToken)` — admin generation stats and log export
-- `fetchOpenRouterModels(...)` / `fetchModelConfig(idToken)` / `updateModelConfig(idToken, ...)` — OpenRouter model catalog and per-task model configuration
+- `fetchOpenRouterModels(...)` / `fetchModelConfig(idToken)` / `updateModelConfig(idToken, ..., skipCheck?)` / `checkModel(idToken, model)` — OpenRouter model catalog, per-task model configuration, and the live model compatibility check
 - `fetchEvalFixtures(...)`, `startEvalRun(idToken, payload)`, `streamEvalRun(idToken, runId, onCell)`, `fetchEvalRuns(idToken)`, `fetchEvalRun(idToken, runId)`, `fetchEvalComparison(idToken)`, `downloadEvalResume(idToken, resultId, format)` — eval subsystem
 
 `ResumeRequestPayload`: `{ job_description, format, include_profile_picture? }` — no `model` field; the backend resolves the model per task from runtime config, not from the request.

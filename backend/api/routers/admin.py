@@ -27,6 +27,7 @@ from utils.db_storage import DBStorage
 logger = logging.getLogger("betterresume.api.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+
 def _configured_judge_model() -> str:
     """The judge model currently set for the `judge` task in the dashboard.
 
@@ -34,6 +35,7 @@ def _configured_judge_model() -> str:
     any time, and the config layer already TTL-caches the lookup.
     """
     return get_model_config().for_task("judge").primary
+
 
 class _EvalStream:
     """Fan-out for one run's live cells to every concurrent /stream request.
@@ -183,8 +185,12 @@ async def check_model(req: ModelCheckRequest, claims: dict = Depends(require_adm
     `supported_parameters` claims support that individual endpoints don't honour.
     """
     result = await probe_model(req.model)
-    logger.info("Model check for %s by %s: ok=%s", req.model, claims.get("email"), result.ok)
-    return {"model": req.model, "ok": result.ok, "detail": result.detail, "message": result.message}
+    logger.info("Model check for %s by %s: ok=%s forced_tool_choice=%s",
+                req.model, claims.get("email"), result.ok, result.forced_tool_choice)
+    return {
+        "model": req.model, "ok": result.ok, "detail": result.detail,
+        "forced_tool_choice": result.forced_tool_choice, "message": result.message,
+    }
 
 
 @router.put("/model-config")
@@ -203,6 +209,7 @@ async def update_model_config(update: ModelConfigUpdate, claims: dict = Depends(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    notices = []
     if not update.skip_check:
         # The fallback is checked too: `FallbackModel` resolves both sub-models
         # up front, so a broken fallback breaks runs whose primary is healthy.
@@ -216,12 +223,16 @@ async def update_model_config(update: ModelConfigUpdate, claims: dict = Depends(
                         "Pick another model, or re-save with skip_check to store it anyway."
                     ),
                 )
+            if not result.forced_tool_choice:
+                # Usable, but worth saying out loud: the agent asks for the tool
+                # rather than requiring it, so weaker models may need retries.
+                notices.append(f"{model}: {result.message}")
     try:
         set_task_models(update.task, update.primary, update.fallback, updated_by=claims.get("email"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     logger.info("Model config for %s changed by %s", update.task, claims.get("email"))
-    return _model_config_payload()
+    return {**_model_config_payload(), "notice": "; ".join(notices) or None}
 
 
 class EvalRunRequest(BaseModel):

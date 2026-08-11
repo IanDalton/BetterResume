@@ -171,9 +171,40 @@ def test_model_check_endpoint_reports_the_probe_result():
                AsyncMock(return_value=ProbeResult(False, "ModelHTTPError: 404"))):
         body = _client().post("/admin/model-check", json={"model": "openrouter:x/y"}).json()
     assert body == {
-        "model": "openrouter:x/y", "ok": False,
-        "detail": "ModelHTTPError: 404", "message": "ModelHTTPError: 404",
+        "model": "openrouter:x/y", "ok": False, "detail": "ModelHTTPError: 404",
+        "forced_tool_choice": True, "message": "ModelHTTPError: 404",
     }
+
+
+def test_model_check_reports_a_model_that_needs_an_unforced_tool_choice():
+    degraded = ProbeResult(True, forced_tool_choice=False)
+    with patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)):
+        body = _client().post("/admin/model-check", json={"model": "openrouter:qwen/qwen3.7-flash"}).json()
+    assert body["ok"] is True
+    assert body["forced_tool_choice"] is False
+    assert "forced tool calls" in body["message"]
+
+
+def test_put_model_config_saves_a_model_that_needs_an_unforced_tool_choice():
+    """It works once the tool choice is degraded, so it is saved -- with a notice,
+    not a refusal."""
+    cfg = model_config.ModelConfig(
+        generation=model_config.TaskModels("openrouter:qwen/qwen3.7-flash", None),
+        translation=model_config.TaskModels("openrouter:t", None),
+        import_=model_config.TaskModels("openrouter:i", None),
+        judge=model_config.TaskModels("openrouter:j", None),
+    )
+    degraded = ProbeResult(True, forced_tool_choice=False)
+    with patch("api.routers.admin.set_task_models") as setter, \
+         patch("api.routers.admin.probe_model", AsyncMock(return_value=degraded)), \
+         patch("api.routers.admin.get_model_config", return_value=cfg), \
+         patch("api.routers.admin.DBStorage.get_app_settings_meta", return_value={}):
+        resp = _client().put("/admin/model-config", json={
+            "task": "generation", "primary": "openrouter:qwen/qwen3.7-flash", "fallback": None,
+        })
+    assert resp.status_code == 200
+    setter.assert_called_once()
+    assert "forced tool calls" in resp.json()["notice"]
 
 
 def test_model_check_requires_auth():

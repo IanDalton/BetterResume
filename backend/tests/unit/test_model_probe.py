@@ -13,7 +13,14 @@ from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from llm import tool_forcing
 from llm.model_probe import probe_model
+
+TOOL_CHOICE_404 = ModelHTTPError(
+    status_code=404,
+    model_name="qwen/qwen3.7-flash",
+    body={"message": "No endpoints found that support the provided 'tool_choice' value."},
+)
 
 
 def _answering_model():
@@ -36,14 +43,26 @@ async def test_probe_passes_for_a_model_that_answers():
     assert result.ok is True
 
 
-async def test_probe_reports_the_tool_choice_rejection():
-    """The exact production failure, as OpenRouter reports it."""
-    exc = ModelHTTPError(
-        status_code=404,
-        model_name="qwen/qwen3.7-flash",
-        body={"message": "No endpoints found that support the provided 'tool_choice' value."},
-    )
-    result = await probe_model(_raising_model(exc))
+async def test_probe_reports_a_model_that_needs_an_unforced_tool_choice(monkeypatch):
+    """The exact production failure. The model works once the tool choice is
+    degraded, so the probe passes it -- and says so."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    tool_forcing.reset_known_models()
+
+    def build(model_string, *, forced):
+        return _raising_model(TOOL_CHOICE_404) if forced else _answering_model()
+
+    monkeypatch.setattr(tool_forcing, "build_openrouter_model", build)
+    result = await probe_model("openrouter:qwen/qwen3.7-flash")
+
+    assert result.ok is True
+    assert result.forced_tool_choice is False
+    assert "forced tool calls" in result.message
+    tool_forcing.reset_known_models()
+
+
+async def test_probe_fails_a_model_that_fails_even_unforced():
+    result = await probe_model(_raising_model(TOOL_CHOICE_404))
     assert result.ok is False
     assert "tool_choice" in result.detail
 
@@ -90,7 +109,13 @@ def test_probe_result_message_is_human_readable():
 
 
 @pytest.mark.real_ai
-async def test_probe_rejects_the_reported_model_for_real():
-    """Live check against the model from the production report."""
-    result = await probe_model("openrouter:qwen/qwen3.7-flash")
-    assert result.ok is False
+async def test_probe_degrades_the_reported_model_for_real():
+    """Live check against the model from the production report: it rejects a
+    forced tool choice, and works once that is degraded."""
+    tool_forcing.reset_known_models()
+    try:
+        result = await probe_model("openrouter:qwen/qwen3.7-flash")
+    finally:
+        tool_forcing.reset_known_models()
+    assert result.ok is True
+    assert result.forced_tool_choice is False
