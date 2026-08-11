@@ -89,7 +89,7 @@ Endpoints (all admin-only):
 - `latex_writer.py` — Produces `.tex` / `.pdf` via `pdflatex`
 
 ### Data Models (`models/`)
-Pydantic models: `Resume`, `JobExperience`, `Education`, `Skill`
+Pydantic models: `ResumeOutputFormat`, `JobExperience`, `Education`, `Skill`, `Language`, `ResumeSection`
 
 ### API Routers (`api/routers/`)
 All mounted under `/resume` prefix:
@@ -99,7 +99,7 @@ All mounted under `/resume` prefix:
 - `users.py` — user management
 - `health.py` — health check
 - `donations.py` — Stripe webhook + payment intent
-- `admin.py` — admin statistics (auth required)
+- `admin.py` — admin statistics, model configuration, model catalog, evaluation runs/results (auth required)
 
 ### Configuration
 - `api/config.py` — directory paths (`DATA_DIR`, `OUTPUTS_BASE`, `UPLOADS_BASE`, `PROFILE_PICS_BASE`), supported image types, download signing secret
@@ -115,6 +115,6 @@ All mounted under `/resume` prefix:
 
 ### Docker Local Dev (`docker-compose.yml`)
 Three services:
-- `db` — `pgvector/pgvector:0.8.1-pg18`
-- `embeddings` — HuggingFace TEI (`nomic-embed-text-v1.5`) on CPU
+- `db` — `pgvector/pgvector:0.8.1-pg18-trixie`
+- `embeddings` — HuggingFace TEI (`BAAI/bge-base-en-v1.5`) on CPU
 - `backend` — built from `Dockerfile`, port 8000, waits on db health

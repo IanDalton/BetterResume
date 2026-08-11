@@ -67,18 +67,21 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 **Database:** PostgreSQL with pgvector extension. Connection pool managed via `psycopg-pool`. User experience data is stored as vector embeddings for semantic retrieval. `generation_events` records every generation (model, format, language, duration, status) for the admin dashboard.
 
 **Required environment variables** (see `.env.template`):
-- `GEMINI_API_KEY` — Google Gemini LLM (bridged to `GOOGLE_API_KEY` for pydantic-ai)
+- `DEFAULT_MODEL` — default LLM for all tasks (seeded into `app_settings`; runtime-configurable via admin dashboard)
 - `DB_*` — PostgreSQL credentials
-- `STRIPE_*` — Stripe payment keys
+- `EMBEDDING_SERVICE_URL` — OpenAI-compatible TEI embedding service endpoint
 - `FIREBASE_PROJECT_ID` — verify Firebase ID tokens for the admin dashboard
 - `ADMIN_EMAIL` — admin dashboard allowlist (defaults to daltioan@gmail.com)
-- `LOG_LEVEL` / `LOG_FILE` — optional logging overrides
+- `STRIPE_*` — Stripe public/secret keys
+- `OPENROUTER_API_KEY` — optional; enables OpenRouter model access
+- `GEMINI_API_KEY` — optional; enables Google Gemini model access
+- `LOG_LEVEL` / `LOG_FILE` — optional logging configuration
 
 ### Frontend: React 18 + TypeScript + Vite + Tailwind
 
 **Entry points:**
 - `src/main.tsx` — React root
-- `src/App.tsx` — React Router v7 routes (`/`, `/donate`, `/thank-you`, `/admin`)
+- `src/App.tsx` — React Router v7 routes (`/`, `/donate`, `/donate-checkout`, `/thank-you`, `/donate-success`, `/admin`)
 
 **Auth:** Firebase authentication via `AuthGate` component wrapping all protected routes. Firebase config lives in `src/services/firebase.ts`.
 
