@@ -22,6 +22,7 @@ def _cfg(primary: str) -> model_config.ModelConfig:
         generation=model_config.TaskModels(primary, None),
         translation=model_config.TaskModels("openrouter:t", None),
         import_=model_config.TaskModels("openrouter:i", None),
+        judge=model_config.TaskModels("openrouter:j", None),
     )
 
 

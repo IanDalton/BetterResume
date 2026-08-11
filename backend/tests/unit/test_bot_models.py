@@ -7,11 +7,12 @@ from bot import Bot
 from llm import model_config
 
 
-def _cfg(gen="openrouter:gen/x", trans="google-gla:gemini-2.5-flash-lite"):
+def _cfg(gen="openrouter:gen/x", trans="google:gemini-2.5-flash-lite"):
     return model_config.ModelConfig(
         generation=model_config.TaskModels(gen, "openrouter:gen/fb"),
         translation=model_config.TaskModels(trans, None),
         import_=model_config.TaskModels("openrouter:imp/x", None),
+        judge=model_config.TaskModels("openrouter:judge/x", None),
     )
 
 
@@ -19,14 +20,20 @@ def test_models_resolved_per_task_from_config():
     with patch("llm.agent.get_model_config", return_value=_cfg()):
         bot = Bot(user_id="u1", auto_ingest=False)
     assert bot.generation_model == "openrouter:gen/x"
-    assert bot.translation_model == "google-gla:gemini-2.5-flash-lite"
+    assert bot.translation_model == "google:gemini-2.5-flash-lite"
     assert bot.model == bot.generation_model
 
 
 def test_explicit_model_applies_to_both_tasks():
+    bot = Bot(user_id="u1", model="google:gemini-2.5-flash-lite", auto_ingest=False)
+    assert bot.generation_model == "google:gemini-2.5-flash-lite"
+    assert bot.translation_model == "google:gemini-2.5-flash-lite"
+
+
+def test_legacy_provider_prefix_is_normalized_on_the_bot():
     bot = Bot(user_id="u1", model="google-gla:gemini-2.5-flash-lite", auto_ingest=False)
-    assert bot.generation_model == "google-gla:gemini-2.5-flash-lite"
-    assert bot.translation_model == "google-gla:gemini-2.5-flash-lite"
+    assert bot.generation_model == "google:gemini-2.5-flash-lite"
+    assert bot.translation_model == "google:gemini-2.5-flash-lite"
 
 
 async def test_generate_records_model_used(stub_vector_store, sample_resume_output):

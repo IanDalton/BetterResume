@@ -261,14 +261,19 @@ export interface CatalogModel {
 export interface TaskModelConfig {
   primary: string;
   fallback: string | null;
+  // The judge runs one standalone scoring call, so it has no fallback slot.
+  supports_fallback: boolean;
   updated_at: string | null;
   updated_by: string | null;
 }
 
-export type ModelTask = 'generation' | 'translation' | 'import';
+export type ModelTask = 'generation' | 'translation' | 'import' | 'judge';
 
 export interface ModelConfigResponse {
   tasks: Record<ModelTask, TaskModelConfig>;
+  // Set by a save whose model passed its live check with a caveat -- currently
+  // only "this model rejects forced tool calls, so we ask instead".
+  notice?: string | null;
 }
 
 export interface ModelComparisonRow {
@@ -281,6 +286,9 @@ export interface ModelComparisonRow {
   avg_ats: number | null;
   avg_judge: number | null;
   avg_duration_ms: number | null;
+  // True if any cell for this model needed that routing concession.
+  unforced_tool_choice: boolean;
+  allow_reasoning: boolean;
   last_run_at: string | null;
 }
 
@@ -326,8 +334,17 @@ export interface EvalResult {
   judge_quality: number | null;
   judge_coherence: number | null;
   judge_reasoning: string | null;
+  // Set when generation succeeded but scoring it did not. The cell still
+  // counts as a success and keeps a composite (reweighted schema/ATS), so this
+  // is how you tell a judged score from an unjudged one.
+  judge_error: string | null;
   composite_score: number | null;
   resume_json: any;
+  // What this model needed us to stop asking for on this cell (see
+  // backend/llm/model_routing.py). Unlike the scores above these are always
+  // present, on the error path too.
+  unforced_tool_choice: boolean;
+  allow_reasoning: boolean;
 }
 
 /** Body of `POST /admin/evals`: the spec for a new evaluation run. */
@@ -356,14 +373,40 @@ export async function fetchModelConfig(idToken: string): Promise<ModelConfigResp
 }
 
 export async function updateModelConfig(
-  idToken: string, task: ModelTask, primary: string, fallback: string | null
+  idToken: string, task: ModelTask, primary: string, fallback: string | null,
+  // The backend runs one live request against the model before storing it, so a
+  // model that cannot serve our request shape is rejected here rather than on a
+  // user's generation. Pass true to store it regardless.
+  skipCheck = false
 ): Promise<ModelConfigResponse> {
   const res = await adminRequest(idToken, '/admin/model-config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ task, primary, fallback }),
+    body: JSON.stringify({ task, primary, fallback, skip_check: skipCheck }),
   });
   return res.json();
+}
+
+export interface ModelCheckResult {
+  model: string;
+  ok: boolean;
+  detail: string | null;
+  // False when the model only works with an unforced tool choice; still usable.
+  forced_tool_choice: boolean;
+  // False when the model's endpoints refuse to run with reasoning disabled.
+  reasoning_disabled: boolean;
+  message: string;
+}
+
+/** Runs one minimal live request per model, in the same shape a real run uses.
+ *  Costs a handful of tokens each; the backend probes them concurrently. */
+export async function checkModels(idToken: string, models: string[]): Promise<ModelCheckResult[]> {
+  const res = await adminRequest(idToken, '/admin/model-check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ models }),
+  });
+  return (await res.json()).results;
 }
 
 export async function fetchEvalFixtures(

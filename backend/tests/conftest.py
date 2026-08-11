@@ -34,7 +34,7 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--models",
-        default="google-gla:gemini-2.5-flash-lite",
+        default="google:gemini-2.5-flash-lite",
         help="Comma-separated model strings for multi-model tests",
     )
 

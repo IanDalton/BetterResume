@@ -36,8 +36,8 @@ React Router v7 with these routes:
 ### Admin Dashboard (`src/pages/AdminDashboard.tsx`, `/admin`)
 Firebase-gated (admin email allowlist) tab shell over `pages/admin/`:
 - `StatsTab` — generation stats (calls `fetchAdminStats` / `exportAdminLogs`)
-- `ModelsTab` — per-task model configuration via `ModelPicker` (calls `fetchModelConfig` / `updateModelConfig`)
-- `EvalsTab` — run evals across models/job descriptions, live-streamed results, run history, and model comparison (calls `fetchEvalFixtures`, `startEvalRun`, `streamEvalRun`, and the `EvalResults.tsx` components' calls)
+- `ModelsTab` — per-task model configuration (generation / translation / import / judge) via `ModelPicker` (calls `fetchModelConfig` / `updateModelConfig`). Saving runs a live check on the backend: a model that fails outright is refused with a "Save anyway" escape hatch (`skipCheck`), and one that needs a routing concession is saved with a notice. Each filled slot also has a Test action that probes it without saving.
+- `EvalsTab` — run evals across models/job descriptions, live-streamed results, run history, and model comparison (calls `fetchEvalFixtures`, `startEvalRun`, `streamEvalRun`, and the `EvalResults.tsx` components' calls). Starting a run pre-flights every selected model through `checkModels` first, so a model that cannot serve a request is reported instead of spending cells failing; a second click runs anyway. Results and the comparison table badge the routing concessions each model needed ("asks tool", "reasoning on"), and a cell whose judge failed is badged "no judge" — it still has a composite, but one weighted from schema/ATS alone
 
 ### Data Types (`src/types.ts`)
 ```typescript
@@ -65,7 +65,7 @@ All backend calls go through this module. Key functions:
 - `uploadProfilePicture(userId, file)` / `resolveProfilePictureUrl(userId)` — profile image management
 - `importResumePdf(userId, file)` — parse an uploaded resume/LinkedIn PDF into profile + entries
 - `fetchAdminStats(idToken, days)` / `exportAdminLogs(idToken)` — admin generation stats and log export
-- `fetchOpenRouterModels(...)` / `fetchModelConfig(idToken)` / `updateModelConfig(idToken, ...)` — OpenRouter model catalog and per-task model configuration
+- `fetchOpenRouterModels(...)` / `fetchModelConfig(idToken)` / `updateModelConfig(idToken, ..., skipCheck?)` / `checkModel(idToken, model)` — OpenRouter model catalog, per-task model configuration, and the live model compatibility check
 - `fetchEvalFixtures(...)`, `startEvalRun(idToken, payload)`, `streamEvalRun(idToken, runId, onCell)`, `fetchEvalRuns(idToken)`, `fetchEvalRun(idToken, runId)`, `fetchEvalComparison(idToken)`, `downloadEvalResume(idToken, resultId, format)` — eval subsystem
 
 `ResumeRequestPayload`: `{ job_description, format, include_profile_picture? }` — no `model` field; the backend resolves the model per task from runtime config, not from the request.

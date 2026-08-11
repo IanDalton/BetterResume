@@ -3,6 +3,7 @@ import {
   fetchOpenRouterModels,
   fetchModelConfig,
   updateModelConfig,
+  checkModels,
   startEvalRun,
   fetchEvalRuns,
   downloadEvalResume,
@@ -89,13 +90,42 @@ describe('admin model API', () => {
 
   it('PUTs a model config update', async () => {
     const fetchMock = mockFetch({ json: async () => ({ tasks: {} }) });
-    await updateModelConfig(TOKEN, 'generation', 'openrouter:new', 'google-gla:fb');
+    await updateModelConfig(TOKEN, 'generation', 'openrouter:new', 'openrouter:fb');
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain('/admin/model-config');
     expect(init.method).toBe('PUT');
     expect(JSON.parse(init.body)).toEqual({
-      task: 'generation', primary: 'openrouter:new', fallback: 'google-gla:fb',
+      task: 'generation', primary: 'openrouter:new', fallback: 'openrouter:fb', skip_check: false,
     });
+  });
+
+  it('can PUT a model config update that skips the live check', async () => {
+    const fetchMock = mockFetch({ json: async () => ({ tasks: {} }) });
+    await updateModelConfig(TOKEN, 'judge', 'openrouter:new', null, true);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).skip_check).toBe(true);
+  });
+
+  it('surfaces the reason a model config update was refused', async () => {
+    mockFetch({
+      ok: false, status: 400,
+      json: async () => ({ detail: "openrouter:qwen/qwen3.7-flash failed a live check and was not saved: No endpoints found that support the provided 'tool_choice' value" }),
+    });
+    await expect(updateModelConfig(TOKEN, 'generation', 'openrouter:qwen/qwen3.7-flash', null))
+      .rejects.toThrow(/failed a live check/);
+  });
+
+  it('POSTs a model check for every model at once', async () => {
+    const fetchMock = mockFetch({
+      json: async () => ({ results: [
+        { model: 'openrouter:a', ok: true, detail: null, forced_tool_choice: true, reasoning_disabled: true, message: 'Model responded correctly' },
+        { model: 'openrouter:b', ok: false, detail: 'boom', forced_tool_choice: true, reasoning_disabled: true, message: 'boom' },
+      ] }),
+    });
+    const results = await checkModels(TOKEN, ['openrouter:a', 'openrouter:b']);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/admin/model-check');
+    expect(JSON.parse(init.body)).toEqual({ models: ['openrouter:a', 'openrouter:b'] });
+    expect(results.map(r => r.ok)).toEqual([true, false]);
   });
 });
 

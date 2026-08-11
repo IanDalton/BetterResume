@@ -236,3 +236,185 @@ async def test_on_cell_failure_for_one_cell_does_not_abort_the_run(sample_resume
     # Both cells still persisted despite one on_cell callback raising.
     assert {r["model"] for r in db.results} == {"test:bad", "test:good"}
     assert db.finished == [(run_id, "complete")]
+
+
+# ---------------------------------------------------------------------------
+# Routing concessions (see llm/model_routing.py)
+#
+# A score means something different when the model had to be given a
+# concession to produce it, so each cell records what its model needed.
+# ---------------------------------------------------------------------------
+
+async def test_cell_records_the_concessions_its_model_needed(sample_resume_output):
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+    model_routing.remember("openrouter:needs/help", unforced_tool_choice=True, allow_reasoning=True)
+    try:
+        with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+                custom_output_args=sample_resume_output.model_dump())), \
+             patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+                custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+            await runner.run_eval(_spec(models=["openrouter:needs/help"]), db=db)
+    finally:
+        model_routing.reset_known_models()
+
+    result = db.results[0]
+    assert result["status"] == "success"
+    assert result["unforced_tool_choice"] is True
+    assert result["allow_reasoning"] is True
+
+
+async def test_a_concession_discovered_during_the_cell_is_recorded_on_it(sample_resume_output):
+    """The concession is learned *inside* the request that provokes it, so the
+    very first cell for a model -- the one that pays for the discovery --
+    already reports it. Nothing has to wait for a second cell or a second run."""
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+
+    def _model(name):
+        # Learns mid-cell, exactly as AdaptiveRoutingModel does on a rejection.
+        model_routing.remember(name, allow_reasoning=True)
+        return TestModel(custom_output_args=sample_resume_output.model_dump())
+
+    try:
+        with patch.object(runner, "_model_for", side_effect=_model), \
+             patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+                custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+            await runner.run_eval(_spec(models=["openrouter:learns/midrun"]), db=db)
+    finally:
+        model_routing.reset_known_models()
+
+    assert db.results[0]["allow_reasoning"] is True
+
+
+async def test_concessions_are_looked_up_under_the_normalized_model_name():
+    """The model layer registers under the normalized name, so a spec naming a
+    legacy prefix must still find its concessions."""
+    from llm import model_routing
+
+    model_routing.reset_known_models()
+    model_routing.remember("google:gemini-2.5-flash-lite", unforced_tool_choice=True)
+    try:
+        result = {}
+        runner._record_concessions(result, "google-gla:gemini-2.5-flash-lite")
+    finally:
+        model_routing.reset_known_models()
+    assert result["unforced_tool_choice"] is True
+
+
+async def test_cell_records_no_concessions_for_a_model_that_needed_none(sample_resume_output):
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        await runner.run_eval(_spec(models=["openrouter:clean/model"]), db=db)
+
+    assert db.results[0]["unforced_tool_choice"] is False
+    assert db.results[0]["allow_reasoning"] is False
+
+
+async def test_a_failed_cell_still_records_its_concessions():
+    """A cell that failed *after* conceding is a different story from one that
+    failed outright, so the flags are recorded on the error path too."""
+    from llm import model_routing
+
+    db = RecordingDB()
+    model_routing.reset_known_models()
+    model_routing.remember("openrouter:needs/help", allow_reasoning=True)
+    try:
+        def _boom(name):
+            raise RuntimeError("provider exploded")
+
+        with patch.object(runner, "_model_for", side_effect=_boom):
+            await runner.run_eval(_spec(models=["openrouter:needs/help"]), db=db)
+    finally:
+        model_routing.reset_known_models()
+
+    result = db.results[0]
+    assert result["status"] == "error"
+    assert result["allow_reasoning"] is True
+
+
+# ---------------------------------------------------------------------------
+# A judge failure costs the judge scores, not the whole cell
+# ---------------------------------------------------------------------------
+
+def _boom_judge(_name):
+    """A judge model that always fails, the way a misconfigured one did in
+    production (`ValueError: Unknown provider: google-gla`)."""
+    from pydantic_ai.models.function import FunctionModel
+
+    def model_fn(messages, info):
+        raise ValueError("Unknown provider: google-gla")
+
+    return FunctionModel(model_fn)
+
+
+async def test_judge_failure_keeps_the_generation_and_its_scores(sample_resume_output):
+    db = RecordingDB()
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=_boom_judge):
+        await runner.run_eval(_spec(models=["test:a"]), db=db)
+
+    result = db.results[0]
+    # The expensive half of the cell succeeded, so the cell did too.
+    assert result["status"] == "success"
+    assert result["error"] is None
+    assert result["resume_json"] is not None
+    assert result["schema_score"] is not None
+    assert result["ats_score"] is not None
+    # ...but the failure is recorded rather than swallowed, and no judge score
+    # is invented.
+    assert "Unknown provider" in result["judge_error"]
+    assert result["judge_overall"] is None
+
+
+async def test_judge_failure_still_produces_a_composite(sample_resume_output):
+    """`ResumeEvaluationReport` reweights schema/ATS when there is no judge, so
+    the cell keeps a usable score instead of a blank row."""
+    db = RecordingDB()
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=_boom_judge):
+        await runner.run_eval(_spec(models=["test:a"]), db=db)
+
+    assert db.results[0]["composite_score"] is not None
+
+
+async def test_a_generation_failure_is_still_an_error(sample_resume_output):
+    """The judge concession must not turn real failures into successes."""
+    db = RecordingDB()
+
+    def _boom(name):
+        raise RuntimeError("provider exploded")
+
+    with patch.object(runner, "_model_for", side_effect=_boom):
+        await runner.run_eval(_spec(models=["test:a"]), db=db)
+
+    assert db.results[0]["status"] == "error"
+    assert "provider exploded" in db.results[0]["error"]
+    assert db.results[0]["judge_error"] is None
+
+
+async def test_a_healthy_judge_records_no_judge_error(sample_resume_output):
+    db = RecordingDB()
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        await runner.run_eval(_spec(models=["test:a"]), db=db)
+
+    assert db.results[0]["judge_error"] is None
+    assert db.results[0]["judge_overall"] is not None

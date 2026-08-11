@@ -13,7 +13,7 @@ class _NoEducationDB:
         return []
 
 
-def _build_bot(stub_vector_store, model: str = "google-gla:gemini-2.5-flash-lite"):
+def _build_bot(stub_vector_store, model: str = "google:gemini-2.5-flash-lite"):
     """Lazy-import Bot so collection works without the full Docker env."""
     from bot import Bot
 
@@ -39,7 +39,7 @@ async def test_generate_resume_schema_valid(stub_vector_store):
     schema = SchemaEvaluator().evaluate(resume)
     ats = ATSEvaluator().evaluate(resume, JD_SOFTWARE_ENGINEER_SENIOR)
     report = ResumeEvaluationReport(
-        model="google-gla:gemini-2.5-flash-lite",
+        model="google:gemini-2.5-flash-lite",
         jd_name="senior_swe",
         schema=schema,
         ats=ats,

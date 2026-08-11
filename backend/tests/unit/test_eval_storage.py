@@ -69,24 +69,46 @@ def test_insert_eval_result_persists_resume_json():
             "judge_reasoning": "Good.",
             "composite_score": 0.87,
             "resume_json": {"language": "en"},
+            "unforced_tool_choice": True,
+            "allow_reasoning": False,
         })
-    sql, _ = cur.executed[0]
+    sql, params = cur.executed[0]
     assert "INSERT INTO eval_results" in sql
     assert "resume_json" in sql
+    assert "unforced_tool_choice" in sql and "allow_reasoning" in sql
+    columns = [c.strip() for c in sql.split("(", 1)[1].split(")", 1)[0].split(",")]
+    assert params[columns.index("unforced_tool_choice")] is True
+
+
+def test_comparison_reports_whether_a_model_ever_needed_a_concession():
+    """`BOOL_OR` across the model's cells: one run that had to concede is
+    enough to qualify the aggregate score."""
+    cur = FakeCursor(rows=[(
+        "openrouter:a", 2, 6, 1.0, 0.87, 1.0, 0.8, 0.82, 4200, False, True, None,
+    )])
+    with _patch_conn(cur):
+        rows = DBStorage().get_eval_model_comparison()
+    assert rows[0]["model"] == "openrouter:a"
+    assert rows[0]["unforced_tool_choice"] is False
+    assert rows[0]["allow_reasoning"] is True
 
 
 def test_get_eval_results_builds_dicts():
     cur = FakeCursor(rows=[(
         "22222222-2222-2222-2222-222222222222", "11111111-1111-1111-1111-111111111111",
         "openrouter:a", "senior_swe", "success", None, 4200, 900, 700, False,
-        1.0, True, [], 0.8, 0.75, ["airflow"], 0.82, 0.8, 0.8, 0.9, "Good.", 0.87,
-        {"language": "en"}, None,
+        1.0, True, [], 0.8, 0.75, ["airflow"], 0.82, 0.8, 0.8, 0.9, "Good.", None, 0.87,
+        {"language": "en"}, True, False, None,
     )])
     with _patch_conn(cur):
         results = DBStorage().get_eval_results("11111111-1111-1111-1111-111111111111")
     assert results[0]["model"] == "openrouter:a"
     assert results[0]["resume_json"] == {"language": "en"}
     assert results[0]["composite_score"] == 0.87
+    # Routing concessions travel with the row, so the dashboard can qualify
+    # the scores next to them.
+    assert results[0]["unforced_tool_choice"] is True
+    assert results[0]["allow_reasoning"] is False
 
 
 def test_mark_running_evals_interrupted_returns_rowcount():
