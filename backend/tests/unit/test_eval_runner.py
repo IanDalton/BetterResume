@@ -190,6 +190,34 @@ async def test_insert_failure_for_one_cell_does_not_abort_the_run(sample_resume_
     assert db.finished == [(run_id, "complete")]
 
 
+async def test_finish_complete_failure_does_not_misreport_run_as_failed(sample_resume_output):
+    """If `finish_eval_run(run_id, "complete")` raises (e.g. a transient DB
+    error) after every cell already succeeded and persisted, the run must not
+    be reported as failed -- that would call `finish_eval_run(..., "failed")`,
+    which would raise the same way, and would tell the admin a fully-successful
+    run failed. `run_eval` itself must not raise either."""
+
+    class FlakyFinishDB(RecordingDB):
+        def finish_eval_run(self, run_id, status):
+            if status == "complete":
+                raise RuntimeError("db write failed")
+            super().finish_eval_run(run_id, status)
+
+    db = FlakyFinishDB()
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        run_id = await runner.run_eval(_spec(models=["test:a"]), db=db)
+
+    # The cell's result is persisted regardless of the bookkeeping failure.
+    assert len(db.results) == 1
+    assert db.results[0]["status"] == "success"
+    # The failed "complete" write must not be followed by a "failed" write.
+    assert db.finished == []
+
+
 async def test_on_cell_failure_for_one_cell_does_not_abort_the_run(sample_resume_output):
     """An `on_cell` callback that raises (e.g. pushing to a queue for a client that
     disconnected) must not prevent other cells from completing and persisting."""

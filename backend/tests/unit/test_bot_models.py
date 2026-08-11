@@ -42,7 +42,8 @@ async def test_generate_records_model_used(stub_vector_store, sample_resume_outp
     with patch.object(Bot, "_fetch_generation_context", return_value=None):
         await bot.generate_resume("Backend role")
 
-    assert bot.last_model_used is not None
+    assert bot.last_generation_model is not None
+    assert bot.last_generation_fallback_used is False
     assert bot.last_fallback_used is False
 
 

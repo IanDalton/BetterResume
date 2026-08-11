@@ -27,14 +27,44 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite")
 
-# Live cell queues for in-flight runs, keyed by run_id, so /stream can follow a
-# run started by POST /evals. Populated by the run's own background task (see
-# `start_eval`) via `_on_cell`, and popped by that same task the moment the
-# run finishes -- deliberately with no replay grace window, so a run that
-# nobody ever streams can't leak a queue of up to MAX_CELLS cell dicts (each
-# carrying a full resume_json) forever. A client that connects to /stream
-# after the run has already finished gets a 404 and should fall back to
-# GET /evals/{run_id} for the completed results.
+class _EvalStream:
+    """Fan-out for one run's live cells to every concurrent /stream request.
+
+    A single run can have zero or more subscribers at any moment (no tab
+    open, one tab, a second tab, a reconnect racing a drop, ...); each must
+    see every cell and the single terminal signal, not split the cells or
+    race for the one `_done`/`_error` sentinel a plain `asyncio.Queue` would
+    have delivered to only one of them.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: "set[asyncio.Queue[dict]]" = set()
+
+    def subscribe(self) -> "asyncio.Queue[dict]":
+        queue: "asyncio.Queue[dict]" = asyncio.Queue()
+        self._subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: "asyncio.Queue[dict]") -> None:
+        self._subscribers.discard(queue)
+
+    async def publish(self, item: dict) -> None:
+        # Snapshot: `publish` and `unsubscribe` can interleave across awaits,
+        # and mutating a set while iterating it raises.
+        for queue in list(self._subscribers):
+            await queue.put(item)
+
+
+# Live cell streams for in-flight runs, keyed by run_id, so /stream can follow
+# a run started by POST /evals. Populated by the run's own background task
+# (see `start_eval`) via `_on_cell`, and popped by that same task the moment
+# the run finishes -- deliberately with no replay grace window, so a run that
+# nobody ever streams can't leak state (each cell dict carries a full
+# resume_json) forever. A client that connects to /stream after the run has
+# already finished gets a 404 and should fall back to GET /evals/{run_id} for
+# the completed results. A subscriber disconnecting mid-run only removes
+# itself (see `stream_eval`) -- the run's entry, and every other subscriber,
+# are untouched.
 #
 # NOTE: this is process-local, in-memory state. With more than one
 # uvicorn/gunicorn worker, a /stream request can land on a worker that never
@@ -42,7 +72,7 @@ DEFAULT_JUDGE_MODEL = os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite
 # genuinely in flight on a sibling worker. That's inherent to this design,
 # not something to work around here -- whatever consumes /stream (e.g. a
 # live results grid) needs to know this going in.
-_EVAL_STREAMS: Dict[str, "asyncio.Queue[dict]"] = {}
+_EVAL_STREAMS: Dict[str, _EvalStream] = {}
 
 # Strong references to in-flight run tasks. asyncio only holds a weak
 # reference to whatever asyncio.create_task() returns, so a bare, otherwise
@@ -201,14 +231,14 @@ async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin))
     except EvalSpecError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Mint the id here so `queue` is registered, and the client can start
+    # Mint the id here so `stream` is registered, and the client can start
     # streaming, before the run itself has done anything.
     run_id = str(uuid.uuid4())
-    queue: "asyncio.Queue[dict]" = asyncio.Queue()
-    _EVAL_STREAMS[run_id] = queue
+    stream = _EvalStream()
+    _EVAL_STREAMS[run_id] = stream
 
     async def _on_cell(result: dict):
-        await queue.put(result)
+        await stream.publish(result)
 
     async def _run():
         try:
@@ -220,9 +250,9 @@ async def start_eval(req: EvalRunRequest, claims: dict = Depends(require_admin))
             # to anyone still attached to the stream rather than letting the
             # run silently vanish behind an already-returned 202.
             logger.exception("Eval run %s failed", run_id)
-            await queue.put({"_error": True, "message": f"{type(exc).__name__}: {exc}"})
+            await stream.publish({"_error": True, "message": f"{type(exc).__name__}: {exc}"})
         finally:
-            await queue.put({"_done": True})
+            await stream.publish({"_done": True})
             _EVAL_STREAMS.pop(run_id, None)
 
     task = asyncio.create_task(_run())
@@ -257,10 +287,18 @@ async def get_eval(run_id: str, claims: dict = Depends(require_admin)):
 
 @router.get("/evals/{run_id}/stream")
 async def stream_eval(run_id: str, claims: dict = Depends(require_admin)):
-    """SSE stream of cells for an in-flight run."""
-    queue = _EVAL_STREAMS.get(run_id)
-    if queue is None:
+    """SSE stream of cells for an in-flight run.
+
+    Multiple concurrent requests for the same run_id (two tabs, or a
+    reconnect racing a drop) each get their own subscription via
+    `_EvalStream.subscribe`, so every one of them sees every cell and the
+    terminal `done`/`error` frame -- not a fan-in split across whichever
+    consumer happened to call `queue.get()` first.
+    """
+    stream = _EVAL_STREAMS.get(run_id)
+    if stream is None:
         raise HTTPException(status_code=404, detail="No in-flight run with that id")
+    queue = stream.subscribe()
 
     async def _events():
         try:
@@ -274,10 +312,12 @@ async def stream_eval(run_id: str, claims: dict = Depends(require_admin)):
                     return
                 yield sse_event(item, event="cell")
         finally:
-            # Idempotent: the run's own background task already pops this on
-            # completion (see the `_EVAL_STREAMS` module docstring); this
-            # covers a client that disconnects mid-stream instead.
-            _EVAL_STREAMS.pop(run_id, None)
+            # Only this subscriber goes away. The run's entry in
+            # `_EVAL_STREAMS` (and any sibling subscriber) is untouched --
+            # the run's own background task is solely responsible for
+            # popping it, once the run itself finishes (see the
+            # `_EVAL_STREAMS` module docstring).
+            stream.unsubscribe(queue)
 
     return StreamingResponse(_events(), media_type="text/event-stream", headers=SSE_HEADERS)
 

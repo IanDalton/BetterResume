@@ -169,15 +169,28 @@ def test_stream_404_when_no_in_flight_run():
     assert resp.status_code == 404
 
 
+def _stream_with_preseeded_queue(queue: "asyncio.Queue[dict]") -> admin_router._EvalStream:
+    """An `_EvalStream` whose `subscribe()` hands back this exact, already-
+    seeded queue instead of a fresh empty one -- lets a test seed the frames
+    a client will read *before* the client's request triggers the real
+    `subscribe()` call, the same way `start_eval` seeds a queue that a
+    /stream request only subscribes to afterwards."""
+    stream = admin_router._EvalStream()
+    stream._subscribers.add(queue)
+    stream.subscribe = lambda: queue
+    return stream
+
+
 def test_stream_yields_cell_then_done():
-    """End-to-end through the real StreamingResponse: a queue seeded exactly
-    like `start_eval`'s `_on_cell`/`_run` would seed it produces one
-    `event: cell` frame per result followed by a single `event: done`."""
+    """End-to-end through the real StreamingResponse: a subscriber queue
+    seeded exactly like `start_eval`'s `_on_cell`/`_run` would seed it
+    produces one `event: cell` frame per result followed by a single
+    `event: done`."""
     run_id = str(uuid.uuid4())
     queue: "asyncio.Queue[dict]" = asyncio.Queue()
     queue.put_nowait({"id": "cell-1", "status": "success", "composite_score": 0.5})
     queue.put_nowait({"_done": True})
-    admin_router._EVAL_STREAMS[run_id] = queue
+    admin_router._EVAL_STREAMS[run_id] = _stream_with_preseeded_queue(queue)
     try:
         resp = _client().get(f"/admin/evals/{run_id}/stream")
     finally:
@@ -198,7 +211,7 @@ def test_stream_surfaces_error_events():
     queue: "asyncio.Queue[dict]" = asyncio.Queue()
     queue.put_nowait({"_error": True, "message": "ValueError: boom"})
     queue.put_nowait({"_done": True})
-    admin_router._EVAL_STREAMS[run_id] = queue
+    admin_router._EVAL_STREAMS[run_id] = _stream_with_preseeded_queue(queue)
     try:
         resp = _client().get(f"/admin/evals/{run_id}/stream")
     finally:
@@ -206,6 +219,69 @@ def test_stream_surfaces_error_events():
     assert resp.status_code == 200
     assert "event: error" in resp.text
     assert "boom" in resp.text
+
+
+async def test_eval_stream_fans_out_to_every_subscriber():
+    """Two concurrent subscribers to the same run must each see every cell
+    and the terminal sentinel -- not split the cells between them the way a
+    single shared `asyncio.Queue` would."""
+    stream = admin_router._EvalStream()
+    q1 = stream.subscribe()
+    q2 = stream.subscribe()
+
+    await stream.publish({"id": "cell-1", "status": "success"})
+    await stream.publish({"_done": True})
+
+    assert await q1.get() == {"id": "cell-1", "status": "success"}
+    assert await q1.get() == {"_done": True}
+    assert await q2.get() == {"id": "cell-1", "status": "success"}
+    assert await q2.get() == {"_done": True}
+
+
+async def test_eval_stream_unsubscribe_does_not_affect_other_subscribers():
+    """A subscriber disconnecting mid-run (the /stream handler's `finally`
+    calling `unsubscribe`) must not steal or block cells meant for a sibling
+    subscriber that stays connected."""
+    stream = admin_router._EvalStream()
+    q1 = stream.subscribe()
+    q2 = stream.subscribe()
+
+    stream.unsubscribe(q1)
+    await stream.publish({"id": "cell-1", "status": "success"})
+    await stream.publish({"_done": True})
+
+    assert await q2.get() == {"id": "cell-1", "status": "success"}
+    assert await q2.get() == {"_done": True}
+    # q1 got nothing after being unsubscribed.
+    assert q1.empty()
+
+
+def test_stream_reconnect_mid_run_does_not_404():
+    """A client that disconnects from /stream (tab closed, network blip) and
+    reconnects while the run is still in flight must not 404 -- only the
+    run's own background task pops `_EVAL_STREAMS[run_id]`, never a single
+    subscriber's disconnect (see the fan-out `_EvalStream`)."""
+    run_id = str(uuid.uuid4())
+    stream = admin_router._EvalStream()
+
+    def _subscribe_with_done() -> "asyncio.Queue[dict]":
+        q: "asyncio.Queue[dict]" = asyncio.Queue()
+        q.put_nowait({"_done": True})
+        return q
+
+    stream.subscribe = _subscribe_with_done
+    admin_router._EVAL_STREAMS[run_id] = stream
+    try:
+        resp1 = _client().get(f"/admin/evals/{run_id}/stream")
+        assert resp1.status_code == 200
+        # The first subscriber's request has now completed (and its
+        # `finally` called `unsubscribe`), but the run's entry is untouched.
+        assert run_id in admin_router._EVAL_STREAMS
+
+        resp2 = _client().get(f"/admin/evals/{run_id}/stream")
+        assert resp2.status_code == 200
+    finally:
+        admin_router._EVAL_STREAMS.pop(run_id, None)
 
 
 def test_sse_event_default_frame_has_no_event_line():

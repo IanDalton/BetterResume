@@ -262,10 +262,31 @@ async def run_eval(
     ]
     try:
         await asyncio.gather(*tasks)
+    except Exception:
+        # A cell task itself raising is not expected -- `_guarded` never lets
+        # a cell's own failure propagate -- but if it somehow does, every
+        # cell's outcome (including this failure) is already persisted, so
+        # mark the run failed and stop.
+        logger.exception("Eval run %s failed", run_id)
+        try:
+            await asyncio.to_thread(db.finish_eval_run, run_id, "failed")
+        except Exception:
+            # Bookkeeping-on-the-way-out failing must not mask the original
+            # error above, nor be confused with it.
+            logger.exception("Eval run %s: also failed to mark run as failed", run_id)
+        raise
+
+    try:
         await asyncio.to_thread(db.finish_eval_run, run_id, "complete")
     except Exception:
-        logger.exception("Eval run %s failed", run_id)
-        await asyncio.to_thread(db.finish_eval_run, run_id, "failed")
-        raise
+        # Every cell already succeeded and is already persisted -- a
+        # transient DB error while flipping the run's own status must not
+        # be misreported as the run itself having failed (that would also
+        # call finish_eval_run(..., "failed"), which would fail the same
+        # way). Log it and let the run stay "running" for the next
+        # DBStorage-level sweep to reconcile, rather than raising here.
+        logger.exception(
+            "Eval run %s: all cells succeeded but failed to mark run complete", run_id
+        )
     logger.info("Eval run %s complete", run_id)
     return run_id

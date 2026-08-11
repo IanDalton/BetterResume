@@ -244,6 +244,39 @@ async def test_auto_ingest_loads_csv_into_store(tmp_path, stub_vector_store):
     assert "company: Acme" in stub_vector_store.added[0][1]
 
 
+async def test_non_english_tracks_generation_and_translation_models_separately(sample_resume_output):
+    """Generation on model A, translation on model B (with a fallback) --
+    `last_generation_*` must reflect only the generation call, not be
+    overwritten by the translation call that runs afterward for a
+    non-English resume. `last_fallback_used` (the pipeline-wide OR, used by
+    the eval runner) still picks up the translation fallback."""
+    bot = Bot(user_id="u1", auto_ingest=False)
+
+    async def fake_generate(*args, **kwargs):
+        kwargs["on_model_used"]("model-a", False)
+        return _resume(sample_resume_output, "es")
+
+    async def fake_translate(*args, **kwargs):
+        kwargs["on_model_used"]("model-b", True)
+        return _resume(sample_resume_output, "es")
+
+    with patch("llm.agent.generate", AsyncMock(side_effect=fake_generate)), \
+            patch("llm.agent.translate", AsyncMock(side_effect=fake_translate)):
+        await bot.generate_resume("descripción del puesto")
+
+    # What `generation_events` must record: generation's own model/fallback,
+    # untouched by the translation call that ran after it.
+    assert bot.last_generation_model == "model-a"
+    assert bot.last_generation_fallback_used is False
+    # Translation tracked on its own pair, not merged into generation's.
+    assert bot.last_translation_model == "model-b"
+    assert bot.last_translation_fallback_used is True
+    # Pipeline-wide OR (eval runner's per-cell fallback_used) does pick up
+    # the translation fallback -- that's a different, intentionally broader
+    # signal than what generation_events records.
+    assert bot.last_fallback_used is True
+
+
 async def test_translate_resume_accepts_dict(sample_resume_output):
     bot = Bot(user_id="u1", auto_ingest=False)
 

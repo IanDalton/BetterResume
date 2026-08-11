@@ -54,8 +54,15 @@ class Bot:
         # explicit model, each task resolves independently from runtime config.
         self.generation_model, self._generation_fallback = agent._resolve_model("generation", model)
         self.translation_model, self._translation_fallback = agent._resolve_model("translation", model)
-        self.last_model_used: Optional[str] = None
-        self.last_fallback_used: bool = False
+        # Tracked separately per task: `generate()` and `translate()` each fire
+        # their own `on_model_used` callback, and for a non-English resume both
+        # run in the same `_pipeline` call. Callers that need "what actually
+        # served generation" (e.g. `generation_events`) must read the
+        # generation-specific pair, not whichever task happened to run last.
+        self.last_generation_model: Optional[str] = None
+        self.last_generation_fallback_used: bool = False
+        self.last_translation_model: Optional[str] = None
+        self.last_translation_fallback_used: bool = False
         self.last_input_tokens: Optional[int] = None
         self.last_output_tokens: Optional[int] = None
         self.db = db
@@ -77,9 +84,23 @@ class Bot:
         """Back-compat alias: the generation model."""
         return self.generation_model
 
-    def _record_model_used(self, model_name: str, fallback_used: bool) -> None:
-        self.last_model_used = model_name
-        self.last_fallback_used = self.last_fallback_used or fallback_used
+    def _record_generation_model_used(self, model_name: str, fallback_used: bool) -> None:
+        self.last_generation_model = model_name
+        self.last_generation_fallback_used = fallback_used
+
+    def _record_translation_model_used(self, model_name: str, fallback_used: bool) -> None:
+        self.last_translation_model = model_name
+        self.last_translation_fallback_used = fallback_used
+
+    @property
+    def last_fallback_used(self) -> bool:
+        """True if generation or translation used a fallback anywhere in this
+        pipeline run. For callers that care about the whole pipeline (the eval
+        runner's per-cell `fallback_used`, which is reported alongside token
+        usage that is itself accumulated across generation + translation --
+        see `_record_usage`) rather than the generation-only signal that
+        `generation_events` records."""
+        return self.last_generation_fallback_used or self.last_translation_fallback_used
 
     def _record_usage(self, input_tokens: int, output_tokens: int) -> None:
         """Accumulate token usage across the pipeline's model calls (generation,
@@ -199,7 +220,7 @@ class Bot:
             fallback_model=self._generation_fallback,
             require_tool_call=True,
             extra_context=extra_context,
-            on_model_used=self._record_model_used,
+            on_model_used=self._record_generation_model_used,
             on_usage=self._record_usage,
         )
         self.logger.info("Agent returned resume; language=%s", resume.language)
@@ -237,7 +258,7 @@ class Bot:
             user_id=self.user_id,
             model=self.translation_model,
             fallback_model=self._translation_fallback,
-            on_model_used=self._record_model_used,
+            on_model_used=self._record_translation_model_used,
             on_usage=self._record_usage,
         )
 

@@ -165,7 +165,7 @@ export function StatsTab({ user }: { user: User }) {
           </div>
 
           {/* Funnel & reliability */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <StatCard label="Requests → Generations" value={`${stats.totals.resume_requests} → ${stats.totals.generations}`} hint={`${stats.totals.successful_generations} successful`} />
             <StatCard label="Success rate" value={successRate} />
             <StatCard label="Fallback rate" value={fallbackRate} hint={`${stats.totals.fallback_generations} generation${stats.totals.fallback_generations === 1 ? '' : 's'} served by fallback (last ${days}d)`} />

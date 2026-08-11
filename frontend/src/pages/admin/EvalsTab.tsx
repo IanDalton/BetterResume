@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   fetchEvalFixtures,
+  fetchEvalRun,
   startEvalRun,
   streamEvalRun,
   type EvalResult,
@@ -167,10 +168,35 @@ export function EvalsTab({ user }: { user: User }) {
         notes: null,
       });
       setRunId(run_id);
-      await streamEvalRun(idToken, run_id, cell => {
-        setCells(prev => ({ ...prev, [cellKey(cell.model, cell.jd_id)]: cell }));
-      });
-      toast({ title: 'Eval run complete' });
+      try {
+        await streamEvalRun(idToken, run_id, cell => {
+          setCells(prev => ({ ...prev, [cellKey(cell.model, cell.jd_id)]: cell }));
+        });
+        toast({ title: 'Eval run complete' });
+      } catch (streamErr: any) {
+        // The stream connection failing (including a 404 -- the backend pops
+        // its in-flight queue the instant the run ends, with no grace
+        // window, so a run that finishes fast can beat our GET here) does
+        // NOT mean the run failed: every cell that ran was already
+        // persisted. Recover from the persisted record rather than losing
+        // an outcome the admin never gets to see. `forbidden` needs no
+        // recovery attempt -- the follow-up fetch would fail the same way.
+        if (streamErr?.message === 'forbidden') throw streamErr;
+        const recovered = await fetchEvalRun(idToken, run_id).catch(() => null);
+        if (!recovered) throw streamErr;
+        const byKey: Record<string, EvalResult> = {};
+        for (const r of recovered.results) byKey[cellKey(r.model, r.jd_id)] = r;
+        setCells(prev => ({ ...prev, ...byKey }));
+        if (recovered.run.status === 'complete') {
+          // The run itself finished fine; only the live stream connection
+          // was lost. Not a failure from the admin's point of view.
+          toast({ title: 'Eval run complete', description: 'Live updates were interrupted, but every result was recovered.' });
+        } else {
+          // A genuine run failure (or interruption) -- say so, but the grid
+          // above still shows whatever cells did complete and persist.
+          setError(`Eval run ${recovered.run.status}. Showing the results that completed before it stopped.`);
+        }
+      }
     } catch (e: any) {
       setError(e.message === 'forbidden' ? 'Access denied.' : e.message);
     } finally {

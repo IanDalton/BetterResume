@@ -174,13 +174,13 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         result = await bot.generate_resume(req.job_description)
     except Exception as exc:
         _record_generation(
-            user_id, bot.last_model_used or bot.generation_model, fmt, None, gen_start, "error", str(exc),
-            requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+            user_id, bot.last_generation_model or bot.generation_model, fmt, None, gen_start, "error", str(exc),
+            requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
         )
         raise
     _record_generation(
-        user_id, bot.last_model_used or bot.generation_model, fmt, result.language, gen_start, "success",
-        requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+        user_id, bot.last_generation_model or bot.generation_model, fmt, result.language, gen_start, "success",
+        requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
     )
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
@@ -319,9 +319,9 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                     try:
                         result_obj = event.get("result")
                         _record_generation(
-                            user_id, bot.last_model_used or bot.generation_model, fmt,
+                            user_id, bot.last_generation_model or bot.generation_model, fmt,
                             getattr(result_obj, "language", None), gen_start, "success",
-                            requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+                            requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
                         )
                         writer.write(result_obj, output=output_name, to_pdf=True)
                         files = _build_signed_files(user_id, fmt, out_dir)
@@ -341,8 +341,8 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         except Exception as e:
             logger.exception("Streaming generation failed")
             _record_generation(
-                user_id, bot.last_model_used or bot.generation_model, fmt, None, gen_start, "error", str(e),
-                requested_model=bot.generation_model, fallback_used=bot.last_fallback_used,
+                user_id, bot.last_generation_model or bot.generation_model, fmt, None, gen_start, "error", str(e),
+                requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
             )
             yield sse_event({"stage": "error", "message": str(e)})
 
