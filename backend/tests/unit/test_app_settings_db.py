@@ -8,9 +8,13 @@ from utils.db_storage import DBStorage
 
 
 class FakeCursor:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, rowcount=-1):
         self.rows = list(rows or [])
         self.executed = []
+        # Mirrors real psycopg, which can leave rowcount at -1 ("undefined")
+        # for statements that don't populate it; callers should treat that
+        # as "unknown" rather than a literal count.
+        self.rowcount = rowcount
 
     def execute(self, sql, params=None):
         self.executed.append((" ".join(sql.split()), params))

@@ -368,6 +368,52 @@ class DBStorage:
                         );
                     """)
 
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS eval_runs (
+                            id           UUID PRIMARY KEY,
+                            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            finished_at  TIMESTAMPTZ,
+                            created_by   TEXT NOT NULL,
+                            status       TEXT NOT NULL,
+                            data_source  TEXT NOT NULL,
+                            judge_model  TEXT,
+                            models       JSONB NOT NULL,
+                            jd_ids       JSONB NOT NULL,
+                            custom_jd    TEXT,
+                            notes        TEXT
+                        );
+                    """)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS eval_results (
+                            id                UUID PRIMARY KEY,
+                            run_id            UUID NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+                            model             TEXT NOT NULL,
+                            jd_id             TEXT NOT NULL,
+                            status            TEXT NOT NULL,
+                            error             TEXT,
+                            duration_ms       INTEGER,
+                            input_tokens      INTEGER,
+                            output_tokens     INTEGER,
+                            fallback_used     BOOLEAN NOT NULL DEFAULT FALSE,
+                            schema_score      REAL,
+                            schema_passed     BOOLEAN,
+                            schema_errors     JSONB,
+                            ats_score         REAL,
+                            ats_coverage      REAL,
+                            missing_keywords  JSONB,
+                            judge_overall     REAL,
+                            judge_relevance   REAL,
+                            judge_quality     REAL,
+                            judge_coherence   REAL,
+                            judge_reasoning   TEXT,
+                            composite_score   REAL,
+                            resume_json       JSONB,
+                            created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                    """)
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(run_id);")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_model ON eval_results(model);")
+
                     cur.execute("ALTER TABLE job_experiences ADD COLUMN IF NOT EXISTS migrated_at TIMESTAMP;")
 
                     # Matches get_unmigrated_legacy_rows' predicate so the
@@ -897,6 +943,161 @@ class DBStorage:
             }
             for r in rows
         }
+
+    # ------------------------------------------------------------------
+    # Eval runs (model-evaluation dashboard: run/result persistence)
+    # ------------------------------------------------------------------
+
+    _EVAL_RESULT_COLUMNS = (
+        "id", "run_id", "model", "jd_id", "status", "error", "duration_ms",
+        "input_tokens", "output_tokens", "fallback_used", "schema_score",
+        "schema_passed", "schema_errors", "ats_score", "ats_coverage",
+        "missing_keywords", "judge_overall", "judge_relevance", "judge_quality",
+        "judge_coherence", "judge_reasoning", "composite_score", "resume_json",
+        "created_at",
+    )
+
+    _EVAL_RUN_COLUMNS = (
+        "id", "created_at", "finished_at", "created_by", "status",
+        "data_source", "judge_model", "models", "jd_ids", "custom_jd", "notes",
+    )
+
+    def _row_to_dict(self, columns, row):
+        out = {}
+        for name, value in zip(columns, row):
+            if name in ("schema_errors", "missing_keywords", "resume_json", "models", "jd_ids"):
+                value = self._coerce_json(value) if not isinstance(value, list) else value
+            elif name in ("created_at", "finished_at") and value is not None:
+                value = value.isoformat()
+            elif name in ("id", "run_id") and value is not None:
+                value = str(value)
+            out[name] = value
+        return out
+
+    def create_eval_run(self, run_id: str, created_by: str, data_source: str,
+                        judge_model: Optional[str], models: list, jd_ids: list,
+                        custom_jd: Optional[str], notes: Optional[str]) -> None:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO eval_runs
+                        (id, created_by, status, data_source, judge_model, models, jd_ids, custom_jd, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (run_id, created_by, "running", data_source, judge_model,
+                     Json(list(models)), Json(list(jd_ids)), custom_jd, notes),
+                )
+        self.logger.info("Eval run %s created by %s", run_id, created_by)
+
+    def finish_eval_run(self, run_id: str, status: str) -> None:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE eval_runs SET status = %s, finished_at = NOW() WHERE id = %s",
+                    (status, run_id),
+                )
+
+    def insert_eval_result(self, result: Dict[str, Any]) -> None:
+        columns = [c for c in self._EVAL_RESULT_COLUMNS if c != "created_at"]
+        json_columns = {"schema_errors", "missing_keywords", "resume_json"}
+        values = [
+            Json(result.get(c)) if c in json_columns and result.get(c) is not None else result.get(c)
+            for c in columns
+        ]
+        placeholders = ", ".join(["%s"] * len(columns))
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO eval_results ({', '.join(columns)}) VALUES ({placeholders})",
+                    tuple(values),
+                )
+
+    def list_eval_runs(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RUN_COLUMNS)} FROM eval_runs "
+                    "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                    (limit, offset),
+                )
+                rows = cur.fetchall()
+        return [self._row_to_dict(self._EVAL_RUN_COLUMNS, r) for r in rows]
+
+    def get_eval_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RUN_COLUMNS)} FROM eval_runs WHERE id = %s",
+                    (run_id,),
+                )
+                row = cur.fetchone()
+        return self._row_to_dict(self._EVAL_RUN_COLUMNS, row) if row else None
+
+    def get_eval_results(self, run_id: str) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RESULT_COLUMNS)} FROM eval_results "
+                    "WHERE run_id = %s ORDER BY model, jd_id",
+                    (run_id,),
+                )
+                rows = cur.fetchall()
+        return [self._row_to_dict(self._EVAL_RESULT_COLUMNS, r) for r in rows]
+
+    def get_eval_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RESULT_COLUMNS)} FROM eval_results WHERE id = %s",
+                    (result_id,),
+                )
+                row = cur.fetchone()
+        return self._row_to_dict(self._EVAL_RESULT_COLUMNS, row) if row else None
+
+    def mark_running_evals_interrupted(self) -> int:
+        """A container restart leaves 'running' rows behind; close them out."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE eval_runs SET status = 'interrupted', finished_at = NOW() WHERE status = 'running'"
+                )
+                return cur.rowcount or 0
+
+    def get_eval_model_comparison(self) -> List[Dict[str, Any]]:
+        """Per-model aggregate across every stored eval result."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT model,
+                           COUNT(DISTINCT run_id)                                    AS runs,
+                           COUNT(*)                                                  AS cells,
+                           AVG(CASE WHEN status = 'success' THEN 1.0 ELSE 0.0 END)   AS success_rate,
+                           AVG(composite_score)                                      AS avg_composite,
+                           AVG(schema_score)                                         AS avg_schema,
+                           AVG(ats_score)                                            AS avg_ats,
+                           AVG(judge_overall)                                        AS avg_judge,
+                           AVG(duration_ms)                                          AS avg_duration_ms,
+                           MAX(created_at)                                           AS last_run_at
+                    FROM eval_results
+                    GROUP BY model
+                    ORDER BY AVG(composite_score) DESC NULLS LAST
+                    """
+                )
+                rows = cur.fetchall()
+        def _f(v):
+            return round(float(v), 4) if v is not None else None
+        return [
+            {
+                "model": r[0], "runs": int(r[1]), "cells": int(r[2]),
+                "success_rate": _f(r[3]), "avg_composite": _f(r[4]),
+                "avg_schema": _f(r[5]), "avg_ats": _f(r[6]), "avg_judge": _f(r[7]),
+                "avg_duration_ms": int(r[8]) if r[8] is not None else None,
+                "last_run_at": r[9].isoformat() if r[9] else None,
+            }
+            for r in rows
+        ]
 
     def get_admin_stats(self, days: int = 30) -> Dict[str, Any]:
         """Aggregate statistics about stored resumes for the admin dashboard."""
