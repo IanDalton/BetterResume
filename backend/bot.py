@@ -38,7 +38,10 @@ class Bot:
         Args:
             user_id: Owner of the stored experience/skills; required.
             vector_store: PGVectorStore (or compatible) backing the retrieval tool.
-            model: pydantic-ai model name or instance; defaults to `agent.DEFAULT_MODEL`.
+            model: pydantic-ai model name or instance, applied to both generation and
+                translation. When omitted, each task resolves independently from
+                `get_model_config()` (the admin-configured per-task model, falling back
+                to env vars and ultimately `agent.DEFAULT_MODEL`).
             db: Optional DB handle passed to the agent tools (defaults to DBStorage).
             auto_ingest: If True, loads jobs_csv into the store (if file exists).
             jobs_csv: Path to CSV to ingest.
@@ -47,12 +50,26 @@ class Bot:
             raise ValueError("user_id is required to generate a resume")
         self.user_id = user_id
         self.vector_store = vector_store
-        self.model = agent.normalize_model_name(model)
+        # Explicit model applies to every task (eval runs, tests, CLI). With no
+        # explicit model, each task resolves independently from runtime config.
+        self.generation_model, self._generation_fallback = agent._resolve_model("generation", model)
+        self.translation_model, self._translation_fallback = agent._resolve_model("translation", model)
+        # Tracked separately per task: `generate()` and `translate()` each fire
+        # their own `on_model_used` callback, and for a non-English resume both
+        # run in the same `_pipeline` call. Callers that need "what actually
+        # served generation" (e.g. `generation_events`) must read the
+        # generation-specific pair, not whichever task happened to run last.
+        self.last_generation_model: Optional[str] = None
+        self.last_generation_fallback_used: bool = False
+        self.last_translation_model: Optional[str] = None
+        self.last_translation_fallback_used: bool = False
+        self.last_input_tokens: Optional[int] = None
+        self.last_output_tokens: Optional[int] = None
         self.db = db
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
             "Bot init model=%s has_store=%s auto_ingest=%s jobs_csv=%s user=%s",
-            self.model, bool(vector_store), auto_ingest, jobs_csv, user_id,
+            self.generation_model, bool(vector_store), auto_ingest, jobs_csv, user_id,
         )
 
         self._auto_ingest_task = None
@@ -61,6 +78,36 @@ class Bot:
         self._stored_language_rows = None
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             self._start_auto_ingest(jobs_csv)
+
+    @property
+    def model(self):
+        """Back-compat alias: the generation model."""
+        return self.generation_model
+
+    def _record_generation_model_used(self, model_name: str, fallback_used: bool) -> None:
+        self.last_generation_model = model_name
+        self.last_generation_fallback_used = fallback_used
+
+    def _record_translation_model_used(self, model_name: str, fallback_used: bool) -> None:
+        self.last_translation_model = model_name
+        self.last_translation_fallback_used = fallback_used
+
+    @property
+    def last_fallback_used(self) -> bool:
+        """True if generation or translation used a fallback anywhere in this
+        pipeline run. For callers that care about the whole pipeline (the eval
+        runner's per-cell `fallback_used`, which is reported alongside token
+        usage that is itself accumulated across generation + translation --
+        see `_record_usage`) rather than the generation-only signal that
+        `generation_events` records."""
+        return self.last_generation_fallback_used or self.last_translation_fallback_used
+
+    def _record_usage(self, input_tokens: int, output_tokens: int) -> None:
+        """Accumulate token usage across the pipeline's model calls (generation,
+        plus translation when the resume isn't in English), so `last_input_tokens`
+        / `last_output_tokens` reflect the whole `generate_resume` cost."""
+        self.last_input_tokens = (self.last_input_tokens or 0) + input_tokens
+        self.last_output_tokens = (self.last_output_tokens or 0) + output_tokens
 
     # ------------------------------------------------------------------
     # Ingest
@@ -169,9 +216,12 @@ class Bot:
             user_id=self.user_id,
             vector_store=self.vector_store,
             db=self.db,
-            model=self.model,
+            model=self.generation_model,
+            fallback_model=self._generation_fallback,
             require_tool_call=True,
             extra_context=extra_context,
+            on_model_used=self._record_generation_model_used,
+            on_usage=self._record_usage,
         )
         self.logger.info("Agent returned resume; language=%s", resume.language)
         self._inject_stored_languages(resume)
@@ -203,7 +253,14 @@ class Bot:
     async def translate_resume(self, r: ResumeOutputFormat, original_jd: str) -> ResumeOutputFormat:
         if isinstance(r, dict):
             r = ResumeOutputFormat.model_validate(r)
-        return await agent.translate(r, original_jd, user_id=self.user_id, model=self.model)
+        return await agent.translate(
+            r, original_jd,
+            user_id=self.user_id,
+            model=self.translation_model,
+            fallback_model=self._translation_fallback,
+            on_model_used=self._record_translation_model_used,
+            on_usage=self._record_usage,
+        )
 
 
 if __name__ == "__main__":

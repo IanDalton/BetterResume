@@ -18,11 +18,13 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
+from llm.model_config import get_model_config
 from models.resume import ResumeOutputFormat
 from utils.file_io import load_prompt
 from utils.resume_import import (
@@ -68,7 +70,14 @@ def normalize_model_name(model: Union[str, Model, None]) -> Union[str, Model]:
 
 
 def _model_settings(model: Union[str, Model]) -> Optional[dict]:
-    """Per-model run settings. For OpenRouter, disable reasoning tokens to cut latency.
+    """Per-model run settings.
+
+    For OpenRouter: disable reasoning tokens (latency), and set
+    `require_parameters` so OpenRouter only routes to providers that accept the
+    tool-call/structured-output parameters we send. Without it, requests get
+    routed to providers that reject them outright (observed 400s from Alibaba,
+    SiliconFlow, DigitalOcean) or return malformed tool arguments that burn all
+    of the agent's output retries.
 
     Returns ``None`` for non-OpenRouter models so their defaults are untouched.
     """
@@ -80,7 +89,162 @@ def _model_settings(model: Union[str, Model]) -> Optional[dict]:
         return None
     from pydantic_ai.models.openrouter import OpenRouterModelSettings
 
-    return OpenRouterModelSettings(openrouter_reasoning={"enabled": False})
+    return OpenRouterModelSettings(
+        openrouter_reasoning={"enabled": False},
+        openrouter_provider={"require_parameters": True},
+    )
+
+
+def _resolve_model(task: str, model: Union[str, Model, None]) -> Tuple[Union[str, Model], Optional[str]]:
+    """Resolve (primary, fallback) for a task.
+
+    An explicit `model` always wins and never gets a fallback here — that is
+    what the eval runner and the tests pass, and they must exercise exactly
+    the model they asked for. Callers may still supply their own
+    `fallback_model` alongside an explicit `model`.
+    """
+    if model is not None:
+        return normalize_model_name(model), None
+    task_models = get_model_config().for_task(task)
+    fallback = task_models.fallback
+    return (
+        normalize_model_name(task_models.primary),
+        normalize_model_name(fallback) if fallback else None,
+    )
+
+
+def get_effective_model(task: str) -> str:
+    """The model that would be used for `task` with no explicit override --
+    the same resolution `Bot` performs (`_resolve_model(task, None)`), exposed
+    so callers that need the *current* configured model (e.g. cache-key
+    computation before a `Bot` is constructed, or logging) go through the one
+    place model config is resolved rather than re-reading `get_model_config()`
+    or a stale import-time constant themselves.
+    """
+    primary, _fallback = _resolve_model(task, None)
+    return _model_label(primary)
+
+
+def _model_label(model: Union[str, Model]) -> str:
+    return model if isinstance(model, str) else getattr(model, "model_name", type(model).__name__)
+
+
+def _combined_model_settings(primary: Union[str, Model], fallback: Union[str, Model, None]) -> Optional[dict]:
+    """Model settings for a single `FallbackModel` run.
+
+    `FallbackModel` sends the same `model_settings` to whichever sub-model
+    handles the request, so settings computed from `primary` alone are wrong
+    the moment the primary fails and OpenRouter's `require_parameters` needs
+    to reach an OpenRouter *fallback* instead (or vice versa). Provider-
+    namespaced keys (e.g. `openrouter_*`) are ignored by other providers, so
+    merging both sub-models' settings is safe in either direction.
+    """
+    if fallback is None:
+        return _model_settings(primary)
+    return {**(_model_settings(primary) or {}), **(_model_settings(fallback) or {})} or None
+
+
+def _reset_retry_deps(deps: Any) -> None:
+    """Give the Layer 2 fallback re-run a clean slate.
+
+    The re-run is a brand new conversation against a different model, reusing
+    the same `deps` object (it arrives via `**run_kwargs`). If it still carries
+    mutable state from the primary's failed conversation -- e.g.
+    `ResumeDeps.search_calls` / `tool_events` -- the fallback's own
+    `ensure_retrieval` output validator would see a nonzero `search_calls` and
+    conclude retrieval already happened, silently letting the fallback answer
+    ungrounded. Reset in place (not a fresh object) so identity-based callers
+    (e.g. the `searches=%d` log in `generate`) still see accurate counts.
+    """
+    if hasattr(deps, "search_calls"):
+        deps.search_calls = 0
+    if hasattr(deps, "tool_events"):
+        deps.tool_events = []
+
+
+async def _run_with_fallback(
+    agent_obj: Agent,
+    prompt: Any,
+    *,
+    primary: Union[str, Model],
+    fallback: Union[str, Model, None],
+    on_model_used: Optional[Callable[[str, bool], None]] = None,
+    **run_kwargs,
+):
+    """Run `agent_obj` on `primary`, falling back to `fallback` on failure.
+
+    Two distinct failure modes need two mechanisms:
+
+    1. Transport/provider errors (`ModelAPIError`, which `ModelHTTPError`
+       subclasses) are handled by `FallbackModel`, inside the model layer.
+    2. Output-retry exhaustion raises `UnexpectedModelBehavior` from
+       `pydantic_ai._agent_graph`, *above* the model layer, where FallbackModel
+       never sees it. That needs the explicit re-run below.
+    """
+    def _report(label: str, used_fallback: bool) -> None:
+        if on_model_used:
+            on_model_used(label, used_fallback)
+
+    if fallback is None:
+        result = await agent_obj.run(prompt, model=primary, model_settings=_model_settings(primary), **run_kwargs)
+        _report(_model_label(primary), False)
+        return result
+
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.wrapper import WrapperModel
+
+    # `FallbackModel` doesn't expose which of its sub-models actually answered
+    # in a way we can trust: the response's `model_name` is set by the model
+    # implementation itself, and test doubles (and, in principle, real models
+    # sharing a name) can collide. Wrap each sub-model so it marks itself when
+    # its `request()` completes successfully -- an identity check, not a
+    # string comparison -- so we know for certain which one served the run.
+    primary_marker = {"used": False}
+    fallback_marker = {"used": False}
+
+    class _TrackingModel(WrapperModel):
+        def __init__(self, wrapped: Union[str, Model], marker: dict):
+            super().__init__(wrapped)
+            self._marker = marker
+
+        async def request(self, messages, model_settings, model_request_parameters):
+            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
+            self._marker["used"] = True
+            return response
+
+    layered = FallbackModel(
+        _TrackingModel(primary, primary_marker),
+        _TrackingModel(fallback, fallback_marker),
+        fallback_on=(ModelAPIError,),
+    )
+    try:
+        result = await agent_obj.run(
+            prompt, model=layered, model_settings=_combined_model_settings(primary, fallback), **run_kwargs
+        )
+    except UnexpectedModelBehavior as exc:
+        logger.warning(
+            "Primary model %s failed output validation (%s); retrying on fallback %s",
+            _model_label(primary), exc, _model_label(fallback),
+        )
+        deps_obj = run_kwargs.get("deps")
+        if deps_obj is not None:
+            _reset_retry_deps(deps_obj)
+        try:
+            result = await agent_obj.run(
+                prompt, model=fallback, model_settings=_model_settings(fallback), **run_kwargs
+            )
+        except Exception:
+            logger.warning("Fallback model %s also failed; surfacing the primary error", _model_label(fallback))
+            raise exc
+        _report(_model_label(fallback), True)
+        return result
+
+    used_fallback = fallback_marker["used"]
+    label = _model_label(fallback) if used_fallback else _model_label(primary)
+    if used_fallback:
+        logger.warning("Primary model %s unavailable; served by fallback %s", _model_label(primary), label)
+    _report(label, used_fallback)
+    return result
 
 
 @dataclass
@@ -232,6 +396,24 @@ def _log_usage(label: str, result) -> None:
         logger.debug("%s complete; usage unavailable", label)
 
 
+def _report_usage(on_usage: Optional[Callable[[int, int], None]], result) -> None:
+    """Call `on_usage(input_tokens, output_tokens)` for a completed run, mirroring
+    `on_model_used` -- an optional out-of-band callback so callers (currently the
+    eval runner, via `Bot`) can record what a run cost without every caller of
+    `generate`/`translate` needing to know about it. `RunUsage.input_tokens` /
+    `.output_tokens` are plain `int` fields (default 0) that pydantic-ai's model
+    layer populates by summing usage across requests, so this is reliable for
+    real model runs; test doubles that skip usage reporting just report zeros.
+    """
+    if not on_usage:
+        return
+    try:
+        usage = result.usage
+        on_usage(int(getattr(usage, "input_tokens", 0) or 0), int(getattr(usage, "output_tokens", 0) or 0))
+    except Exception:
+        logger.debug("on_usage callback skipped; usage unavailable")
+
+
 async def generate(
     jd: str,
     *,
@@ -239,17 +421,28 @@ async def generate(
     vector_store: Any = None,
     db: Any = None,
     model: Union[str, Model, None] = None,
+    fallback_model: Union[str, Model, None] = None,
     require_tool_call: bool = True,
     extra_context: Optional[str] = None,
+    on_model_used: Optional[Callable[[str, bool], None]] = None,
+    on_usage: Optional[Callable[[int, int], None]] = None,
 ) -> ResumeOutputFormat:
     """Generate a structured resume for a job description.
 
     Args:
+        model: explicit model; when None, resolved from runtime configuration.
+        fallback_model: explicit fallback; when None and `model` is None, the
+            configured fallback for the generation task is used.
         extra_context: Authoritative facts (current date, computed years of
             experience, spoken languages) appended to the prompt so the model
             stays consistent with the user's stored data.
+        on_model_used: called with (model_string, fallback_used) once the run
+            succeeds, so callers can record what actually served the request.
+        on_usage: called with (input_tokens, output_tokens) once the run
+            succeeds, so callers can record what the run cost.
     """
-    model = normalize_model_name(model)
+    primary, configured_fallback = _resolve_model("generation", model)
+    fallback = normalize_model_name(fallback_model) if fallback_model is not None else configured_fallback
     deps = ResumeDeps(
         user_id=user_id,
         vector_store=vector_store,
@@ -257,16 +450,19 @@ async def generate(
         require_tool_call=require_tool_call,
     )
     start = time.monotonic()
-    logger.info("Generation start user=%s model=%s jd_chars=%d", user_id, model, len(jd or ""))
+    logger.info("Generation start user=%s model=%s fallback=%s jd_chars=%d",
+                user_id, primary, fallback, len(jd or ""))
     prompt = jd if not extra_context else f"{jd}\n\n{extra_context}"
-    result = await generation_agent.run(
-        prompt, model=model, deps=deps, model_settings=_model_settings(model)
+    result = await _run_with_fallback(
+        generation_agent, prompt,
+        primary=primary, fallback=fallback, on_model_used=on_model_used, deps=deps,
     )
     logger.info(
         "Generation finished user=%s in %dms; searches=%d",
         user_id, int((time.monotonic() - start) * 1000), deps.search_calls,
     )
     _log_usage("Generation", result)
+    _report_usage(on_usage, result)
     return result.output
 
 
@@ -276,18 +472,25 @@ async def translate(
     *,
     user_id: str,
     model: Union[str, Model, None] = None,
+    fallback_model: Union[str, Model, None] = None,
+    on_model_used: Optional[Callable[[str, bool], None]] = None,
+    on_usage: Optional[Callable[[int, int], None]] = None,
 ) -> ResumeOutputFormat:
     """Translate a structured resume into the language of the original job description."""
-    model = normalize_model_name(model)
+    primary, configured_fallback = _resolve_model("translation", model)
+    fallback = normalize_model_name(fallback_model) if fallback_model is not None else configured_fallback
     prompt = (
         f"ORIGINAL JOB DESCRIPTION:\n{original_jd}\n\n"
         f"RESUME JSON:\n{resume.model_dump_json()}"
     )
-    logger.info("Translation start user=%s language=%s", user_id, resume.language)
-    result = await translation_agent.run(
-        prompt, model=model, model_settings=_model_settings(model)
+    logger.info("Translation start user=%s language=%s model=%s fallback=%s",
+                user_id, resume.language, primary, fallback)
+    result = await _run_with_fallback(
+        translation_agent, prompt,
+        primary=primary, fallback=fallback, on_model_used=on_model_used,
     )
     _log_usage("Translation", result)
+    _report_usage(on_usage, result)
     return result.output
 
 
@@ -295,13 +498,17 @@ async def extract_resume_fields(
     text: str,
     *,
     model: Union[str, Model, None] = None,
+    fallback_model: Union[str, Model, None] = None,
+    on_model_used: Optional[Callable[[str, bool], None]] = None,
 ) -> ResumeImportResult:
     """Structured extraction of profile/experience/education/language data
     from a resume PDF's cleaned text (see utils/resume_import.py)."""
-    model = normalize_model_name(model)
-    logger.info("Resume import extraction start; chars=%d model=%s", len(text or ""), model)
-    result = await resume_import_agent.run(
-        text, model=model, model_settings=_model_settings(model)
+    primary, configured_fallback = _resolve_model("import", model)
+    fallback = normalize_model_name(fallback_model) if fallback_model is not None else configured_fallback
+    logger.info("Resume import extraction start; chars=%d model=%s fallback=%s", len(text or ""), primary, fallback)
+    result = await _run_with_fallback(
+        resume_import_agent, text,
+        primary=primary, fallback=fallback, on_model_used=on_model_used,
     )
     _log_usage("Resume import extraction", result)
     return result.output

@@ -1,7 +1,6 @@
 import os
 import sys
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
 
 import pytest
 from dotenv import load_dotenv
@@ -23,54 +22,7 @@ from models.job_experience import JobExperience
 from models.skill import Skill
 from models.education import Education
 
-
-_STUB_RESUME_CONTEXT = """\
-Work Experience:
-- Senior Software Engineer at Acme Corp (03/2021 - Present), San Francisco, CA
-  Designed microservices architecture handling 10M events/day using Kafka and Kubernetes.
-  Led migration to containerized infrastructure, reducing deployment time by 60%.
-  Mentored 3 junior engineers through weekly code reviews.
-
-- Software Engineer at Beta Inc (06/2018 - 02/2021), Remote
-  Built REST APIs in Python/FastAPI serving 50k req/s with 99.9% uptime.
-  Optimized SQL queries on 100M+ row tables, reducing p99 latency from 200ms to 45ms.
-  Implemented CI/CD pipelines using GitHub Actions and Docker.
-
-- Junior Developer at Gamma Ltd (07/2016 - 05/2018), Austin, TX
-  Developed internal tooling in Python and Django that saved 10 hours/week of manual work.
-  Contributed to PostgreSQL schema design for a 5M user product.
-
-Skills: Python, FastAPI, Django, PostgreSQL, Redis, Docker, Kubernetes, Kafka,
-SQL, REST APIs, CI/CD, GitHub Actions, distributed systems, microservices, Pandas.
-
-Education: B.S. Computer Science, UC Berkeley (09/2014 - 05/2018)
-"""
-
-
-class StubVectorStore:
-    """In-memory PGVectorStore stand-in that returns canned resume context."""
-
-    def __init__(self, user_id: Optional[str] = None):
-        self.user_id = user_id
-        self.table_name = "test_collection"
-        self.added: List[Tuple[str, str]] = []
-        self.deleted_users: List[str] = []
-        self.queries: List[str] = []
-
-    async def aquery(self, query: str, user_id: Optional[str], n_results: int = 10) -> List[Tuple[str, float]]:
-        self.queries.append(query)
-        return [(_STUB_RESUME_CONTEXT, 0.1)]
-
-    async def aadd_documents(self, documents: List[str], ids: List[str], user_id: str) -> str:
-        self.added.extend(zip(ids, documents))
-        return "Documents added successfully."
-
-    async def adelete_user_documents(self, user_id: str) -> str:
-        self.deleted_users.append(user_id)
-        return "Deleted"
-
-    async def acount_user_documents(self, user_id: str) -> int:
-        return len(self.added)
+from evals.fixtures import StubVectorStore  # noqa: F401  (re-exported for tests)
 
 
 def pytest_addoption(parser):

@@ -30,6 +30,13 @@ async def lifespan(app: FastAPI):
         logger.error("Startup schema initialization failed: %s", e)
 
     try:
+        interrupted = DBStorage().mark_running_evals_interrupted()
+        if interrupted:
+            logger.warning("Marked %d orphaned eval run(s) as interrupted", interrupted)
+    except Exception as e:
+        logger.error("Could not sweep orphaned eval runs: %s", e)
+
+    try:
         backfill_personal_info_and_languages(DBStorage())
     except Exception as e:
         logger.error("Legacy personal-info/language backfill failed: %s", e)

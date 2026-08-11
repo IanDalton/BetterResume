@@ -22,9 +22,24 @@ from api.config import (
 from api.state import USER_STORES
 from llm import agent
 from llm.vector_store import PGVectorStore
+from resume import LatexResumeWriter, WordResumeWriter
 from utils.db_storage import DBStorage
 
 logger = logging.getLogger("betterresume.api.utils")
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "*",
+    "Access-Control-Allow-Methods": "*",
+}
+
+
+def _make_writer(fmt: str, csv_path: str, profile_path, profile: dict = None):
+    writer_cls = LatexResumeWriter if fmt == "latex" else WordResumeWriter
+    return writer_cls(csv_location=csv_path, profile_image_path=profile_path, profile=profile)
+
 
 def _hmac_sign(user_id: str, filename: str, exp: int) -> str:
     """Create an HMAC signature for a given user/file/expiry tuple."""
@@ -184,7 +199,7 @@ def _hash_profile(profile: Optional[dict]) -> str:
 def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     payload = {
         "job_description_hash": job_hash,
-        "model": agent.DEFAULT_MODEL,
+        "model": agent.get_effective_model("generation"),
         "csv_hash": csv_hash,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -299,6 +314,15 @@ def _detect_profile_extension(file: UploadFile) -> Optional[str]:
             return ".jpg" if raw_ext == ".jpeg" else raw_ext
     return None
 
-def sse_event(data: dict) -> bytes:
+def sse_event(data: dict, event: Optional[str] = None) -> bytes:
+    """Encode one Server-Sent Events frame.
+
+    `event` is optional -- existing callers (the resume generation streams)
+    encode their own "stage" field inside `data` and rely on plain `data:`
+    frames; the admin eval stream instead wants named frames
+    (`event: cell` / `event: done`) so the frontend can use
+    `EventSource.addEventListener` per type.
+    """
     import json as _json
-    return f"data: {_json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
+    prefix = f"event: {event}\n" if event else ""
+    return f"{prefix}data: {_json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")

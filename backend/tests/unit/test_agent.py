@@ -75,6 +75,35 @@ async def test_generate_returns_structured_resume(stub_vector_store, sample_resu
     assert len(stub_vector_store.queries) >= 1
 
 
+async def test_generate_reports_usage_via_callback(stub_vector_store, sample_resume_output):
+    """`on_usage` must receive the run's actual (input_tokens, output_tokens),
+    not zeros/None -- this is what lets callers (Bot, then the eval runner)
+    populate the eval dashboard's Tokens column."""
+    model = TestModel(custom_output_args=sample_resume_output.model_dump())
+    seen = {}
+
+    await agent.generate(
+        "Senior Python engineer needed",
+        user_id="u1", vector_store=stub_vector_store, db=FakeDB(), model=model,
+        on_usage=lambda input_tokens, output_tokens: seen.update(
+            input_tokens=input_tokens, output_tokens=output_tokens,
+        ),
+    )
+
+    assert seen["input_tokens"] > 0
+    assert seen["output_tokens"] > 0
+
+
+async def test_generate_without_on_usage_does_not_raise(stub_vector_store, sample_resume_output):
+    """`on_usage` is optional; omitting it must not affect existing callers."""
+    model = TestModel(custom_output_args=sample_resume_output.model_dump())
+    resume = await agent.generate(
+        "Senior Python engineer needed",
+        user_id="u1", vector_store=stub_vector_store, db=FakeDB(), model=model,
+    )
+    assert isinstance(resume, ResumeOutputFormat)
+
+
 async def test_generate_forces_retrieval_when_model_skips_tools(stub_vector_store, sample_resume_output):
     """If the model answers without calling search_experience, the output validator
     must reject the answer (ModelRetry) and the model must succeed on retry."""

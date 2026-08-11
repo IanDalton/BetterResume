@@ -47,44 +47,50 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 1. Frontend POST `/resume/generate-resume/{user_id}` → `api/routers/resume.py`
 2. Router instantiates `Bot(user_id, vector_store=...)` with a per-user `PGVectorStore`
 3. The generation agent's `search_experience` tool does semantic search against the user's stored experience/skills in pgvector; `get_latest_job_experience` anchors the timeline
-4. pydantic-ai calls Google Gemini (`google-gla:` provider) with retrieved context + job description, returning a validated `ResumeOutputFormat`
+4. pydantic-ai calls the configured generation model with retrieved context + job description, returning a validated `ResumeOutputFormat`
 5. The router renders the output file with `WordResumeWriter` or `LatexResumeWriter` from `resume/`
 
 **Key subsystems:**
+- `llm/model_config.py` — runtime per-task model configuration, loaded from `app_settings` table; env vars seed the values only if no stored setting exists. Models are runtime-configurable via the admin dashboard rather than env-fixed.
 - `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service
+- `llm/openrouter_catalog.py` — OpenRouter model catalog client (tool-capable models with pricing)
+- `evals/` — Evaluation harness: deterministic fixtures, evaluation runners (schema/ATS/LLM-judge scoring), shared by CLI integration tests and admin dashboard
 - `resume/` — Format-specific writers (Word, LaTeX) over a shared base writer
 - `models/` — Pydantic models for `Resume`, `JobExperience`, `Education`, `Skill`
-- `utils/db_storage.py` — PostgreSQL interaction (pgvector queries, user data, generation events, admin stats)
+- `utils/db_storage.py` — PostgreSQL interaction (pgvector queries, user data, generation events, eval runs/results, admin stats)
 - `api/auth.py` — Firebase ID-token verification (PyJWT against Google certs); `require_admin` dependency
-- `api/routers/admin.py` — `/resume/admin/stats` endpoint (admin-only)
+- `api/routers/admin.py` — admin endpoints: stats, logs, model catalog, model config, evaluation runs/results (all admin-only)
 - `prompts/` — Plain-text prompt templates loaded at runtime
 
 **Database:** PostgreSQL with pgvector extension. Connection pool managed via `psycopg-pool`. User experience data is stored as vector embeddings for semantic retrieval. `generation_events` records every generation (model, format, language, duration, status) for the admin dashboard.
 
 **Required environment variables** (see `.env.template`):
-- `GEMINI_API_KEY` — Google Gemini LLM (bridged to `GOOGLE_API_KEY` for pydantic-ai)
+- `DEFAULT_MODEL` — default LLM for all tasks (seeded into `app_settings`; runtime-configurable via admin dashboard)
 - `DB_*` — PostgreSQL credentials
-- `STRIPE_*` — Stripe payment keys
+- `EMBEDDING_SERVICE_URL` — OpenAI-compatible TEI embedding service endpoint
 - `FIREBASE_PROJECT_ID` — verify Firebase ID tokens for the admin dashboard
 - `ADMIN_EMAIL` — admin dashboard allowlist (defaults to daltioan@gmail.com)
-- `LOG_LEVEL` / `LOG_FILE` — optional logging overrides
+- `STRIPE_*` — Stripe public/secret keys
+- `OPENROUTER_API_KEY` — required when `DEFAULT_MODEL` uses OpenRouter (shipped default: `openrouter:wafer/fp4`); avoidable only by configuring a non-OpenRouter model
+- `GEMINI_API_KEY` — optional; enables Google Gemini model access
+- `LOG_LEVEL` / `LOG_FILE` — optional logging configuration
 
 ### Frontend: React 18 + TypeScript + Vite + Tailwind
 
 **Entry points:**
 - `src/main.tsx` — React root
-- `src/App.tsx` — React Router v7 routes (`/`, `/donate`, `/thank-you`, `/admin`)
+- `src/App.tsx` — React Router v7 routes (`/`, `/donate`, `/donate-checkout`, `/thank-you`, `/donate-success`, `/admin`)
 
 **Auth:** Firebase authentication via `AuthGate` component wrapping all protected routes. Firebase config lives in `src/services/firebase.ts`.
 
 **Key pages/components:**
-- `OnboardingWizard` — multi-step flow to collect user profile and experience
-- `EntryBuilder` — UI for building CSV-structured resume entries
 - `Home` — main UI triggering resume generation
-- `Donate` / `DonateCheckout` — Stripe payment flow
-- `AdminDashboard` (`/admin`) — generation statistics; requires Firebase sign-in with the admin email; calls `/resume/admin/stats` with a bearer ID token
+- `ProfileEditor` / Entry sections (`PersonalInfoSection`, `ExperienceSection`, `EducationSection`, `LanguagesSection`) — unified data-entry flow
+- `ResumeImportDialog` — resume parsing and LinkedIn PDF import
+- `Donate` — Stripe payment flow (embedded checkout)
+- `AdminDashboard` (`/admin`) — auth gate + tab shell over `pages/admin/{StatsTab,ModelsTab,EvalsTab}`, requiring Firebase sign-in with the admin email; covers generation stats, per-task model configuration, and the eval subsystem
 
 **API communication:** `src/services/api.ts` wraps all backend calls. CSV data format matches backend's `jobs.csv` schema (columns: `type, company, location, role, start_date, end_date, description`).
 

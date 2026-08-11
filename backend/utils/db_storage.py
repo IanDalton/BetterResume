@@ -7,6 +7,7 @@ import re
 from collections import Counter
 import psycopg
 from psycopg.adapt import Loader
+from psycopg.types.json import Json
 from psycopg_pool import ConnectionPool, AsyncConnectionPool
 from pgvector.psycopg import register_vector, register_vector_async
 from typing import Optional, Dict, Any, Tuple, List
@@ -355,6 +356,63 @@ class DBStorage:
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         );
                     """)
+                    cur.execute("ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS requested_model TEXT;")
+                    cur.execute("ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS fallback_used BOOLEAN NOT NULL DEFAULT FALSE;")
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS app_settings (
+                            key         TEXT PRIMARY KEY,
+                            value       JSONB NOT NULL,
+                            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_by  TEXT
+                        );
+                    """)
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS eval_runs (
+                            id           UUID PRIMARY KEY,
+                            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            finished_at  TIMESTAMPTZ,
+                            created_by   TEXT NOT NULL,
+                            status       TEXT NOT NULL,
+                            data_source  TEXT NOT NULL,
+                            judge_model  TEXT,
+                            models       JSONB NOT NULL,
+                            jd_ids       JSONB NOT NULL,
+                            custom_jd    TEXT,
+                            notes        TEXT
+                        );
+                    """)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS eval_results (
+                            id                UUID PRIMARY KEY,
+                            run_id            UUID NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+                            model             TEXT NOT NULL,
+                            jd_id             TEXT NOT NULL,
+                            status            TEXT NOT NULL,
+                            error             TEXT,
+                            duration_ms       INTEGER,
+                            input_tokens      INTEGER,
+                            output_tokens     INTEGER,
+                            fallback_used     BOOLEAN NOT NULL DEFAULT FALSE,
+                            schema_score      REAL,
+                            schema_passed     BOOLEAN,
+                            schema_errors     JSONB,
+                            ats_score         REAL,
+                            ats_coverage      REAL,
+                            missing_keywords  JSONB,
+                            judge_overall     REAL,
+                            judge_relevance   REAL,
+                            judge_quality     REAL,
+                            judge_coherence   REAL,
+                            judge_reasoning   TEXT,
+                            composite_score   REAL,
+                            resume_json       JSONB,
+                            created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                    """)
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_run ON eval_results(run_id);")
+                    cur.execute("CREATE INDEX IF NOT EXISTS idx_eval_results_model ON eval_results(model);")
 
                     cur.execute("ALTER TABLE job_experiences ADD COLUMN IF NOT EXISTS migrated_at TIMESTAMP;")
 
@@ -805,6 +863,8 @@ class DBStorage:
         duration_ms: Optional[int] = None,
         status: str = "success",
         error: Optional[str] = None,
+        requested_model: Optional[str] = None,
+        fallback_used: bool = False,
     ):
         """Insert a resume generation event row (used by the admin dashboard)."""
         try:
@@ -812,10 +872,12 @@ class DBStorage:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        INSERT INTO generation_events (user_id, model, format, language, duration_ms, status, error)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO generation_events
+                            (user_id, model, requested_model, format, language, duration_ms, status, error, fallback_used)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (user_id, model, format, language, duration_ms, status, (error or None) and str(error)[:2000]),
+                        (user_id, model, requested_model, format, language, duration_ms, status,
+                         (error or None) and str(error)[:2000], bool(fallback_used)),
                     )
             self.logger.info(
                 "Recorded generation event user=%s status=%s duration_ms=%s", user_id, status, duration_ms
@@ -823,6 +885,219 @@ class DBStorage:
         except Exception as e:
             self.logger.exception("Failed to record generation event: %s", e)
             raise
+
+    # ------------------------------------------------------------------
+    # Application settings (key/value, used for runtime model configuration)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _coerce_json(value):
+        """psycopg returns jsonb as a dict when the adapter is registered and a
+        str otherwise; normalize both to a dict."""
+        if value is None or isinstance(value, dict):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return None
+
+    def get_app_setting(self, key: str) -> Optional[Dict[str, Any]]:
+        """Return the stored JSON value for `key`, or None if unset."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM app_settings WHERE key = %s", (key,))
+                row = cur.fetchone()
+        return self._coerce_json(row[0]) if row else None
+
+    def set_app_setting(self, key: str, value: Dict[str, Any], updated_by: Optional[str] = None) -> None:
+        """Upsert a settings row."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO app_settings (key, value, updated_by, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = NOW()
+                    """,
+                    (key, Json(value), updated_by),
+                )
+        self.logger.info("app_setting %s updated by %s", key, updated_by)
+
+    def get_app_settings_meta(self, prefix: str = "") -> Dict[str, Dict[str, Any]]:
+        """Return {key: {value, updated_at, updated_by}} for keys starting with `prefix`."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT key, value, updated_at, updated_by FROM app_settings WHERE key LIKE %s ORDER BY key",
+                    (f"{prefix}%",),
+                )
+                rows = cur.fetchall()
+        return {
+            r[0]: {
+                "value": self._coerce_json(r[1]),
+                "updated_at": r[2].isoformat() if r[2] else None,
+                "updated_by": r[3],
+            }
+            for r in rows
+        }
+
+    # ------------------------------------------------------------------
+    # Eval runs (model-evaluation dashboard: run/result persistence)
+    # ------------------------------------------------------------------
+
+    _EVAL_RESULT_COLUMNS = (
+        "id", "run_id", "model", "jd_id", "status", "error", "duration_ms",
+        "input_tokens", "output_tokens", "fallback_used", "schema_score",
+        "schema_passed", "schema_errors", "ats_score", "ats_coverage",
+        "missing_keywords", "judge_overall", "judge_relevance", "judge_quality",
+        "judge_coherence", "judge_reasoning", "composite_score", "resume_json",
+        "created_at",
+    )
+
+    _EVAL_RUN_COLUMNS = (
+        "id", "created_at", "finished_at", "created_by", "status",
+        "data_source", "judge_model", "models", "jd_ids", "custom_jd", "notes",
+    )
+
+    def _row_to_dict(self, columns, row):
+        out = {}
+        for name, value in zip(columns, row):
+            if name in ("schema_errors", "missing_keywords", "resume_json", "models", "jd_ids"):
+                value = self._coerce_json(value) if not isinstance(value, list) else value
+            elif name in ("created_at", "finished_at") and value is not None:
+                value = value.isoformat()
+            elif name in ("id", "run_id") and value is not None:
+                value = str(value)
+            out[name] = value
+        return out
+
+    def create_eval_run(self, run_id: str, created_by: str, data_source: str,
+                        judge_model: Optional[str], models: list, jd_ids: list,
+                        custom_jd: Optional[str], notes: Optional[str]) -> None:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO eval_runs
+                        (id, created_by, status, data_source, judge_model, models, jd_ids, custom_jd, notes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (run_id, created_by, "running", data_source, judge_model,
+                     Json(list(models)), Json(list(jd_ids)), custom_jd, notes),
+                )
+        self.logger.info("Eval run %s created by %s", run_id, created_by)
+
+    def finish_eval_run(self, run_id: str, status: str) -> None:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE eval_runs SET status = %s, finished_at = NOW() WHERE id = %s",
+                    (status, run_id),
+                )
+
+    def insert_eval_result(self, result: Dict[str, Any]) -> None:
+        columns = [c for c in self._EVAL_RESULT_COLUMNS if c != "created_at"]
+        json_columns = {"schema_errors", "missing_keywords", "resume_json"}
+        values = [
+            Json(result.get(c)) if c in json_columns and result.get(c) is not None else result.get(c)
+            for c in columns
+        ]
+        placeholders = ", ".join(["%s"] * len(columns))
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"INSERT INTO eval_results ({', '.join(columns)}) VALUES ({placeholders})",
+                    tuple(values),
+                )
+
+    def list_eval_runs(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RUN_COLUMNS)} FROM eval_runs "
+                    "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                    (limit, offset),
+                )
+                rows = cur.fetchall()
+        return [self._row_to_dict(self._EVAL_RUN_COLUMNS, r) for r in rows]
+
+    def get_eval_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RUN_COLUMNS)} FROM eval_runs WHERE id = %s",
+                    (run_id,),
+                )
+                row = cur.fetchone()
+        return self._row_to_dict(self._EVAL_RUN_COLUMNS, row) if row else None
+
+    def get_eval_results(self, run_id: str) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RESULT_COLUMNS)} FROM eval_results "
+                    "WHERE run_id = %s ORDER BY model, jd_id",
+                    (run_id,),
+                )
+                rows = cur.fetchall()
+        return [self._row_to_dict(self._EVAL_RESULT_COLUMNS, r) for r in rows]
+
+    def get_eval_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {', '.join(self._EVAL_RESULT_COLUMNS)} FROM eval_results WHERE id = %s",
+                    (result_id,),
+                )
+                row = cur.fetchone()
+        return self._row_to_dict(self._EVAL_RESULT_COLUMNS, row) if row else None
+
+    def mark_running_evals_interrupted(self) -> int:
+        """A container restart leaves 'running' rows behind; close them out."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE eval_runs SET status = 'interrupted', finished_at = NOW() WHERE status = 'running'"
+                )
+                return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+    def get_eval_model_comparison(self) -> List[Dict[str, Any]]:
+        """Per-model aggregate across every stored eval result."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT model,
+                           COUNT(DISTINCT run_id)                                    AS runs,
+                           COUNT(*)                                                  AS cells,
+                           AVG(CASE WHEN status = 'success' THEN 1.0 ELSE 0.0 END)   AS success_rate,
+                           AVG(composite_score)                                      AS avg_composite,
+                           AVG(schema_score)                                         AS avg_schema,
+                           AVG(ats_score)                                            AS avg_ats,
+                           AVG(judge_overall)                                        AS avg_judge,
+                           AVG(duration_ms)                                          AS avg_duration_ms,
+                           MAX(created_at)                                           AS last_run_at
+                    FROM eval_results
+                    GROUP BY model
+                    ORDER BY AVG(composite_score) DESC NULLS LAST
+                    """
+                )
+                rows = cur.fetchall()
+        def _f(v):
+            return round(float(v), 4) if v is not None else None
+        return [
+            {
+                "model": r[0], "runs": int(r[1]), "cells": int(r[2]),
+                "success_rate": _f(r[3]), "avg_composite": _f(r[4]),
+                "avg_schema": _f(r[5]), "avg_ats": _f(r[6]), "avg_judge": _f(r[7]),
+                "avg_duration_ms": int(r[8]) if r[8] is not None else None,
+                "last_run_at": r[9].isoformat() if r[9] else None,
+            }
+            for r in rows
+        ]
 
     def get_admin_stats(self, days: int = 30) -> Dict[str, Any]:
         """Aggregate statistics about stored resumes for the admin dashboard."""
@@ -868,6 +1143,20 @@ class DBStorage:
                 stats["totals"]["successful_generations"] = success_gen
                 stats["totals"]["success_rate"] = round(success_gen / total_gen, 4) if total_gen else None
                 stats["totals"]["avg_duration_ms"] = int(avg_ms or 0)
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FILTER (WHERE fallback_used),
+                           COUNT(*)
+                    FROM generation_events
+                    WHERE created_at >= CURRENT_DATE - %s::int
+                    """,
+                    (days,),
+                )
+                fb_row = cur.fetchone() or (0, 0)
+                fallback_count, event_count = int(fb_row[0] or 0), int(fb_row[1] or 0)
+                stats["totals"]["fallback_generations"] = fallback_count
+                stats["totals"]["fallback_rate"] = round(fallback_count / event_count, 4) if event_count else None
 
                 cur.execute(
                     """
@@ -1095,7 +1384,7 @@ class DBStorage:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, created_at, user_id, model, format,
+                    SELECT id, created_at, user_id, model, requested_model, fallback_used, format,
                            language, duration_ms, status, error
                     FROM generation_events
                     ORDER BY created_at DESC
@@ -1109,11 +1398,13 @@ class DBStorage:
                         "created_at": str(r[1]),
                         "user_id": r[2],
                         "model": r[3],
-                        "format": r[4],
-                        "language": r[5],
-                        "duration_ms": r[6],
-                        "status": r[7],
-                        "error": r[8],
+                        "requested_model": r[4],
+                        "fallback_used": r[5],
+                        "format": r[6],
+                        "language": r[7],
+                        "duration_ms": r[8],
+                        "status": r[9],
+                        "error": r[10],
                     }
                     for r in cur.fetchall()
                 ]

@@ -3,70 +3,53 @@ Multi-model comparison test.
 
 Run with:
     pytest tests/integration/test_multi_model.py -v --real-ai \\
-      --models "google-gla:gemini-2.5-flash-lite,openai:gpt-4o-mini,anthropic:claude-haiku-4-5"
+      --models "google-gla:gemini-2.5-flash-lite,openai:gpt-4o-mini"
 
-Requires the corresponding API keys:
-    GOOGLE_API_KEY / GEMINI_API_KEY   for google-gla
-    OPENAI_API_KEY                    for openai
-    ANTHROPIC_API_KEY                 for anthropic
+Thin wrapper over evals.runner so the CLI and the admin dashboard measure
+exactly the same thing.
 """
+import os
+
 import pytest
+
+from evals.runner import EvalSpec, run_eval
 
 pytestmark = pytest.mark.timeout(600)
 
-from tests.evaluators.ats_evaluator import ATSEvaluator
-from tests.evaluators.llm_judge import LLMJudge
-from tests.evaluators.report import ResumeEvaluationReport, print_comparison_table
-from tests.evaluators.schema_evaluator import SchemaEvaluator
-from tests.fixtures.job_descriptions import JD_SOFTWARE_ENGINEER_SENIOR
 
+class _CollectingDB:
+    def __init__(self):
+        self.results = []
 
-class _NoEducationDB:
-    def get_job_experiences(self, user_id, type_filter=None):
-        return []
+    def create_eval_run(self, **kwargs):
+        pass
+
+    def insert_eval_result(self, result):
+        self.results.append(result)
+
+    def finish_eval_run(self, run_id, status):
+        pass
 
 
 @pytest.mark.real_ai
 @pytest.mark.slow
-async def test_multi_model_comparison(stub_vector_store, models_under_test):
-    """
-    Generate a resume with each model in --models, score with all evaluators,
-    and print a ranked comparison table.
+async def test_multi_model_comparison(models_under_test):
+    """Generate a resume with each model in --models, score it, print a ranked
+    table. Hard assertion: every model must produce a schema-valid resume."""
+    db = _CollectingDB()
+    spec = EvalSpec(
+        models=models_under_test,
+        jd_ids=["senior_swe"],
+        custom_jd=None,
+        data_source="fixture",
+        judge_model=os.getenv("JUDGE_MODEL", "google-gla:gemini-2.5-flash-lite"),
+        created_by="pytest",
+    )
+    await run_eval(spec, db=db)
 
-    Hard assertion: every model must produce a schema-valid resume.
-    Score values are informational and guide model selection.
-    """
-    from bot import Bot
+    for r in sorted(db.results, key=lambda x: x["composite_score"] or 0, reverse=True):
+        print(f"{r['model']:<48} schema={r['schema_score']} ats={r['ats_score']} "
+              f"judge={r['judge_overall']} composite={r['composite_score']} status={r['status']}")
 
-    judge = LLMJudge()
-    reports = []
-
-    for model_string in models_under_test:
-        bot = Bot(
-            user_id="test_user_001",
-            vector_store=stub_vector_store,
-            model=model_string,
-            db=_NoEducationDB(),
-            auto_ingest=False,
-        )
-
-        resume = await bot.generate_resume(JD_SOFTWARE_ENGINEER_SENIOR)
-
-        schema = SchemaEvaluator().evaluate(resume)
-        ats = ATSEvaluator().evaluate(resume, JD_SOFTWARE_ENGINEER_SENIOR)
-        llm_judge_result = judge.evaluate(resume, JD_SOFTWARE_ENGINEER_SENIOR)
-
-        report = ResumeEvaluationReport(
-            model=model_string,
-            jd_name="senior_swe",
-            schema=schema,
-            ats=ats,
-            llm_judge=llm_judge_result,
-        )
-        report.print_summary()
-        reports.append(report)
-
-    print_comparison_table(reports)
-
-    failed = [r.model for r in reports if not r.schema.passed]
+    failed = [r["model"] for r in db.results if not r["schema_passed"]]
     assert not failed, f"These models produced schema-invalid resumes: {failed}"

@@ -18,11 +18,13 @@ from api.utils import (
     _build_request_signature,
     _load_resume_cache,
     _build_signed_files,
+    _make_writer,
     clean_output_dir,
     _save_resume_cache,
     get_profile_with_links,
     get_user_store,
     sse_event,
+    SSE_HEADERS,
     _hmac_sign
 )
 from utils.logging_utils import set_user_context
@@ -31,39 +33,28 @@ from utils.db_storage import DBStorage
 from bot import Bot
 from llm import agent
 from models.resume import ResumeOutputFormat
-from resume import LatexResumeWriter, WordResumeWriter
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
 
-SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "*",
-    "Access-Control-Allow-Methods": "*",
-}
 
-
-def _record_generation(user_id, model, fmt, language, started_at, status, error=None):
+def _record_generation(user_id, model, fmt, language, started_at, status, error=None,
+                        requested_model=None, fallback_used=False):
     """Persist a generation event for admin statistics; never raises."""
     try:
         DBStorage().record_generation_event(
             user_id=user_id,
             model=str(model or ""),
+            requested_model=str(requested_model or "") or None,
             format=fmt,
             language=language,
             duration_ms=int((time.time() - started_at) * 1000),
             status=status,
             error=error,
+            fallback_used=bool(fallback_used),
         )
     except Exception:
         logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
-
-
-def _make_writer(fmt: str, csv_path: str, profile_path, profile: dict = None):
-    writer_cls = LatexResumeWriter if fmt == "latex" else WordResumeWriter
-    return writer_cls(csv_location=csv_path, profile_image_path=profile_path, profile=profile)
 
 
 def _prepare_request(user_id: str, req: ResumeRequest, csv_path: str, profile_path):
@@ -99,13 +90,18 @@ def _serialize_result(result):
     return result.model_dump() if hasattr(result, "model_dump") else result
 
 
-def _cache_payload(req: ResumeRequest, fmt, result, signature, result_signature, csv_hash, profile_hash, job_hash):
+def _cache_payload(req: ResumeRequest, fmt, result, signature, result_signature, csv_hash, profile_hash, job_hash, model):
+    """`model` must be the effective generation model for this specific result --
+    `bot.generation_model` when a `Bot` produced it, or the model already stored
+    against `result_signature` when we're only re-rendering a cache hit. Never
+    re-derive it from `agent.DEFAULT_MODEL`: that import-time constant is stale
+    the moment the model becomes runtime-configurable (see `_build_result_signature`)."""
     return {
         "render_signature": signature,
         "result_signature": result_signature,
         "result": _serialize_result(result),
         "format": fmt,
-        "model": agent.DEFAULT_MODEL,
+        "model": model,
         "include_profile_picture": bool(req.include_profile_picture),
         "csv_hash": csv_hash,
         "profile_hash": profile_hash,
@@ -125,7 +121,7 @@ def _record_resume_request(user_id: str, job_description: str):
 async def generate_resume(user_id: str, req: ResumeRequest):
     _validate_user_id(user_id)
     set_user_context(user_id)
-    logger.info("Generate resume requested; format=%s model=%s", req.format, agent.DEFAULT_MODEL)
+    logger.info("Generate resume requested; format=%s model=%s", req.format, agent.get_effective_model("generation"))
     csv_path = _resolve_user_jobs_csv(user_id)
     logger.info("Resolved jobs CSV for user_id=%s at %s", user_id, csv_path)
     row_count = _count_csv_rows(csv_path)
@@ -164,6 +160,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
         if signed_files.get("source"):
             _save_resume_cache(out_dir, _cache_payload(
                 req, fmt, typed_result, signature, result_signature, csv_hash, profile_hash, job_hash,
+                model=result_entry.get("model") if result_entry else agent.get_effective_model("generation"),
             ))
         return JSONResponse(content={"result": cached_result, "files": signed_files, "rows": row_count})
 
@@ -176,9 +173,15 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     try:
         result = await bot.generate_resume(req.job_description)
     except Exception as exc:
-        _record_generation(user_id, bot.model, fmt, None, gen_start, "error", str(exc))
+        _record_generation(
+            user_id, bot.last_generation_model or bot.generation_model, fmt, None, gen_start, "error", str(exc),
+            requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
+        )
         raise
-    _record_generation(user_id, bot.model, fmt, result.language, gen_start, "success")
+    _record_generation(
+        user_id, bot.last_generation_model or bot.generation_model, fmt, result.language, gen_start, "success",
+        requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
+    )
     logger.info(
         "Bot generation complete; language=%s skills=%d exp=%d",
         result.language,
@@ -196,6 +199,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     if signed_files.get("source"):
         _save_resume_cache(out_dir, _cache_payload(
             req, fmt, result, signature, result_signature, csv_hash, profile_hash, job_hash,
+            model=bot.generation_model,
         ))
     else:
         logger.warning("Resume generation completed but no source file found to cache for user_id=%s", user_id)
@@ -282,6 +286,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 if files.get("source"):
                     _save_resume_cache(out_dir, _cache_payload(
                         req, fmt, typed_result, signature, result_signature, csv_hash, profile_hash, job_hash,
+                        model=result_entry.get("model") if result_entry else agent.get_effective_model("generation"),
                     ))
                 yield sse_event({
                     "stage": "done",
@@ -297,7 +302,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
 
     writer = _make_writer(fmt, csv_path, profile_path, profile_dict)
     clean_output_dir(out_dir)
-    logger.info("Starting streaming generation; format=%s model=%s out_dir=%s", req.format, agent.DEFAULT_MODEL, out_dir)
+    logger.info(
+        "Starting streaming generation; format=%s model=%s out_dir=%s",
+        req.format, agent.get_effective_model("generation"), out_dir,
+    )
     bot = Bot(user_id=user_id, vector_store=store, jobs_csv=csv_path)
 
     async def event_generator():
@@ -311,8 +319,9 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                     try:
                         result_obj = event.get("result")
                         _record_generation(
-                            user_id, bot.model, fmt,
+                            user_id, bot.last_generation_model or bot.generation_model, fmt,
                             getattr(result_obj, "language", None), gen_start, "success",
+                            requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
                         )
                         writer.write(result_obj, output=output_name, to_pdf=True)
                         files = _build_signed_files(user_id, fmt, out_dir)
@@ -321,6 +330,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                         if files.get("source"):
                             _save_resume_cache(out_dir, _cache_payload(
                                 req, fmt, result_obj, signature, result_signature, csv_hash, profile_hash, job_hash,
+                                model=bot.generation_model,
                             ))
                         else:
                             logger.warning("Streaming generation done but source missing for caching user_id=%s", user_id)
@@ -330,7 +340,10 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
                 yield sse_event(event)
         except Exception as e:
             logger.exception("Streaming generation failed")
-            _record_generation(user_id, bot.model, fmt, None, gen_start, "error", str(e))
+            _record_generation(
+                user_id, bot.last_generation_model or bot.generation_model, fmt, None, gen_start, "error", str(e),
+                requested_model=bot.generation_model, fallback_used=bot.last_generation_fallback_used,
+            )
             yield sse_event({"stage": "error", "message": str(e)})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)

@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from models.resume import ResumeOutputFormat
 from models.resume_section import ResumeSection
 from models.skill import Skill
-from tests.evaluators.schema_evaluator import SchemaEvaluator
+from evals.evaluators.schema_evaluator import SchemaEvaluator
 
 
 def test_valid_resume_passes_schema(sample_resume_output):

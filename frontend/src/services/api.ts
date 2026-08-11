@@ -86,6 +86,59 @@ export async function generateResume(userId: string, payload: ResumeRequestPaylo
   return data;
 }
 
+/** One Server-Sent Events frame: the optional `event:` line's value, and the
+ * parsed JSON payload of its `data:` line (or `undefined` if the frame had
+ * no parseable `data:` line). */
+interface SseFrame {
+  event: string | null;
+  data: any;
+}
+
+/** Reads an SSE response body, splitting it into frames on the blank-line
+ * separator and invoking `onFrame` with each as it completes. Shared by
+ * `generateResumeStream` and `streamEvalRun` so the chunk-buffering /
+ * frame-splitting logic (and `event:`/`data:` line parsing) lives in one
+ * place rather than being duplicated per stream consumer. */
+function pumpSseBody(body: ReadableStream<Uint8Array>, onFrame: (frame: SseFrame) => void): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  function parseFrame(raw: string): SseFrame | null {
+    let event: string | null = null;
+    let data: any = undefined;
+    let sawData = false;
+    for (const rawLine of raw.split('\n')) {
+      const line = rawLine.trim();
+      if (line.startsWith('event:')) {
+        event = line.slice('event:'.length).trim();
+      } else if (line.startsWith('data:')) {
+        sawData = true;
+        try {
+          data = JSON.parse(line.slice('data:'.length).trim());
+        } catch { /* ignore malformed data lines */ }
+      }
+    }
+    if (!sawData && event === null) return null;
+    return { event, data };
+  }
+
+  function pump(): Promise<void> {
+    return reader.read().then(({ done, value }) => {
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      for (let i = 0; i < parts.length - 1; i++) {
+        const frame = parseFrame(parts[i]);
+        if (frame) onFrame(frame);
+      }
+      buffer = parts[parts.length - 1];
+      return pump();
+    });
+  }
+  return pump();
+}
+
 export function generateResumeStream(userId: string, payload: ResumeRequestPayload, onEvent: (evt: any) => void): Promise<{ result: any; files?: { pdf: string; source: string } }> {
   // Returns a promise resolving to final result while invoking onEvent per progress event.
   return new Promise((resolve, reject) => {
@@ -97,45 +150,27 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
       body: JSON.stringify(payload)
     }).then(res => {
       if (!res.ok || !res.body) { reject(new Error(`Stream failed: ${res.status}`)); return; }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      function pump(): any {
-        reader.read().then(({ done, value }) => {
-          if (done) { return; }
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split('\n\n');
-          for (let i = 0; i < parts.length - 1; i++) {
-            const line = parts[i].trim();
-            if (line.startsWith('data:')) {
-              try {
-                const json = JSON.parse(line.slice(5).trim());
-                onEvent(json);
-                if (json.stage === 'done') {
-                  // Normalize relative file links to absolute
-                  let files = json.files;
-                  if (files) {
-                    const toAbs = (p: string) => {
-                      if (!p) return p;
-                      if (p.startsWith('http')) return p;
-                      if (p.includes('/download/')) return API_BASE.replace(/\/$/, '') + p; // relative download path
-                      // bare filename
-                      return API_BASE.replace(/\/$/, '') + `/download/${encodeURIComponent(userId)}/${p}`;
-                    };
-                    files = { pdf: toAbs(files.pdf), source: toAbs(files.source) };
-                  }
-                  resolve({ result: json.result, files });
-                } else if (json.stage === 'error') {
-                  reject(new Error(json.message || 'Error'));
-                }
-              } catch (e) { /* ignore parse errors */ }
-            }
+      pumpSseBody(res.body, ({ data: json }) => {
+        if (json === undefined) return;
+        onEvent(json);
+        if (json.stage === 'done') {
+          // Normalize relative file links to absolute
+          let files = json.files;
+          if (files) {
+            const toAbs = (p: string) => {
+              if (!p) return p;
+              if (p.startsWith('http')) return p;
+              if (p.includes('/download/')) return API_BASE.replace(/\/$/, '') + p; // relative download path
+              // bare filename
+              return API_BASE.replace(/\/$/, '') + `/download/${encodeURIComponent(userId)}/${p}`;
+            };
+            files = { pdf: toAbs(files.pdf), source: toAbs(files.source) };
           }
-          buffer = parts[parts.length - 1];
-          pump();
-        }).catch(err => reject(err));
-      }
-      pump();
+          resolve({ result: json.result, files });
+        } else if (json.stage === 'error') {
+          reject(new Error(json.message || 'Error'));
+        }
+      }).catch(err => reject(err));
     }).catch(err => reject(err));
   });
 }
@@ -149,6 +184,8 @@ export interface AdminStats {
     successful_generations: number;
     success_rate: number | null;
     avg_duration_ms: number;
+    fallback_generations: number;
+    fallback_rate: number | null;
   };
   generations_per_day: Array<{ day: string; count: number }>;
   requests_per_day: Array<{ day: string; count: number }>;
@@ -186,6 +223,208 @@ export async function exportAdminLogs(idToken: string): Promise<Blob> {
     throw new Error('forbidden');
   }
   if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+  return res.blob();
+}
+
+/** Shared fetch wrapper for the newer `/admin/*` endpoints (model catalog,
+ * model config, evals): attaches the bearer token, normalizes 401/403 into
+ * `Error('forbidden')` (matching `fetchAdminStats`/`exportAdminLogs` above),
+ * and surfaces the backend's `detail` message on any other non-OK response. */
+async function adminRequest(idToken: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${idToken}`, ...(init.headers || {}) },
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('forbidden');
+  if (!res.ok) {
+    let message = `Request failed: ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.detail) message = data.detail;
+    } catch { }
+    throw new Error(message);
+  }
+  return res;
+}
+
+export interface CatalogModel {
+  id: string;
+  model_string: string;
+  name: string;
+  context_length: number | null;
+  prompt_price: number | null;
+  completion_price: number | null;
+  supports_tools: boolean;
+  supports_structured_outputs: boolean;
+}
+
+export interface TaskModelConfig {
+  primary: string;
+  fallback: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export type ModelTask = 'generation' | 'translation' | 'import';
+
+export interface ModelConfigResponse {
+  tasks: Record<ModelTask, TaskModelConfig>;
+}
+
+export interface ModelComparisonRow {
+  model: string;
+  runs: number;
+  cells: number;
+  success_rate: number | null;
+  avg_composite: number | null;
+  avg_schema: number | null;
+  avg_ats: number | null;
+  avg_judge: number | null;
+  avg_duration_ms: number | null;
+  last_run_at: string | null;
+}
+
+export interface EvalRun {
+  id: string;
+  created_at: string;
+  finished_at: string | null;
+  created_by: string | null;
+  status: string;
+  data_source: string;
+  judge_model: string | null;
+  models: string[];
+  jd_ids: string[];
+  custom_jd: string | null;
+  notes: string | null;
+}
+
+export interface EvalResult {
+  id: string;
+  run_id: string;
+  model: string;
+  jd_id: string | null;
+  status: string;
+  error: string | null;
+  duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  fallback_used: boolean;
+  // Every field below this line is seeded `None` for an errored cell (see
+  // backend/evals/runner.py `_run_cell`'s `result` dict, lines ~122-138) and
+  // only ever gets filled in on the success path -- an error cell arrives
+  // over the wire with all of these as `null`, never `[]` or `0`. Do not
+  // widen any of these back to a non-nullable type without re-auditing every
+  // place that reads it.
+  schema_score: number | null;
+  schema_passed: boolean | null;
+  schema_errors: string[] | null;
+  ats_score: number | null;
+  ats_coverage: number | null;
+  missing_keywords: string[] | null;
+  judge_overall: number | null;
+  judge_relevance: number | null;
+  judge_quality: number | null;
+  judge_coherence: number | null;
+  judge_reasoning: string | null;
+  composite_score: number | null;
+  resume_json: any;
+}
+
+/** Body of `POST /admin/evals`: the spec for a new evaluation run. */
+export interface EvalRunRequest {
+  models: string[];
+  jd_ids: string[];
+  custom_jd: string | null;
+  data_source: string;
+  judge_model: string | null;
+  notes: string | null;
+}
+
+export async function fetchOpenRouterModels(
+  idToken: string,
+  opts: { toolsOnly?: boolean; q?: string } = {}
+): Promise<CatalogModel[]> {
+  const params = new URLSearchParams({ tools_only: String(opts.toolsOnly ?? true) });
+  if (opts.q) params.set('q', opts.q);
+  const res = await adminRequest(idToken, `/admin/models?${params}`);
+  return (await res.json()).models;
+}
+
+export async function fetchModelConfig(idToken: string): Promise<ModelConfigResponse> {
+  const res = await adminRequest(idToken, '/admin/model-config');
+  return res.json();
+}
+
+export async function updateModelConfig(
+  idToken: string, task: ModelTask, primary: string, fallback: string | null
+): Promise<ModelConfigResponse> {
+  const res = await adminRequest(idToken, '/admin/model-config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, primary, fallback }),
+  });
+  return res.json();
+}
+
+export async function fetchEvalFixtures(
+  idToken: string
+): Promise<{ job_descriptions: Array<{ id: string; label: string; preview: string }>; default_judge_model: string }> {
+  const res = await adminRequest(idToken, '/admin/evals/fixtures');
+  return res.json();
+}
+
+export async function startEvalRun(idToken: string, payload: EvalRunRequest): Promise<{ run_id: string }> {
+  const res = await adminRequest(idToken, '/admin/evals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+/** Streams live results for an in-flight eval run via SSE, invoking `onCell`
+ * for each `event: cell` frame. Uses `fetch` (not `EventSource`) because the
+ * endpoint requires an `Authorization: Bearer` header, which `EventSource`
+ * cannot send. Resolves once the backend closes the stream (it does so right
+ * after emitting `event: done`); rejects if the backend instead reports
+ * `event: error` (the run itself failed) or the connection fails. */
+export async function streamEvalRun(idToken: string, runId: string, onCell: (r: EvalResult) => void): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/evals/${encodeURIComponent(runId)}/stream`, {
+    headers: { Authorization: `Bearer ${idToken}` },
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('forbidden');
+  if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
+
+  let runError: Error | null = null;
+  await pumpSseBody(res.body, ({ event, data }) => {
+    if (event === 'cell') {
+      if (data !== undefined) onCell(data as EvalResult);
+    } else if (event === 'error') {
+      runError = new Error(data?.message || 'Eval run failed');
+    }
+    // 'done' carries no payload of interest -- the backend closes the stream
+    // right after it, which ends pumpSseBody's read loop on its own.
+  });
+  if (runError) throw runError;
+}
+
+export async function fetchEvalRuns(idToken: string): Promise<EvalRun[]> {
+  const res = await adminRequest(idToken, '/admin/evals');
+  return (await res.json()).runs;
+}
+
+export async function fetchEvalRun(idToken: string, runId: string): Promise<{ run: EvalRun; results: EvalResult[] }> {
+  const res = await adminRequest(idToken, `/admin/evals/${encodeURIComponent(runId)}`);
+  return res.json();
+}
+
+export async function fetchEvalComparison(idToken: string): Promise<ModelComparisonRow[]> {
+  const res = await adminRequest(idToken, '/admin/evals/compare');
+  return (await res.json()).models;
+}
+
+export async function downloadEvalResume(idToken: string, resultId: string, format: string): Promise<Blob> {
+  const res = await adminRequest(idToken, `/admin/evals/results/${encodeURIComponent(resultId)}/download?format=${encodeURIComponent(format)}`);
   return res.blob();
 }
 

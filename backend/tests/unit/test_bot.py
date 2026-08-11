@@ -6,8 +6,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot import Bot
+from llm import model_config
 from models.language import Language
 from models.resume import ResumeOutputFormat
+
+
+@pytest.fixture(autouse=True)
+def _fixed_model_config():
+    """Every `Bot(...)` construction below omits `model`, so `__init__` now
+    resolves generation/translation models via `get_model_config()` unconditionally
+    (previously this only happened when a caller explicitly asked for the
+    default). Pin it to a known, DB-independent config so these tests assert
+    against known models regardless of whether a Postgres happens to be
+    reachable on the machine running them."""
+    cfg = model_config.ModelConfig(
+        generation=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+        translation=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+        import_=model_config.TaskModels("google-gla:gemini-2.5-flash-lite", None),
+    )
+    with patch("llm.agent.get_model_config", return_value=cfg):
+        yield
 
 
 @contextmanager
@@ -224,6 +242,39 @@ async def test_auto_ingest_loads_csv_into_store(tmp_path, stub_vector_store):
     assert stub_vector_store.deleted_users == ["u1"]
     assert len(stub_vector_store.added) == 2
     assert "company: Acme" in stub_vector_store.added[0][1]
+
+
+async def test_non_english_tracks_generation_and_translation_models_separately(sample_resume_output):
+    """Generation on model A, translation on model B (with a fallback) --
+    `last_generation_*` must reflect only the generation call, not be
+    overwritten by the translation call that runs afterward for a
+    non-English resume. `last_fallback_used` (the pipeline-wide OR, used by
+    the eval runner) still picks up the translation fallback."""
+    bot = Bot(user_id="u1", auto_ingest=False)
+
+    async def fake_generate(*args, **kwargs):
+        kwargs["on_model_used"]("model-a", False)
+        return _resume(sample_resume_output, "es")
+
+    async def fake_translate(*args, **kwargs):
+        kwargs["on_model_used"]("model-b", True)
+        return _resume(sample_resume_output, "es")
+
+    with patch("llm.agent.generate", AsyncMock(side_effect=fake_generate)), \
+            patch("llm.agent.translate", AsyncMock(side_effect=fake_translate)):
+        await bot.generate_resume("descripción del puesto")
+
+    # What `generation_events` must record: generation's own model/fallback,
+    # untouched by the translation call that ran after it.
+    assert bot.last_generation_model == "model-a"
+    assert bot.last_generation_fallback_used is False
+    # Translation tracked on its own pair, not merged into generation's.
+    assert bot.last_translation_model == "model-b"
+    assert bot.last_translation_fallback_used is True
+    # Pipeline-wide OR (eval runner's per-cell fallback_used) does pick up
+    # the translation fallback -- that's a different, intentionally broader
+    # signal than what generation_events records.
+    assert bot.last_fallback_used is True
 
 
 async def test_translate_resume_accepts_dict(sample_resume_output):

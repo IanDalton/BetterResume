@@ -1,8 +1,8 @@
 import pytest
 
-from tests.evaluators.ats_evaluator import ATSEvaluator
-from tests.evaluators.report import ResumeEvaluationReport
-from tests.evaluators.schema_evaluator import SchemaEvaluator
+from evals.evaluators.ats_evaluator import ATSEvaluator
+from evals.evaluators.report import ResumeEvaluationReport
+from evals.evaluators.schema_evaluator import SchemaEvaluator
 from tests.fixtures.job_descriptions import ALL_JDS, JD_SOFTWARE_ENGINEER_SENIOR, JD_SPANISH_LANGUAGE
 
 pytestmark = pytest.mark.timeout(180)

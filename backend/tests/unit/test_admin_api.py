@@ -110,8 +110,8 @@ class FakeCursor:
         if "SELECT id," in self._sql and "generation_events" in self._sql:
             # get_generation_events export rows
             return [
-                (2, "2026-06-12", "u2", "m", "latex", "en", 100, "error", "boom"),
-                (1, "2026-06-11", "u1", "m", "word", "en", 200, "success", None),
+                (2, "2026-06-12", "u2", "m", "requested-m", True, "latex", "en", 100, "error", "boom"),
+                (1, "2026-06-11", "u1", "m", "m", False, "word", "en", 200, "success", None),
             ]
         if "status <> 'success'" in self._sql:
             # recent_errors: created_at, user_id, model, format, status, error
@@ -184,8 +184,8 @@ def test_record_generation_event_inserts_row():
     sql, params = cursor.executed[-1]
     assert "INSERT INTO generation_events" in sql
     assert params[0] == "u1"
-    assert params[4] == 4200
-    assert params[5] == "success"
+    assert params[5] == 4200
+    assert params[6] == "success"
 
 
 def test_record_generation_event_truncates_error():
@@ -195,7 +195,7 @@ def test_record_generation_event_truncates_error():
         storage.record_generation_event(user_id="u1", status="error", error="x" * 5000)
 
     _, params = cursor.executed[-1]
-    assert len(params[6]) == 2000
+    assert len(params[7]) == 2000
 
 
 def test_get_admin_stats_includes_recent_errors():
@@ -225,10 +225,12 @@ def test_get_generation_events_returns_all_columns():
     assert len(rows) == 2
     assert rows[0]["status"] == "error"
     assert rows[0]["error"] == "boom"
+    assert rows[0]["requested_model"] == "requested-m"
+    assert rows[0]["fallback_used"] is True
     assert rows[1]["status"] == "success"
     assert set(rows[0]) == {
-        "id", "created_at", "user_id", "model", "format",
-        "language", "duration_ms", "status", "error",
+        "id", "created_at", "user_id", "model", "requested_model", "fallback_used",
+        "format", "language", "duration_ms", "status", "error",
     }
 
 
@@ -245,7 +247,9 @@ def test_export_logs_returns_csv_for_admin():
     assert resp.headers["content-type"].startswith("text/csv")
     assert "attachment; filename=generation_logs.csv" in resp.headers["content-disposition"]
     body = resp.text
-    assert body.splitlines()[0] == "id,created_at,user_id,model,format,language,duration_ms,status,error"
+    assert body.splitlines()[0] == (
+        "id,created_at,user_id,model,requested_model,fallback_used,format,language,duration_ms,status,error"
+    )
     assert "boom" in body
 
 
