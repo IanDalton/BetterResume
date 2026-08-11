@@ -89,8 +89,8 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 - `Home` — main UI triggering resume generation
 - `ProfileEditor` / Entry sections (`PersonalInfoSection`, `ExperienceSection`, `EducationSection`, `LanguagesSection`) — unified data-entry flow
 - `ResumeImportDialog` — resume parsing and LinkedIn PDF import
-- `Donate` / `DonateCheckout` — Stripe payment flow
-- `AdminDashboard` (`/admin`) — generation statistics; requires Firebase sign-in with the admin email; calls `/resume/admin/stats` with a bearer ID token
+- `Donate` — Stripe payment flow (embedded checkout)
+- `AdminDashboard` (`/admin`) — auth gate + tab shell over `pages/admin/{StatsTab,ModelsTab,EvalsTab}`, requiring Firebase sign-in with the admin email; covers generation stats, per-task model configuration, and the eval subsystem
 
 **API communication:** `src/services/api.ts` wraps all backend calls. CSV data format matches backend's `jobs.csv` schema (columns: `type, company, location, role, start_date, end_date, description`).
 
