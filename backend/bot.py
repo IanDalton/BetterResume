@@ -47,12 +47,17 @@ class Bot:
             raise ValueError("user_id is required to generate a resume")
         self.user_id = user_id
         self.vector_store = vector_store
-        self.model = agent.normalize_model_name(model)
+        # Explicit model applies to every task (eval runs, tests, CLI). With no
+        # explicit model, each task resolves independently from runtime config.
+        self.generation_model, self._generation_fallback = agent._resolve_model("generation", model)
+        self.translation_model, self._translation_fallback = agent._resolve_model("translation", model)
+        self.last_model_used: Optional[str] = None
+        self.last_fallback_used: bool = False
         self.db = db
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
             "Bot init model=%s has_store=%s auto_ingest=%s jobs_csv=%s user=%s",
-            self.model, bool(vector_store), auto_ingest, jobs_csv, user_id,
+            self.generation_model, bool(vector_store), auto_ingest, jobs_csv, user_id,
         )
 
         self._auto_ingest_task = None
@@ -61,6 +66,15 @@ class Bot:
         self._stored_language_rows = None
         if auto_ingest and jobs_csv and os.path.isfile(jobs_csv):
             self._start_auto_ingest(jobs_csv)
+
+    @property
+    def model(self):
+        """Back-compat alias: the generation model."""
+        return self.generation_model
+
+    def _record_model_used(self, model_name: str, fallback_used: bool) -> None:
+        self.last_model_used = model_name
+        self.last_fallback_used = self.last_fallback_used or fallback_used
 
     # ------------------------------------------------------------------
     # Ingest
@@ -169,9 +183,11 @@ class Bot:
             user_id=self.user_id,
             vector_store=self.vector_store,
             db=self.db,
-            model=self.model,
+            model=self.generation_model,
+            fallback_model=self._generation_fallback,
             require_tool_call=True,
             extra_context=extra_context,
+            on_model_used=self._record_model_used,
         )
         self.logger.info("Agent returned resume; language=%s", resume.language)
         self._inject_stored_languages(resume)
@@ -203,7 +219,13 @@ class Bot:
     async def translate_resume(self, r: ResumeOutputFormat, original_jd: str) -> ResumeOutputFormat:
         if isinstance(r, dict):
             r = ResumeOutputFormat.model_validate(r)
-        return await agent.translate(r, original_jd, user_id=self.user_id, model=self.model)
+        return await agent.translate(
+            r, original_jd,
+            user_id=self.user_id,
+            model=self.translation_model,
+            fallback_model=self._translation_fallback,
+            on_model_used=self._record_model_used,
+        )
 
 
 if __name__ == "__main__":
