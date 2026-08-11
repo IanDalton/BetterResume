@@ -209,7 +209,12 @@ async def run_eval(
         db = DBStorage()
 
     run_id = run_id or str(uuid.uuid4())
-    db.create_eval_run(
+    # `db` methods are synchronous (real DBStorage does blocking psycopg I/O); this
+    # runner is also invoked from inside FastAPI's event loop (the admin endpoint), so
+    # every call must go through a thread rather than block the loop for every other
+    # in-flight request.
+    await asyncio.to_thread(
+        db.create_eval_run,
         run_id=run_id,
         created_by=spec.created_by,
         data_source=spec.data_source,
@@ -226,9 +231,26 @@ async def run_eval(
     async def _guarded(model_string: str, jd_id: str, jd_text: str):
         async with semaphore:
             result = await _run_cell(spec, model_string, jd_id, jd_text, run_id)
-        db.insert_eval_result(result)
+        # Bookkeeping failures (a dropped connection, a disconnected SSE client) must
+        # degrade to a logged warning for this cell, not tear down the whole run: by
+        # this point the (paid) generation already happened, and sibling cells are
+        # already running as their own gather()-owned tasks that nothing here should
+        # abort mid-flight.
+        try:
+            await asyncio.to_thread(db.insert_eval_result, result)
+        except Exception:
+            logger.exception(
+                "Eval run %s: failed to persist result for model=%s jd=%s",
+                run_id, model_string, jd_id,
+            )
         if on_cell:
-            await on_cell(result)
+            try:
+                await on_cell(result)
+            except Exception:
+                logger.exception(
+                    "Eval run %s: on_cell callback failed for model=%s jd=%s",
+                    run_id, model_string, jd_id,
+                )
         return result
 
     tasks = [
@@ -238,10 +260,10 @@ async def run_eval(
     ]
     try:
         await asyncio.gather(*tasks)
-        db.finish_eval_run(run_id, "complete")
+        await asyncio.to_thread(db.finish_eval_run, run_id, "complete")
     except Exception:
         logger.exception("Eval run %s failed", run_id)
-        db.finish_eval_run(run_id, "failed")
+        await asyncio.to_thread(db.finish_eval_run, run_id, "failed")
         raise
     logger.info("Eval run %s complete", run_id)
     return run_id

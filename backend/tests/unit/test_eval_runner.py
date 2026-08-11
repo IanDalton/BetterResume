@@ -140,3 +140,53 @@ async def test_custom_jd_is_used_and_labelled(sample_resume_output):
 
     assert db.results[0]["jd_id"] == "custom"
     assert db.runs[0]["custom_jd"] == "Pasted JD text"
+
+
+async def test_insert_failure_for_one_cell_does_not_abort_the_run(sample_resume_output):
+    """A raising `insert_eval_result` (e.g. a dropped connection) must degrade to a
+    logged warning for that cell only — sibling cells still complete and persist, and
+    the run still finishes `complete` rather than being torn down mid-flight."""
+
+    class FlakyDB(RecordingDB):
+        def insert_eval_result(self, result):
+            if result["model"] == "test:bad":
+                raise RuntimeError("db write failed")
+            super().insert_eval_result(result)
+
+    db = FlakyDB()
+    seen = []
+
+    async def on_cell(result):
+        seen.append(result)
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        run_id = await runner.run_eval(_spec(models=["test:bad", "test:good"]), db=db, on_cell=on_cell)
+
+    # test:bad's result failed to persist; test:good's still made it through.
+    assert [r["model"] for r in db.results] == ["test:good"]
+    # on_cell still saw both cells, even the one whose persistence failed.
+    assert {r["model"] for r in seen} == {"test:bad", "test:good"}
+    assert db.finished == [(run_id, "complete")]
+
+
+async def test_on_cell_failure_for_one_cell_does_not_abort_the_run(sample_resume_output):
+    """An `on_cell` callback that raises (e.g. pushing to a queue for a client that
+    disconnected) must not prevent other cells from completing and persisting."""
+    db = RecordingDB()
+
+    async def on_cell(result):
+        if result["model"] == "test:bad":
+            raise RuntimeError("client disconnected")
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        run_id = await runner.run_eval(_spec(models=["test:bad", "test:good"]), db=db, on_cell=on_cell)
+
+    # Both cells still persisted despite one on_cell callback raising.
+    assert {r["model"] for r in db.results} == {"test:bad", "test:good"}
+    assert db.finished == [(run_id, "complete")]
