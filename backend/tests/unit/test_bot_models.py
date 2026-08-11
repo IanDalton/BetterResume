@@ -44,3 +44,23 @@ async def test_generate_records_model_used(stub_vector_store, sample_resume_outp
 
     assert bot.last_model_used is not None
     assert bot.last_fallback_used is False
+
+
+async def test_generate_records_token_usage(stub_vector_store, sample_resume_output):
+    """`Bot` must capture usage from `agent.generate` so callers (the eval
+    runner) can read it off `last_input_tokens` / `last_output_tokens` --
+    before this, usage was logged and discarded."""
+    from pydantic_ai.models.test import TestModel
+
+    bot = Bot(
+        user_id="u1",
+        vector_store=stub_vector_store,
+        model=TestModel(custom_output_args=sample_resume_output.model_dump()),
+        db=None,
+        auto_ingest=False,
+    )
+    with patch.object(Bot, "_fetch_generation_context", return_value=None):
+        await bot.generate_resume("Backend role")
+
+    assert bot.last_input_tokens is not None and bot.last_input_tokens > 0
+    assert bot.last_output_tokens is not None and bot.last_output_tokens > 0

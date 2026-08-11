@@ -103,6 +103,24 @@ async def test_run_persists_one_result_per_cell(sample_resume_output):
     assert db.results[0]["composite_score"] is not None
 
 
+async def test_successful_cell_records_token_usage(sample_resume_output):
+    """A successful cell's persisted result must carry real token counts, not
+    the `None` placeholders the result dict is seeded with -- before this fix
+    the Tokens column in the eval dashboard could never populate."""
+    db = RecordingDB()
+
+    with patch.object(runner, "_model_for", side_effect=lambda name: TestModel(
+            custom_output_args=sample_resume_output.model_dump())), \
+         patch.object(runner, "_judge_for", side_effect=lambda name: TestModel(
+            custom_output_args={"relevance": 8, "quality": 8, "coherence": 8, "reasoning": "ok"})):
+        await runner.run_eval(_spec(models=["test:a"]), db=db)
+
+    result = db.results[0]
+    assert result["status"] == "success"
+    assert result["input_tokens"] is not None and result["input_tokens"] > 0
+    assert result["output_tokens"] is not None and result["output_tokens"] > 0
+
+
 async def test_failing_cell_is_recorded_and_does_not_abort_run(sample_resume_output):
     db = RecordingDB()
 

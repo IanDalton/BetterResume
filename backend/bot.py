@@ -56,6 +56,8 @@ class Bot:
         self.translation_model, self._translation_fallback = agent._resolve_model("translation", model)
         self.last_model_used: Optional[str] = None
         self.last_fallback_used: bool = False
+        self.last_input_tokens: Optional[int] = None
+        self.last_output_tokens: Optional[int] = None
         self.db = db
         self.logger = logging.getLogger("betterresume.bot")
         self.logger.info(
@@ -78,6 +80,13 @@ class Bot:
     def _record_model_used(self, model_name: str, fallback_used: bool) -> None:
         self.last_model_used = model_name
         self.last_fallback_used = self.last_fallback_used or fallback_used
+
+    def _record_usage(self, input_tokens: int, output_tokens: int) -> None:
+        """Accumulate token usage across the pipeline's model calls (generation,
+        plus translation when the resume isn't in English), so `last_input_tokens`
+        / `last_output_tokens` reflect the whole `generate_resume` cost."""
+        self.last_input_tokens = (self.last_input_tokens or 0) + input_tokens
+        self.last_output_tokens = (self.last_output_tokens or 0) + output_tokens
 
     # ------------------------------------------------------------------
     # Ingest
@@ -191,6 +200,7 @@ class Bot:
             require_tool_call=True,
             extra_context=extra_context,
             on_model_used=self._record_model_used,
+            on_usage=self._record_usage,
         )
         self.logger.info("Agent returned resume; language=%s", resume.language)
         self._inject_stored_languages(resume)
@@ -228,6 +238,7 @@ class Bot:
             model=self.translation_model,
             fallback_model=self._translation_fallback,
             on_model_used=self._record_model_used,
+            on_usage=self._record_usage,
         )
 
 

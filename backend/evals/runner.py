@@ -149,6 +149,8 @@ async def _run_cell(spec: EvalSpec, model_string: str, jd_id: str, jd_text: str,
         resume = await bot.generate_resume(jd_text)
         result["duration_ms"] = int((time.monotonic() - start) * 1000)
         result["fallback_used"] = bool(bot.last_fallback_used)
+        result["input_tokens"] = bot.last_input_tokens
+        result["output_tokens"] = bot.last_output_tokens
         result["resume_json"] = resume.model_dump()
 
         schema = SchemaEvaluator().evaluate(resume)

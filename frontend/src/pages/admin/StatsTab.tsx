@@ -36,6 +36,11 @@ export function StatsTab({ user }: { user: User }) {
     return r == null ? '—' : `${(r * 100).toFixed(1)}%`;
   }, [stats]);
 
+  const fallbackRate = useMemo(() => {
+    const r = stats?.totals.fallback_rate;
+    return r == null ? '—' : `${(r * 100).toFixed(1)}%`;
+  }, [stats]);
+
   const handleExport = async () => {
     if (!user) return;
     try {
@@ -163,6 +168,7 @@ export function StatsTab({ user }: { user: User }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard label="Requests → Generations" value={`${stats.totals.resume_requests} → ${stats.totals.generations}`} hint={`${stats.totals.successful_generations} successful`} />
             <StatCard label="Success rate" value={successRate} />
+            <StatCard label="Fallback rate" value={fallbackRate} hint={`${stats.totals.fallback_generations} generation${stats.totals.fallback_generations === 1 ? '' : 's'} served by fallback (last ${days}d)`} />
             <StatCard label="Latency p50" value={fmtMs(stats.duration_percentiles?.p50_ms ?? null)} hint="successful generations" />
             <StatCard label="Latency p95" value={fmtMs(stats.duration_percentiles?.p95_ms ?? null)} hint="successful generations" />
           </div>

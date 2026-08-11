@@ -199,7 +199,7 @@ def _hash_profile(profile: Optional[dict]) -> str:
 def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
     payload = {
         "job_description_hash": job_hash,
-        "model": agent.DEFAULT_MODEL,
+        "model": agent.get_effective_model("generation"),
         "csv_hash": csv_hash,
     }
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))

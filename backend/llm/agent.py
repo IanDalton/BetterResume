@@ -113,6 +113,18 @@ def _resolve_model(task: str, model: Union[str, Model, None]) -> Tuple[Union[str
     )
 
 
+def get_effective_model(task: str) -> str:
+    """The model that would be used for `task` with no explicit override --
+    the same resolution `Bot` performs (`_resolve_model(task, None)`), exposed
+    so callers that need the *current* configured model (e.g. cache-key
+    computation before a `Bot` is constructed, or logging) go through the one
+    place model config is resolved rather than re-reading `get_model_config()`
+    or a stale import-time constant themselves.
+    """
+    primary, _fallback = _resolve_model(task, None)
+    return _model_label(primary)
+
+
 def _model_label(model: Union[str, Model]) -> str:
     return model if isinstance(model, str) else getattr(model, "model_name", type(model).__name__)
 
@@ -384,6 +396,24 @@ def _log_usage(label: str, result) -> None:
         logger.debug("%s complete; usage unavailable", label)
 
 
+def _report_usage(on_usage: Optional[Callable[[int, int], None]], result) -> None:
+    """Call `on_usage(input_tokens, output_tokens)` for a completed run, mirroring
+    `on_model_used` -- an optional out-of-band callback so callers (currently the
+    eval runner, via `Bot`) can record what a run cost without every caller of
+    `generate`/`translate` needing to know about it. `RunUsage.input_tokens` /
+    `.output_tokens` are plain `int` fields (default 0) that pydantic-ai's model
+    layer populates by summing usage across requests, so this is reliable for
+    real model runs; test doubles that skip usage reporting just report zeros.
+    """
+    if not on_usage:
+        return
+    try:
+        usage = result.usage
+        on_usage(int(getattr(usage, "input_tokens", 0) or 0), int(getattr(usage, "output_tokens", 0) or 0))
+    except Exception:
+        logger.debug("on_usage callback skipped; usage unavailable")
+
+
 async def generate(
     jd: str,
     *,
@@ -395,6 +425,7 @@ async def generate(
     require_tool_call: bool = True,
     extra_context: Optional[str] = None,
     on_model_used: Optional[Callable[[str, bool], None]] = None,
+    on_usage: Optional[Callable[[int, int], None]] = None,
 ) -> ResumeOutputFormat:
     """Generate a structured resume for a job description.
 
@@ -407,6 +438,8 @@ async def generate(
             stays consistent with the user's stored data.
         on_model_used: called with (model_string, fallback_used) once the run
             succeeds, so callers can record what actually served the request.
+        on_usage: called with (input_tokens, output_tokens) once the run
+            succeeds, so callers can record what the run cost.
     """
     primary, configured_fallback = _resolve_model("generation", model)
     fallback = normalize_model_name(fallback_model) if fallback_model is not None else configured_fallback
@@ -429,6 +462,7 @@ async def generate(
         user_id, int((time.monotonic() - start) * 1000), deps.search_calls,
     )
     _log_usage("Generation", result)
+    _report_usage(on_usage, result)
     return result.output
 
 
@@ -440,6 +474,7 @@ async def translate(
     model: Union[str, Model, None] = None,
     fallback_model: Union[str, Model, None] = None,
     on_model_used: Optional[Callable[[str, bool], None]] = None,
+    on_usage: Optional[Callable[[int, int], None]] = None,
 ) -> ResumeOutputFormat:
     """Translate a structured resume into the language of the original job description."""
     primary, configured_fallback = _resolve_model("translation", model)
@@ -455,6 +490,7 @@ async def translate(
         primary=primary, fallback=fallback, on_model_used=on_model_used,
     )
     _log_usage("Translation", result)
+    _report_usage(on_usage, result)
     return result.output
 
 

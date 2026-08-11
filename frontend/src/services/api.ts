@@ -184,6 +184,8 @@ export interface AdminStats {
     successful_generations: number;
     success_rate: number | null;
     avg_duration_ms: number;
+    fallback_generations: number;
+    fallback_rate: number | null;
   };
   generations_per_day: Array<{ day: string; count: number }>;
   requests_per_day: Array<{ day: string; count: number }>;
