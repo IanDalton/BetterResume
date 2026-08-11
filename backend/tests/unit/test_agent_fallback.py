@@ -50,6 +50,25 @@ def _raising_model(exc):
     return FunctionModel(model_fn)
 
 
+def _searching_then_malformed_model():
+    """Calls search_experience once (so deps.search_calls becomes 1), then
+    always emits output args that fail schema validation -- simulating the
+    reported production failure: a model that retrieves correctly but returns
+    malformed tool-call arguments, burning all of its output retries."""
+    state = {"searched": False}
+
+    def model_fn(messages, info: AgentInfo) -> ModelResponse:
+        output_tool = next(t.name for t in info.output_tools)
+        if not state["searched"]:
+            state["searched"] = True
+            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"query": "python"})])
+        # Missing the required `resume_section` field -> pydantic-ai rejects
+        # this and retries, eventually exhausting RETRIES.
+        return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args={"language": "en"})])
+
+    return FunctionModel(model_fn)
+
+
 # ---------------------------------------------------------------------------
 # Provider routing
 # ---------------------------------------------------------------------------
@@ -158,6 +177,62 @@ async def test_success_reports_primary_and_no_fallback(stub_vector_store, sample
     )
 
     assert seen["fallback"] is False
+
+
+# ---------------------------------------------------------------------------
+# Mixed-provider model settings (review finding: Layer 1's model_settings
+# must reach an OpenRouter fallback even when the primary isn't OpenRouter)
+# ---------------------------------------------------------------------------
+
+def test_combined_settings_reach_openrouter_fallback_when_primary_is_not():
+    settings = agent._combined_model_settings(
+        "google-gla:gemini-2.5-flash-lite", "openrouter:qwen/qwen3-coder-30b-a3b-instruct"
+    )
+    assert settings["openrouter_provider"]["require_parameters"] is True
+    assert settings["openrouter_reasoning"] == {"enabled": False}
+
+
+def test_combined_settings_reach_openrouter_primary_when_fallback_is_not():
+    settings = agent._combined_model_settings(
+        "openrouter:qwen/qwen3-coder-30b-a3b-instruct", "google-gla:gemini-2.5-flash-lite"
+    )
+    assert settings["openrouter_provider"]["require_parameters"] is True
+
+
+def test_combined_settings_none_when_neither_is_openrouter():
+    assert agent._combined_model_settings("google-gla:a", "google-gla:b") is None
+
+
+# ---------------------------------------------------------------------------
+# Deps isolation between the primary and fallback runs (review finding: the
+# Layer 2 retry must not inherit the primary's search_calls/tool_events, or
+# the fallback's own retrieval-forcing validator is silently defeated)
+# ---------------------------------------------------------------------------
+
+async def test_fallback_retrieval_still_forced_after_primary_searched_and_failed(
+    stub_vector_store, sample_resume_output
+):
+    """The primary calls search_experience, then emits malformed output args
+    and exhausts its retries -- the same failure mode as
+    `_output_only_model`, except this time the primary *did* retrieve first.
+    The fallback (which never searches on its own) must still be forced to
+    retrieve: if deps were reused as-is, the fallback would inherit
+    search_calls=1 from the primary and `ensure_retrieval` would wrongly
+    consider retrieval already satisfied, letting an ungrounded resume
+    through instead of raising.
+    """
+    resume_args = sample_resume_output.model_dump()
+
+    with pytest.raises(UnexpectedModelBehavior, match="Exceeded maximum output retries"):
+        await agent.generate(
+            "Backend role",
+            user_id="u1",
+            vector_store=stub_vector_store,
+            db=FakeDB(),
+            model=_searching_then_malformed_model(),
+            fallback_model=_output_only_model(resume_args),
+            require_tool_call=True,
+        )
 
 
 # ---------------------------------------------------------------------------

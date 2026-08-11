@@ -117,6 +117,39 @@ def _model_label(model: Union[str, Model]) -> str:
     return model if isinstance(model, str) else getattr(model, "model_name", type(model).__name__)
 
 
+def _combined_model_settings(primary: Union[str, Model], fallback: Union[str, Model, None]) -> Optional[dict]:
+    """Model settings for a single `FallbackModel` run.
+
+    `FallbackModel` sends the same `model_settings` to whichever sub-model
+    handles the request, so settings computed from `primary` alone are wrong
+    the moment the primary fails and OpenRouter's `require_parameters` needs
+    to reach an OpenRouter *fallback* instead (or vice versa). Provider-
+    namespaced keys (e.g. `openrouter_*`) are ignored by other providers, so
+    merging both sub-models' settings is safe in either direction.
+    """
+    if fallback is None:
+        return _model_settings(primary)
+    return {**(_model_settings(primary) or {}), **(_model_settings(fallback) or {})} or None
+
+
+def _reset_retry_deps(deps: Any) -> None:
+    """Give the Layer 2 fallback re-run a clean slate.
+
+    The re-run is a brand new conversation against a different model, reusing
+    the same `deps` object (it arrives via `**run_kwargs`). If it still carries
+    mutable state from the primary's failed conversation -- e.g.
+    `ResumeDeps.search_calls` / `tool_events` -- the fallback's own
+    `ensure_retrieval` output validator would see a nonzero `search_calls` and
+    conclude retrieval already happened, silently letting the fallback answer
+    ungrounded. Reset in place (not a fresh object) so identity-based callers
+    (e.g. the `searches=%d` log in `generate`) still see accurate counts.
+    """
+    if hasattr(deps, "search_calls"):
+        deps.search_calls = 0
+    if hasattr(deps, "tool_events"):
+        deps.tool_events = []
+
+
 async def _run_with_fallback(
     agent_obj: Agent,
     prompt: Any,
@@ -173,12 +206,17 @@ async def _run_with_fallback(
         fallback_on=(ModelAPIError,),
     )
     try:
-        result = await agent_obj.run(prompt, model=layered, model_settings=_model_settings(primary), **run_kwargs)
+        result = await agent_obj.run(
+            prompt, model=layered, model_settings=_combined_model_settings(primary, fallback), **run_kwargs
+        )
     except UnexpectedModelBehavior as exc:
         logger.warning(
             "Primary model %s failed output validation (%s); retrying on fallback %s",
             _model_label(primary), exc, _model_label(fallback),
         )
+        deps_obj = run_kwargs.get("deps")
+        if deps_obj is not None:
+            _reset_retry_deps(deps_obj)
         try:
             result = await agent_obj.run(
                 prompt, model=fallback, model_settings=_model_settings(fallback), **run_kwargs
