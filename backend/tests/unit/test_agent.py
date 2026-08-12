@@ -118,7 +118,7 @@ async def test_generate_forces_retrieval_when_model_skips_tools(stub_vector_stor
             return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args=resume_args)])
         if calls["count"] == 2:
             # Retry: do the retrieval this time
-            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"query": "python"})])
+            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"queries": ["python", "sql"]})])
         return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args=resume_args)])
 
     resume = await agent.generate(
@@ -129,7 +129,8 @@ async def test_generate_forces_retrieval_when_model_skips_tools(stub_vector_stor
 
     assert isinstance(resume, ResumeOutputFormat)
     assert calls["count"] == 3, "Model must be re-invoked after the rejected first answer"
-    assert stub_vector_store.queries == ["python"]
+    # One batched call, every concept in it searched.
+    assert stub_vector_store.queries == ["python", "sql"]
 
 
 async def test_generate_without_required_retrieval_allows_direct_answer(stub_vector_store, sample_resume_output):

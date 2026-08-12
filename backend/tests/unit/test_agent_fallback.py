@@ -38,7 +38,7 @@ def _retrieving_model(resume_args):
         output_tool = next(t.name for t in info.output_tools)
         if not state["searched"]:
             state["searched"] = True
-            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"query": "python"})])
+            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"queries": ["python", "sql"]})])
         return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args=resume_args)])
 
     return FunctionModel(model_fn)
@@ -61,7 +61,7 @@ def _searching_then_malformed_model():
         output_tool = next(t.name for t in info.output_tools)
         if not state["searched"]:
             state["searched"] = True
-            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"query": "python"})])
+            return ModelResponse(parts=[ToolCallPart(tool_name="search_experience", args={"queries": ["python", "sql"]})])
         # Missing the required `resume_section` field -> pydantic-ai rejects
         # this and retries, eventually exhausting RETRIES.
         return ModelResponse(parts=[ToolCallPart(tool_name=output_tool, args={"language": "en"})])
