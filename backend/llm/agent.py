@@ -13,6 +13,7 @@ asked to retry and call `search_experience` first.
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -21,7 +22,8 @@ from datetime import date
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.models import Model
 
 from llm.model_config import SHIPPED_DEFAULT_MODEL, get_model_config
@@ -42,6 +44,15 @@ logger = logging.getLogger("betterresume.agent")
 # OpenRouter so a single API key covers every task.
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", SHIPPED_DEFAULT_MODEL)
 RETRIES = 3
+# Cap on concepts per `search_experience` call. Generous -- the prompt asks for
+# 4-6 -- and only there to stop a model turning one call into a hundred reads.
+MAX_SEARCH_QUERIES = 12
+# Requests per run, replacing pydantic-ai's default of 50. A run needs one
+# request to search, one to write, and a few in reserve for output retries; a
+# model that has not finished by 20 is not converging, and 50 paid requests is
+# an expensive way to find that out. Observed on `qwen/qwen3.7-flash`, which
+# without a forced tool choice will search one concept at a time forever.
+REQUEST_LIMIT = 20
 
 JOB_PROMPT = load_prompt("job_prompt")
 TRANSLATION_PROMPT = load_prompt("translation_prompt")
@@ -170,13 +181,17 @@ async def _run_with_fallback(
 
     1. Transport/provider errors (`ModelAPIError`, which `ModelHTTPError`
        subclasses) are handled by `FallbackModel`, inside the model layer.
-    2. Output-retry exhaustion raises `UnexpectedModelBehavior` from
+    2. Output-retry exhaustion (`UnexpectedModelBehavior`) and a run that never
+       converges (`UsageLimitExceeded` -- e.g. a model with an unforced tool
+       choice that keeps searching instead of writing) are both raised from
        `pydantic_ai._agent_graph`, *above* the model layer, where FallbackModel
-       never sees it. That needs the explicit re-run below.
+       never sees them. Those need the explicit re-run below.
     """
     def _report(label: str, used_fallback: bool) -> None:
         if on_model_used:
             on_model_used(label, used_fallback)
+
+    run_kwargs.setdefault("usage_limits", UsageLimits(request_limit=REQUEST_LIMIT))
 
     if fallback is None:
         result = await agent_obj.run(
@@ -216,9 +231,9 @@ async def _run_with_fallback(
         result = await agent_obj.run(
             prompt, model=layered, model_settings=_combined_model_settings(primary, fallback), **run_kwargs
         )
-    except UnexpectedModelBehavior as exc:
+    except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
         logger.warning(
-            "Primary model %s failed output validation (%s); retrying on fallback %s",
+            "Primary model %s did not produce a usable answer (%s); retrying on fallback %s",
             _model_label(primary), exc, _model_label(fallback),
         )
         deps_obj = run_kwargs.get("deps")
@@ -287,32 +302,89 @@ def current_date_instructions(ctx: RunContext[ResumeDeps]) -> str:
 
 
 @generation_agent.tool
-async def search_experience(ctx: RunContext[ResumeDeps], query: str, n_results: int = 10) -> List[Tuple[str, float]]:
+async def search_experience(
+    ctx: RunContext[ResumeDeps],
+    queries: Union[List[str], str],
+    n_results: int = 10,
+) -> dict:
     """Semantic search over the user's stored experience, skills, education and projects.
 
-    This is a meaning-based search, so query phrasing determines what is retrieved.
+    This is a meaning-based search, so query phrasing determines what is
+    retrieved. Pass every concept you want to look up in ONE call: the searches
+    run concurrently and come back grouped by query, so a single call covering
+    six concepts costs one round trip instead of six.
 
     Args:
-        query: A short, generalized, single-concept phrase (about 2-6 words)
-            describing one skill, responsibility, or domain to look for, e.g.
-            "REST API development" or "team leadership". Do not paste full
-            sentences or verbatim job-description requirements — verbose,
-            hyper-specific text retrieves poorly. Use separate calls for
-            related terms instead of combining them.
-        n_results: Maximum number of matching documents to return.
+        queries: A list of short, generalized, single-concept phrases (about 2-6
+            words each) — one skill, responsibility, or domain per phrase, e.g.
+            ["REST API development", "team leadership", "payment systems"]. Do
+            not paste full sentences or verbatim job-description requirements —
+            verbose, hyper-specific text retrieves poorly. Spread synonyms and
+            related terms across separate entries rather than cramming them into
+            one phrase. Aim for 4-6 phrases covering the whole job description.
+        n_results: Maximum number of matching documents per query.
+
+    Returns:
+        A mapping of each query to its matches. A document retrieved by more
+        than one query is listed only under the first of them.
     """
-    ctx.deps.search_calls += 1
-    ctx.deps.tool_events.append({"tool": "search_experience", "query": query})
+    # A model that sends a string instead of a list is answering the same
+    # question; coerce rather than burning a request on a validation retry.
+    # Two shapes show up in practice: a single bare concept, and a JSON-encoded
+    # array (observed from qwen3.7-flash). Without parsing the latter, the whole
+    # `["SQL data analysis", "Python pandas", ...]` blob becomes one semantic
+    # query -- which is exactly the verbose text the prompt warns retrieves
+    # poorly, and it fails silently by returning plausible-looking matches.
+    if isinstance(queries, str):
+        text = queries.strip()
+        parsed: Any = None
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+        queries = parsed if isinstance(parsed, list) else [queries]
+    queries = [q for q in queries if isinstance(q, str)]
+    queries = [q.strip() for q in queries if q and q.strip()][:MAX_SEARCH_QUERIES]
+    if not queries:
+        return {}
+
+    ctx.deps.search_calls += len(queries)
+    ctx.deps.tool_events.append({"tool": "search_experience", "queries": list(queries)})
     store = ctx.deps.vector_store
     if store is None:
         logger.warning("search_experience called without a vector store user=%s", ctx.deps.user_id)
-        return []
-    results = await store.aquery(query, ctx.deps.user_id, n_results=n_results)
-    logger.info(
-        "search_experience user=%s query=%r results=%s",
-        ctx.deps.user_id, query, len(results) if isinstance(results, list) else results,
+        return {q: [] for q in queries}
+
+    # Concurrent: these are independent reads, and the model is blocked on the
+    # slowest one either way.
+    settled = await asyncio.gather(
+        *(store.aquery(q, ctx.deps.user_id, n_results=n_results) for q in queries),
+        return_exceptions=True,
     )
-    return results
+
+    grouped: dict = {}
+    seen: set = set()
+    for query, outcome in zip(queries, settled):
+        if isinstance(outcome, BaseException):
+            # One bad query must not lose the other five results.
+            logger.warning("search_experience query %r failed user=%s: %s", query, ctx.deps.user_id, outcome)
+            grouped[query] = []
+            continue
+        deduped = []
+        for item in outcome or []:
+            text = item[0] if isinstance(item, (list, tuple)) and item else item
+            if text in seen:
+                continue
+            seen.add(text)
+            deduped.append(item)
+        grouped[query] = deduped
+
+    logger.info(
+        "search_experience user=%s queries=%s results=%s",
+        ctx.deps.user_id, queries, {q: len(v) for q, v in grouped.items()},
+    )
+    return grouped
 
 
 @generation_agent.tool
