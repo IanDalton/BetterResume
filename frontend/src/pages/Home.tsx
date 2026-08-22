@@ -15,7 +15,7 @@ import { splitLegacyEntries, hasLegacyEntries, loadLocalDataWithMigration } from
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
-import { Dialog, Button } from '../components/ui';
+import { Dialog, Button, ConfirmDialog } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -58,6 +58,7 @@ export function Home() {
   const [progress, setProgress] = useState<{stage:string; message?:string}[]>([]);
   const [downloading, setDownloading] = useState<null | 'pdf' | 'source'>(null);
   const [showGenModal, setShowGenModal] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const [genStartAt, setGenStartAt] = useState<number | null>(null);
   const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
@@ -323,7 +324,15 @@ export function Home() {
     }
   };
 
+  const genAbortRef = useRef<AbortController | null>(null);
+
+  const handleCancelGenerate = () => {
+    genAbortRef.current?.abort();
+  };
+
   const handleGenerate = async () => {
+    const abortController = new AbortController();
+    genAbortRef.current = abortController;
     try {
       setError(null);
       // Frontend guard: block calls if requirements not met
@@ -356,7 +365,7 @@ export function Home() {
         if (evt.stage === 'error') {
           try { trackEvent('resume_generate_error', { message: evt.message||'error' }); } catch {}
         }
-      });
+      }, abortController.signal);
       setResumeJson(res.result);
       if (res.files) setDownloadLinks(res.files);
       try {
@@ -389,8 +398,11 @@ export function Home() {
         return next;
       });
     } catch (e: any) {
-      setError(e.message || t('generate.error.failed'));
+      if (e?.name !== 'AbortError') {
+        setError(e.message || t('generate.error.failed'));
+      }
     } finally {
+      genAbortRef.current = null;
       setLoading(false);
   setTimeout(()=> setShowGenModal(false), 600); // slight delay for UX
     }
@@ -442,7 +454,6 @@ export function Home() {
   };
 
   const clearAll = () => {
-    if (!confirm(t('confirm.clear'))) return;
     try {
       localStorage.removeItem('br.entries');
       localStorage.removeItem('br.profile');
@@ -579,16 +590,16 @@ export function Home() {
   <section className="space-y-4 mb-12">
         <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
   <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <button className="btn-primary btn-sm" disabled={loading || !jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</button>
-          <button type="button" className="btn-secondary btn-sm" onClick={()=>{ trackEvent('clear_click'); clearAll(); }}>{t('button.clear')}</button>
+          <button type="button" className="btn-tertiary btn-xs text-neutral-500 hover:text-red-600" onClick={()=>{ trackEvent('clear_click'); setShowClearConfirm(true); }}>{t('button.clear')}</button>
         </div>
-        {(!hasPersonalBasics || !hasExperience) && (
+        {!loading && (!hasPersonalBasics || !hasExperience || !jobDescription) && (
           <p className="text-xs text-red-500">
-            {!hasPersonalBasics ? t('validation.personal') : t('validation.experience')}
+            {!hasPersonalBasics ? t('validation.personal') : !hasExperience ? t('validation.experience') : t('validation.jobDescription')}
           </p>
         )}
-  {loading && <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('working')}</p>}
+  {loading && <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('validation.generating')}</p>}
         {progress.length>0 && (
           <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded p-2 max-h-48 overflow-auto">
             {progress.map((p,i)=>(<li key={i}><span className="font-mono text-neutral-500">{i+1}.</span> {p.stage}{p.message?`: ${p.message}`:''}</li>))}
@@ -643,6 +654,7 @@ export function Home() {
         </span>
       }
       description={t('modal.building.subtitle')}
+      footer={<Button variant="secondary" size="sm" onClick={handleCancelGenerate}>{t('button.cancelGeneration')}</Button>}
     >
       <div className="space-y-6">
         <div>
@@ -667,6 +679,15 @@ export function Home() {
         )}
       </div>
     </Dialog>
+    <ConfirmDialog
+      open={showClearConfirm}
+      onOpenChange={setShowClearConfirm}
+      title={t('confirm.clear.title')}
+      description={t('confirm.clear')}
+      confirmLabel={t('confirm.clear.confirm')}
+      cancelLabel={t('button.cancel')}
+      onConfirm={clearAll}
+    />
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
   <DonateToast 
     open={showDonateToast} 
