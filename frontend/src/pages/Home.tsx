@@ -15,7 +15,7 @@ import { splitLegacyEntries, hasLegacyEntries, loadLocalDataWithMigration } from
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
-import { Dialog, Button, ConfirmDialog } from '../components/ui';
+import { Dialog, Button } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -58,7 +58,6 @@ export function Home() {
   const [progress, setProgress] = useState<{stage:string; message?:string}[]>([]);
   const [downloading, setDownloading] = useState<null | 'pdf' | 'source'>(null);
   const [showGenModal, setShowGenModal] = useState(false);
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const [genStartAt, setGenStartAt] = useState<number | null>(null);
   const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
@@ -453,25 +452,6 @@ export function Home() {
     }
   };
 
-  const clearAll = () => {
-    try {
-      localStorage.removeItem('br.entries');
-      localStorage.removeItem('br.profile');
-      localStorage.removeItem('br.languages');
-    localStorage.removeItem('br.guestId');
-      localStorage.removeItem('br.jobDescription');
-      localStorage.removeItem('br.format');
-    } catch {}
-    setEntries([]);
-    setProfile({ ...emptyProfile });
-    setLanguages([]);
-  setUser(null);
-    setJobDescription('');
-    setFormat('latex');
-    setResumeJson(null);
-    setError(null);
-  };
-
   // Require basic personal info (name + email) and at least one experience entry.
   const hasPersonalBasics = !!(profile.fullName && profile.email);
   const hasExperience = entries.some(e => EXPERIENCE_TYPES.includes(e.type));
@@ -592,7 +572,6 @@ export function Home() {
   <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
         <div className="flex flex-wrap items-center gap-3">
           <button className="btn-primary btn-sm" disabled={loading || !jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</button>
-          <button type="button" className="btn-tertiary btn-xs text-neutral-500 hover:text-red-600" onClick={()=>{ trackEvent('clear_click'); setShowClearConfirm(true); }}>{t('button.clear')}</button>
         </div>
         {!loading && (!hasPersonalBasics || !hasExperience || !jobDescription) && (
           <p className="text-xs text-red-500">
@@ -679,15 +658,6 @@ export function Home() {
         )}
       </div>
     </Dialog>
-    <ConfirmDialog
-      open={showClearConfirm}
-      onOpenChange={setShowClearConfirm}
-      title={t('confirm.clear.title')}
-      description={t('confirm.clear')}
-      confirmLabel={t('confirm.clear.confirm')}
-      cancelLabel={t('button.cancel')}
-      onConfirm={clearAll}
-    />
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
   <DonateToast 
     open={showDonateToast} 
