@@ -5,7 +5,6 @@ import {
   EmbeddedCheckout
 } from '@stripe/react-stripe-js';
 import { useSearchParams, Link } from 'react-router-dom';
-import Confetti from 'react-confetti';
 import { useI18n } from '../i18n';
 import { authStateListener } from '../services/firebase';
 import { getStripe } from '../services/stripe';
@@ -22,8 +21,6 @@ export function Donate() {
   const [reason, setReason] = useState<'support' | 'job'>('support');
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [showConfetti, setShowConfetti] = useState(false);
 
   useEffect(() => {
     setStripePromise(getStripe());
@@ -55,7 +52,6 @@ export function Donate() {
       return;
     }
     setIsLoading(true);
-    setError(null);
     try {
       // Call backend to create Stripe checkout session
       const response = await fetch(`${API_BASE}/create-donation-session`, {
@@ -85,7 +81,7 @@ export function Donate() {
       setSearchParams({ client_secret: secret });
     } catch (err: any) {
       console.error('Donation error:', err);
-      setError(err.message || t('donate.error.process'));
+      toast({ title: err.message || t('donate.error.process'), variant: 'error' });
     } finally {
       setIsLoading(false);
     }
@@ -94,9 +90,6 @@ export function Donate() {
     setReason(newReason);
     if (newReason === 'job') {
       setAmount(25);
-      setShowConfetti(true);
-    } else {
-      setShowConfetti(false);
     }
   };
 
@@ -124,14 +117,13 @@ export function Donate() {
               </EmbeddedCheckoutProvider>
             ) : (
               <div className="p-8 text-center text-neutral-500">
-                Loading payment...
+                {t('donate.loadingPayment')}
               </div>
             )}
           </div>
 
           <div className="mt-8 text-center">
             <Link to="/" className="text-sm text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
-              {showConfetti && <Confetti recycle={false} numberOfPieces={500} />}
               {t('donate.back')}
             </Link>
           </div>
@@ -142,13 +134,6 @@ export function Donate() {
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
-      {showConfetti && (
-        <Confetti
-          recycle={false}
-          numberOfPieces={500}
-          onConfettiComplete={() => setShowConfetti(false)}
-        />
-      )}
       <div className="max-w-md w-full space-y-8 bg-white dark:bg-neutral-800 p-8 rounded-xl shadow-lg">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">
@@ -166,24 +151,26 @@ export function Donate() {
               {t('donate.reason.label')}
             </label>
             <div className="flex space-x-4">
-              <button
+              <Button
+                variant="secondary"
                 onClick={() => handleReasonChange('support')}
-                className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${reason === 'support'
+                className={`flex-1 !py-3 !px-4 !rounded-lg border transition-colors ${reason === 'support'
                     ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
                     : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
                   }`}
               >
                 {t('donate.reason.support')}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => handleReasonChange('job')}
-                className={`flex-1 py-3 px-4 rounded-lg border transition-colors ${reason === 'job'
+                className={`flex-1 !py-3 !px-4 !rounded-lg border transition-colors ${reason === 'job'
                     ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
                     : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
                   }`}
               >
                 {t('donate.reason.job')}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -204,16 +191,17 @@ export function Donate() {
             </label>
             <div className="grid grid-cols-3 gap-3 mb-4">
               {[5, 10, 20].map((val) => (
-                <button
+                <Button
                   key={val}
+                  variant="secondary"
                   onClick={() => setAmount(val)}
-                  className={`py-2 px-4 rounded-lg border ${amount === val
+                  className={`!py-2 !px-4 !rounded-lg border ${amount === val
                       ? 'bg-primary-50 border-primary-500 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400 dark:text-primary-300'
                       : 'border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-700'
                     }`}
                 >
                   ${val}
-                </button>
+                </Button>
               ))}
             </div>
             <div className="relative rounded-md shadow-sm">
@@ -232,12 +220,6 @@ export function Donate() {
               />
             </div>
           </div>
-
-          {error && (
-            <div className="text-red-600 text-sm text-center bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
-              {error}
-            </div>
-          )}
 
           <Button
             variant="primary"

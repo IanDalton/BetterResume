@@ -101,7 +101,9 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
           <FormField label={t('field.proficiency')} required error={errors.proficiency}>
             <Select
               options={proficiencyOptions}
-              value={draft.proficiency || 'Native'}
+              value={draft.proficiency}
+              placeholder={t('proficiency.select')}
+              invalid={!!errors.proficiency}
               onValueChange={(v) => setDraft((d) => ({ ...d, proficiency: v }))}
             />
           </FormField>

@@ -29,10 +29,31 @@ export const PersonalInfoSection: React.FC<Props> = ({ profile, onChange }) => {
   const [newUrl, setNewUrl] = useState('');
   const [newKind, setNewKind] = useState<ProfileLinkKind>('linkedin');
   const [newLabel, setNewLabel] = useState('');
+  const [newUrlError, setNewUrlError] = useState<string | undefined>(undefined);
+
+  const isValidUrl = (raw: string) => {
+    // The URL constructor is too lenient to catch typos on its own — e.g. "https://not a
+    // url" parses successfully as host "not%20a%20url" instead of throwing — so also
+    // reject whitespace and require a real-looking hostname (has a dot, isn't just ".").
+    if (/\s/.test(raw)) return false;
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const url = new URL(candidate);
+      return url.hostname.includes('.') && !url.hostname.startsWith('.') && !url.hostname.endsWith('.');
+    } catch {
+      return false;
+    }
+  };
 
   const addLink = () => {
-    if (!newUrl.trim()) return;
-    const link: ProfileLink = { kind: newKind, label: newKind === 'other' ? newLabel.trim() || null : null, url: newUrl.trim() };
+    const trimmed = newUrl.trim();
+    if (!trimmed) return;
+    if (!isValidUrl(trimmed)) {
+      setNewUrlError(t('wizard.personal.url.invalid'));
+      return;
+    }
+    setNewUrlError(undefined);
+    const link: ProfileLink = { kind: newKind, label: newKind === 'other' ? newLabel.trim() || null : null, url: trimmed };
     onChange({ ...profile, links: [...profile.links, link] });
     setNewUrl('');
     setNewLabel('');
@@ -85,18 +106,22 @@ export const PersonalInfoSection: React.FC<Props> = ({ profile, onChange }) => {
         <label className="block text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
           {t('wizard.personal.websites')}
         </label>
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-col gap-2 rounded-lg border border-dashed border-neutral-300 p-2 dark:border-neutral-700 sm:flex-row sm:items-start">
           <Select options={siteKindOptions} value={newKind} onValueChange={(v) => setNewKind(v as ProfileLinkKind)} className="sm:w-40" />
           {newKind === 'other' && (
             <Input className="sm:w-32" placeholder={t('wizard.personal.label')} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} />
           )}
-          <Input
-            className="flex-1"
-            placeholder="https://..."
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLink(); } }}
-          />
+          <div className="flex-1">
+            <Input
+              className="w-full"
+              placeholder="https://..."
+              value={newUrl}
+              invalid={!!newUrlError}
+              onChange={(e) => { setNewUrl(e.target.value); if (newUrlError) setNewUrlError(undefined); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLink(); } }}
+            />
+            {newUrlError && <p className="mt-1 text-xs text-red-500">{newUrlError}</p>}
+          </div>
           <Button type="button" variant="secondary" onClick={addLink}>{t('wizard.personal.add')}</Button>
         </div>
         {profile.links.length > 0 && (

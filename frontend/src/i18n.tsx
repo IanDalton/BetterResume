@@ -4,12 +4,15 @@ export type Language = 'en' | 'es';
 
 type Dict = Record<string, string>;
 
-const dictionaries: Record<Language, Dict> = {
+export const dictionaries: Record<Language, Dict> = {
   en: {
     'app.title': 'Better Resume',
     'app.tagline': 'Made for humans, optimized for machines.',
   'app.meta.description': 'Better Resume – Made for humans, optimized for machines.',
   'app.language': 'Language',
+  'errorBoundary.title': 'Something went wrong',
+  'errorBoundary.body': 'An unexpected error occurred. Reloading the page usually fixes this; your progress is saved locally.',
+  'errorBoundary.reload': 'Reload',
     'user.id': 'User ID',
     'format': 'Format',
   'format.latex': 'LaTeX',
@@ -96,6 +99,8 @@ const dictionaries: Record<Language, Dict> = {
     'resume.import.section.languages': 'Languages',
     'resume.import.none': 'Nothing found in this section.',
     'resume.import.success': 'Import added successfully.',
+    'resume.import.error.tooLarge': 'File too large (max 10 MB).',
+    'resume.import.error.failed': 'Import failed',
     'profile.section.title': 'Profile Picture',
     'profile.upload': 'Select photo',
     'profile.uploading': 'Uploading…',
@@ -125,6 +130,7 @@ const dictionaries: Record<Language, Dict> = {
   'json.title': 'Resume JSON',
   'preview.title': 'Preview',
   'preview.pdf.unavailable': 'PDF not available',
+  'preview.pdf.fetchFailed': 'Could not load the PDF preview. You can still download it below.',
   'download.pdf': 'Download PDF',
   'download.source': 'Edit (Download Source)',
   'download.downloading': 'Downloading…',
@@ -154,6 +160,7 @@ const dictionaries: Record<Language, Dict> = {
   'wizard.personal.websites': 'Websites / Profiles',
   'wizard.personal.label': 'Label',
   'wizard.personal.add': 'Add',
+  'wizard.personal.url.invalid': 'Enter a valid URL (e.g. https://example.com)',
   'wizard.personal.remove': 'Remove',
   'wizard.personal.help': 'Add as many personal / professional links as you like (portfolio, GitHub, LinkedIn, etc.). Each link can have its own label.',
   'education.degree.placeholder': 'Degree / Program',
@@ -215,6 +222,9 @@ const dictionaries: Record<Language, Dict> = {
   'guide.tip': 'Tip: For best results, match keywords from the job post (skills, tools, responsibilities) in your entries.',
   'guide.gotIt': 'Got it',
   'guide.button.title': 'Quick guide',
+  'theme.light': 'Light theme',
+  'theme.dark': 'Dark theme',
+  'theme.system': 'System theme',
   // Footer
   'footer.brandline': 'Better resume — a tool made by Ian Dalton',
   'footer.gotJob': 'Got the job? Consider donating to keep the tool free!',
@@ -223,6 +233,7 @@ const dictionaries: Record<Language, Dict> = {
   'donate.toast.body': 'Traffic grew a lot. A small donation (~$5 USD, less than a big mac) helps keep the servers running and this tool free.',
   'donate.toast.cta': 'Donate',
   'donate.toast.dismiss': 'Not now',
+  'donate.toast.close': 'Close',
   // Stripe donation
   'donate.stripe.title': 'Help Keep BetterResume Free',
   'donate.stripe.body.international': 'If this tool saved you time, consider supporting development with a small donation. Payments are processed securely via Stripe.',
@@ -232,6 +243,7 @@ const dictionaries: Record<Language, Dict> = {
   // Donate page
   'donate.changeAmount': 'Donate again',
   'donate.back': 'Back to Home',
+  'donate.loadingPayment': 'Loading payment...',
   'donate.job.title': 'Congratulations!',
   'donate.job.subtitle': 'Celebrate your new role by keeping this tool free for the next job seeker.',
   'donate.job.button': 'Donate $25 to celebrate',
@@ -276,6 +288,9 @@ const dictionaries: Record<Language, Dict> = {
     'app.tagline': 'Hecho para humanos, optimizado para máquinas.',
   'app.meta.description': 'Better Resume – Hecho para humanos, optimizado para máquinas.',
   'app.language': 'Idioma',
+  'errorBoundary.title': 'Algo salió mal',
+  'errorBoundary.body': 'Ocurrió un error inesperado. Recargar la página suele solucionarlo; tu progreso está guardado localmente.',
+  'errorBoundary.reload': 'Recargar',
     'user.id': 'ID de Usuario',
     'format': 'Formato',
   'format.latex': 'LaTeX',
@@ -362,6 +377,8 @@ const dictionaries: Record<Language, Dict> = {
     'resume.import.section.languages': 'Idiomas',
     'resume.import.none': 'No se encontró nada en esta sección.',
     'resume.import.success': 'Importación agregada correctamente.',
+    'resume.import.error.tooLarge': 'El archivo es demasiado grande (máx. 10 MB).',
+    'resume.import.error.failed': 'Falló la importación',
     'profile.section.title': 'Foto de perfil',
     'profile.upload': 'Elegir foto',
     'profile.uploading': 'Subiendo…',
@@ -391,6 +408,7 @@ const dictionaries: Record<Language, Dict> = {
   'json.title': 'JSON del Currículum',
   'preview.title': 'Vista previa',
   'preview.pdf.unavailable': 'PDF no disponible',
+  'preview.pdf.fetchFailed': 'No se pudo cargar la vista previa del PDF. Igual podés descargarlo abajo.',
   'download.pdf': 'Descargar PDF',
   'download.source': 'Editar (Descargar fuente)',
   'download.downloading': 'Descargando…',
@@ -420,6 +438,7 @@ const dictionaries: Record<Language, Dict> = {
   'wizard.personal.websites': 'Sitios / Perfiles',
   'wizard.personal.label': 'Etiqueta',
   'wizard.personal.add': 'Agregar',
+  'wizard.personal.url.invalid': 'Ingresá una URL válida (ej. https://ejemplo.com)',
   'wizard.personal.remove': 'Quitar',
   'wizard.personal.help': 'Agrega los enlaces personales/profesionales que quieras (portafolio, GitHub, LinkedIn, etc.). Cada enlace puede tener su propia etiqueta.',
   'education.degree.placeholder': 'Título / Programa',
@@ -481,6 +500,9 @@ const dictionaries: Record<Language, Dict> = {
   'guide.tip': 'Consejo: Para mejores resultados, incluye palabras clave de la oferta (habilidades, herramientas, responsabilidades) en tus entradas.',
   'guide.gotIt': 'Entendido',
   'guide.button.title': 'Guía rápida',
+  'theme.light': 'Tema claro',
+  'theme.dark': 'Tema oscuro',
+  'theme.system': 'Tema del sistema',
   // Footer
   'footer.brandline': 'Better resume — una herramienta creada por Ian Dalton',
   'footer.gotJob': '¿Conseguiste el trabajo? ¡Considera donar para mantener la herramienta gratis!',
@@ -489,6 +511,7 @@ const dictionaries: Record<Language, Dict> = {
   'donate.toast.body': 'El tráfico creció mucho. Una pequeña donación (~$5.000 ARS, menos que una hamburguesa) ayuda a mantener el servidor y esta herramienta gratis.',
   'donate.toast.cta': 'Donar',
   'donate.toast.dismiss': 'Ahora no',
+  'donate.toast.close': 'Cerrar',
   // Stripe donation
   'donate.stripe.title': 'Ayúdanos a mantener BetterResume gratis',
   'donate.stripe.body.international': 'Si te resultó útil, considera apoyar el desarrollo con una pequeña donación. Pagos seguros a través de Stripe.',
@@ -506,6 +529,7 @@ const dictionaries: Record<Language, Dict> = {
   'donate.complete.title': '¡Gracias por ayudar a mantener esta herramienta gratuita!',
   'donate.changeAmount': 'Donar de nuevo',
   'donate.back': 'Volver al Inicio',
+  'donate.loadingPayment': 'Cargando el pago...',
   'donate.support.title': 'Apoya a Better Resume',
   'donate.support.subtitle': 'Ayúdanos a mantener esta herramienta gratuita para todos.',
   'donate.amount.label': 'Monto (USD)',
@@ -547,7 +571,12 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | undefined>(undefined);
 
-function detectInitialLang(): Language {
+/**
+ * Exported (alongside `dictionaries`) so code that must render text before/without
+ * an I18nProvider in the tree — e.g. ErrorBoundary, which can catch errors thrown
+ * by I18nProvider itself — can still resolve a reasonable language without useI18n().
+ */
+export function detectInitialLang(): Language {
   try {
     const stored = localStorage.getItem('lang') as Language | null;
     if (stored && (stored in dictionaries)) return stored;

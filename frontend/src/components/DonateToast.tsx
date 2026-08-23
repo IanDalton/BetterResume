@@ -1,5 +1,6 @@
 import React from 'react';
 import { useI18n } from '../i18n';
+import { Button } from './ui';
 
 interface Props {
   open: boolean;
@@ -24,41 +25,43 @@ export function DonateToast({ open, onClose, onDonateClick, href }: Props) {
             </p>
             <div className="mt-3 flex gap-2">
               {onDonateClick ? (
-                <button
+                <Button
+                  size="sm"
                   onClick={() => {
                     onDonateClick();
                     onClose();
                   }}
-                  className="btn-primary btn-sm"
                 >
                   {t('donate.toast.cta')}
-                </button>
+                </Button>
               ) : (
-                <a
-                  href={link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-primary btn-sm"
-                  onClick={() => {
-                    onClose();
-                  }}
-                >
-                  {t('donate.toast.cta')}
-                </a>
+                <Button asChild size="sm">
+                  <a
+                    href={link}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => {
+                      onClose();
+                    }}
+                  >
+                    {t('donate.toast.cta')}
+                  </a>
+                </Button>
               )}
-              <button
-                className="btn-secondary btn-sm"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => {
                   onClose();
                 }}
               >
                 {t('donate.toast.dismiss')}
-              </button>
+              </Button>
             </div>
           </div>
           <button
             className="text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 text-xs"
-            aria-label="Close"
+            aria-label={t('donate.toast.close')}
             onClick={() => {
               onClose();
             }}

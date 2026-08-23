@@ -38,8 +38,18 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={loading || undefined}
         {...props}
       >
-        {loading && <Spinner size="xs" className="mr-2" />}
-        {children}
+        {asChild ? (
+          // Radix Slot requires exactly one child element to clone onto — passing the
+          // loading-spinner fragment alongside `children` (even when `loading` is falsy)
+          // makes it two children and Slot throws. asChild callers own a single element
+          // (e.g. <a>/<Link>) anyway, so there's nowhere to inject a sibling spinner.
+          children
+        ) : (
+          <>
+            {loading && <Spinner size="xs" className="mr-2" />}
+            {children}
+          </>
+        )}
       </Comp>
     );
   }

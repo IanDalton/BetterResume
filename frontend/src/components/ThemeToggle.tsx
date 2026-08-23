@@ -1,8 +1,11 @@
 import React from 'react';
+import { Button } from './ui';
+import { useI18n } from '../i18n';
 
 type Theme = 'light' | 'dark' | 'system';
 
 export function ThemeToggle({ onThemeChange }: { onThemeChange?: (theme: Theme) => void }) {
+  const { t } = useI18n();
   const [theme, setTheme] = React.useState<Theme>(() => {
     try {
       const saved = localStorage.getItem('theme') as Theme | null;
@@ -33,9 +36,9 @@ export function ThemeToggle({ onThemeChange }: { onThemeChange?: (theme: Theme) 
 
   return (
     <div className="flex items-center gap-1">
-      <button type="button" title="Light" aria-label="Light theme" onClick={() => setTheme('light')} className={`btn-secondary btn-sm px-2 ${theme==='light' ? 'ring-2 ring-red-500' : ''}`}>☀️</button>
-      <button type="button" title="Dark" aria-label="Dark theme" onClick={() => setTheme('dark')} className={`btn-secondary btn-sm px-2 ${theme==='dark' ? 'ring-2 ring-red-500' : ''}`}>🌙</button>
-      <button type="button" title="System" aria-label="System theme" onClick={() => setTheme('system')} className={`btn-secondary btn-sm px-2 ${theme==='system' ? 'ring-2 ring-red-500' : ''}`}>🖥️</button>
+      <Button type="button" variant="secondary" size="sm" title={t('theme.light')} aria-label={t('theme.light')} onClick={() => setTheme('light')} className={`px-2 ${theme==='light' ? 'ring-2 ring-red-500' : ''}`}>☀️</Button>
+      <Button type="button" variant="secondary" size="sm" title={t('theme.dark')} aria-label={t('theme.dark')} onClick={() => setTheme('dark')} className={`px-2 ${theme==='dark' ? 'ring-2 ring-red-500' : ''}`}>🌙</Button>
+      <Button type="button" variant="secondary" size="sm" title={t('theme.system')} aria-label={t('theme.system')} onClick={() => setTheme('system')} className={`px-2 ${theme==='system' ? 'ring-2 ring-red-500' : ''}`}>🖥️</Button>
     </div>
   );
 }
