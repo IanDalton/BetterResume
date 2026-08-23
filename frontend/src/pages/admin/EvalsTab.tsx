@@ -110,7 +110,7 @@ function CheckBadge({ check }: { check: ModelCheckResult | undefined }) {
   );
 }
 
-export function EvalsTab({ user }: { user: User }) {
+export function EvalsTab({ user, onNavigateToModels }: { user: User; onNavigateToModels?: () => void }) {
   const [subTab, setSubTab] = useState<SubTab>('new');
   const [fixtures, setFixtures] = useState<JdFixture[]>([]);
   const [judgeModel, setJudgeModel] = useState<string | null>(null);
@@ -311,7 +311,7 @@ export function EvalsTab({ user }: { user: User }) {
           <button
             key={t.id}
             onClick={() => setSubTab(t.id)}
-            className={`px-3 py-2 text-sm border-b-2 -mb-px ${subTab === t.id
+            className={`px-3 py-2 text-sm border-b-2 -mb-px focus-ring rounded-t ${subTab === t.id
               ? 'border-primary-500 text-primary-500'
               : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
           >
@@ -441,7 +441,14 @@ export function EvalsTab({ user }: { user: User }) {
                 each with one judge call.
               </p>
               <p className="text-xs text-neutral-500">
-                Judge: <span className="font-mono">{judgeModel ?? 'none'}</span> — change it under the Models tab.
+                Judge: <span className="font-mono">{judgeModel ?? 'none'}</span> —{' '}
+                {onNavigateToModels ? (
+                  <button type="button" onClick={onNavigateToModels} className="text-primary-500 hover:underline focus-ring rounded">
+                    change it under the Models tab
+                  </button>
+                ) : (
+                  'change it under the Models tab.'
+                )}
               </p>
               {totalCells > MAX_CELLS && (
                 <p className="text-xs text-red-500 dark:text-red-400">Maximum 20 cells per run.</p>

@@ -55,7 +55,7 @@ export const ResumeImportDialog: React.FC<Props> = ({
   const handleFile = async (file: File) => {
     const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     if (!isPdf) { setError(t('resume.import.dropzone')); return; }
-    if (file.size > MAX_BYTES) { setError('File too large (max 10 MB).'); return; }
+    if (file.size > MAX_BYTES) { setError(t('resume.import.error.tooLarge')); return; }
     setStep('parsing');
     setError(null);
     try {
@@ -75,7 +75,7 @@ export const ResumeImportDialog: React.FC<Props> = ({
       });
       setStep('review');
     } catch (e: any) {
-      setError(e.message || 'Import failed');
+      setError(e.message || t('resume.import.error.failed'));
       setStep('upload');
     }
   };

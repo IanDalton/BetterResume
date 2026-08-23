@@ -17,6 +17,24 @@ const monthYearOrPresent = z
     message: 'Use the date picker or leave blank',
   });
 
+/** MM/YYYY -> a comparable number (YYYY * 12 + month). */
+function monthYearSortKey(v: string): number {
+  const [mm, yyyy] = v.split('/');
+  return Number(yyyy) * 12 + Number(mm);
+}
+
+/** Cross-field check that `end` isn't chronologically before `start`, reported on the
+ * `end` field. Both sides are optional/"present"-aware already via monthYearOrPresent,
+ * so this only fires when both are concrete MM/YYYY values. */
+const dateOrderCheck = (data: { start?: string; end?: string }) => {
+  const { start, end } = data;
+  if (!start || !end) return true;
+  if (start.toLowerCase() === 'present' || end.toLowerCase() === 'present') return true;
+  if (!MONTH_YEAR.test(start) || !MONTH_YEAR.test(end)) return true;
+  return monthYearSortKey(end) >= monthYearSortKey(start);
+};
+const dateOrderCheckOptions = { message: 'End date must be after the start date', path: ['end'] };
+
 export const educationEntrySchema = z.object({
   type: z.enum(EDUCATION_TYPES as [EntryType, ...EntryType[]]),
   company: z.string().trim().min(1, 'Institution is required'),
@@ -25,7 +43,7 @@ export const educationEntrySchema = z.object({
   start: monthYearOrPresent,
   end: monthYearOrPresent,
   description: z.string().optional(),
-});
+}).refine(dateOrderCheck, dateOrderCheckOptions);
 
 export const experienceEntrySchema = z.object({
   type: z.enum(EXPERIENCE_TYPES as [EntryType, ...EntryType[]]),
@@ -35,7 +53,7 @@ export const experienceEntrySchema = z.object({
   start: monthYearOrPresent,
   end: monthYearOrPresent,
   description: z.string().optional(),
-});
+}).refine(dateOrderCheck, dateOrderCheckOptions);
 
 export const languageEntrySchema = z.object({
   name: z.string().trim().min(1, 'Language name is required'),

@@ -4,6 +4,7 @@ export * from './Input';
 export * from './Textarea';
 export * from './Select';
 export * from './Dialog';
+export * from './ConfirmDialog';
 export * from './Card';
 export * from './FormField';
 export * from './Spinner';

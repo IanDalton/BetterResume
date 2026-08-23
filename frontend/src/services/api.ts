@@ -139,7 +139,7 @@ function pumpSseBody(body: ReadableStream<Uint8Array>, onFrame: (frame: SseFrame
   return pump();
 }
 
-export function generateResumeStream(userId: string, payload: ResumeRequestPayload, onEvent: (evt: any) => void): Promise<{ result: any; files?: { pdf: string; source: string } }> {
+export function generateResumeStream(userId: string, payload: ResumeRequestPayload, onEvent: (evt: any) => void, signal?: AbortSignal): Promise<{ result: any; files?: { pdf: string; source: string } }> {
   // Returns a promise resolving to final result while invoking onEvent per progress event.
   return new Promise((resolve, reject) => {
     // We POST first to initiate SSE because EventSource only supports GET natively; we fallback to fetch+ReadableStream poly.
@@ -147,7 +147,8 @@ export function generateResumeStream(userId: string, payload: ResumeRequestPaylo
     fetch(`${API_BASE}/generate-resume-stream/${encodeURIComponent(userId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     }).then(res => {
       if (!res.ok || !res.body) { reject(new Error(`Stream failed: ${res.status}`)); return; }
       pumpSseBody(res.body, ({ data: json }) => {

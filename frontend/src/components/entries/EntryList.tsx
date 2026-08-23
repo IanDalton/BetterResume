@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ResumeEntry } from '../../types';
-import { Button } from '../ui';
+import { Button, ConfirmDialog } from '../ui';
 import { useI18n } from '../../i18n';
 
 interface EntryListProps {
@@ -12,6 +12,7 @@ interface EntryListProps {
 
 export const EntryList: React.FC<EntryListProps> = ({ entries, onEdit, onRemove, emptyLabel }) => {
   const { t } = useI18n();
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
   if (!entries.length) return <p className="text-sm text-neutral-500 dark:text-neutral-400">{emptyLabel}</p>;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -27,7 +28,7 @@ export const EntryList: React.FC<EntryListProps> = ({ entries, onEdit, onRemove,
             </p>
             <div className="flex shrink-0 gap-2">
               <Button variant="link" size="xs" onClick={() => onEdit(i)}>{t('entry.edit')}</Button>
-              <Button variant="danger" size="xs" onClick={() => onRemove(i)}>{t('entry.delete')}</Button>
+              <Button variant="danger" size="xs" onClick={() => setPendingDelete(i)}>{t('entry.delete')}</Button>
             </div>
           </div>
           {e.location && <p className="text-xs text-neutral-600 dark:text-neutral-400">{e.location}</p>}
@@ -41,6 +42,15 @@ export const EntryList: React.FC<EntryListProps> = ({ entries, onEdit, onRemove,
           )}
         </div>
       ))}
+      <ConfirmDialog
+        open={pendingDelete != null}
+        onOpenChange={(open) => { if (!open) setPendingDelete(null); }}
+        title={t('confirm.deleteEntry.title')}
+        description={t('confirm.deleteEntry.body')}
+        confirmLabel={t('confirm.deleteEntry.confirm')}
+        cancelLabel={t('button.cancel')}
+        onConfirm={() => { if (pendingDelete != null) onRemove(pendingDelete); }}
+      />
     </div>
   );
 };

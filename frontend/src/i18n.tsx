@@ -4,12 +4,15 @@ export type Language = 'en' | 'es';
 
 type Dict = Record<string, string>;
 
-const dictionaries: Record<Language, Dict> = {
+export const dictionaries: Record<Language, Dict> = {
   en: {
     'app.title': 'Better Resume',
     'app.tagline': 'Made for humans, optimized for machines.',
   'app.meta.description': 'Better Resume – Made for humans, optimized for machines.',
   'app.language': 'Language',
+  'errorBoundary.title': 'Something went wrong',
+  'errorBoundary.body': 'An unexpected error occurred. Reloading the page usually fixes this; your progress is saved locally.',
+  'errorBoundary.reload': 'Reload',
     'user.id': 'User ID',
     'format': 'Format',
   'format.latex': 'LaTeX',
@@ -56,8 +59,12 @@ const dictionaries: Record<Language, Dict> = {
     'button.cancel': 'Cancel',
     'button.addEntry': 'Add Entry',
     'button.updateEntry': 'Update Entry',
-  'button.clear': 'Clear All',
-  'confirm.clear': 'This will remove all locally saved progress. Continue?',
+  'confirm.deleteEntry.title': 'Delete this entry?',
+  'confirm.deleteEntry.body': 'This will permanently remove it. This cannot be undone.',
+  'confirm.deleteEntry.confirm': 'Yes, delete',
+  'confirm.deleteLanguage.title': 'Delete this language?',
+  'confirm.deleteLanguage.body': 'This will permanently remove it. This cannot be undone.',
+  'confirm.deleteLanguage.confirm': 'Yes, delete',
     'entries.none': 'No entries yet.',
     'entry.edit': 'Edit',
     'entry.delete': 'Del',
@@ -92,6 +99,8 @@ const dictionaries: Record<Language, Dict> = {
     'resume.import.section.languages': 'Languages',
     'resume.import.none': 'Nothing found in this section.',
     'resume.import.success': 'Import added successfully.',
+    'resume.import.error.tooLarge': 'File too large (max 10 MB).',
+    'resume.import.error.failed': 'Import failed',
     'profile.section.title': 'Profile Picture',
     'profile.upload': 'Select photo',
     'profile.uploading': 'Uploading…',
@@ -121,6 +130,7 @@ const dictionaries: Record<Language, Dict> = {
   'json.title': 'Resume JSON',
   'preview.title': 'Preview',
   'preview.pdf.unavailable': 'PDF not available',
+  'preview.pdf.fetchFailed': 'Could not load the PDF preview. You can still download it below.',
   'download.pdf': 'Download PDF',
   'download.source': 'Edit (Download Source)',
   'download.downloading': 'Downloading…',
@@ -150,6 +160,7 @@ const dictionaries: Record<Language, Dict> = {
   'wizard.personal.websites': 'Websites / Profiles',
   'wizard.personal.label': 'Label',
   'wizard.personal.add': 'Add',
+  'wizard.personal.url.invalid': 'Enter a valid URL (e.g. https://example.com)',
   'wizard.personal.remove': 'Remove',
   'wizard.personal.help': 'Add as many personal / professional links as you like (portfolio, GitHub, LinkedIn, etc.). Each link can have its own label.',
   'education.degree.placeholder': 'Degree / Program',
@@ -185,6 +196,17 @@ const dictionaries: Record<Language, Dict> = {
   'auth.error.generic': 'Auth failed',
   'auth.error.google': 'Google sign-in failed',
   'auth.error.guest': 'Guest sign-in failed',
+  'auth.error.invalidCredential': 'Incorrect email or password.',
+  'auth.error.userNotFound': 'No account found with that email.',
+  'auth.error.wrongPassword': 'Incorrect password.',
+  'auth.error.emailInUse': 'An account with that email already exists.',
+  'auth.error.weakPassword': 'Password should be at least 6 characters.',
+  'auth.error.invalidEmail': 'Enter a valid email address.',
+  'auth.error.tooManyRequests': 'Too many attempts. Please wait a moment and try again.',
+  'auth.forgotPassword': 'Forgot password?',
+  'auth.resetPassword.sent': 'Password reset email sent — check your inbox.',
+  'auth.resetPassword.needEmail': 'Enter your email above first, then click "Forgot password?".',
+  'auth.resetPassword.error': 'Could not send the reset email. Try again.',
     'jobs.none': 'No jobs added yet.',
     'jobs.title': 'Title',
     'jobs.company': 'Company',
@@ -211,6 +233,9 @@ const dictionaries: Record<Language, Dict> = {
   'guide.tip': 'Tip: For best results, match keywords from the job post (skills, tools, responsibilities) in your entries.',
   'guide.gotIt': 'Got it',
   'guide.button.title': 'Quick guide',
+  'theme.light': 'Light theme',
+  'theme.dark': 'Dark theme',
+  'theme.system': 'System theme',
   // Footer
   'footer.brandline': 'Better resume — a tool made by Ian Dalton',
   'footer.gotJob': 'Got the job? Consider donating to keep the tool free!',
@@ -219,6 +244,7 @@ const dictionaries: Record<Language, Dict> = {
   'donate.toast.body': 'Traffic grew a lot. A small donation (~$5 USD, less than a big mac) helps keep the servers running and this tool free.',
   'donate.toast.cta': 'Donate',
   'donate.toast.dismiss': 'Not now',
+  'donate.toast.close': 'Close',
   // Stripe donation
   'donate.stripe.title': 'Help Keep BetterResume Free',
   'donate.stripe.body.international': 'If this tool saved you time, consider supporting development with a small donation. Payments are processed securely via Stripe.',
@@ -228,6 +254,7 @@ const dictionaries: Record<Language, Dict> = {
   // Donate page
   'donate.changeAmount': 'Donate again',
   'donate.back': 'Back to Home',
+  'donate.loadingPayment': 'Loading payment...',
   'donate.job.title': 'Congratulations!',
   'donate.job.subtitle': 'Celebrate your new role by keeping this tool free for the next job seeker.',
   'donate.job.button': 'Donate $25 to celebrate',
@@ -262,13 +289,19 @@ const dictionaries: Record<Language, Dict> = {
   'download.error.failed': 'Download failed',
   'validation.personal': 'Please complete your personal info (name and email).',
   'validation.experience': 'Please add at least one experience entry.',
-  'validation.education': 'Please add at least one education entry.'
+  'validation.education': 'Please add at least one education entry.',
+  'validation.jobDescription': 'Please paste the target job description above.',
+  'validation.generating': 'Generating your resume — please wait.',
+  'button.cancelGeneration': 'Cancel',
   },
   es: {
     'app.title': 'Better Resume',
     'app.tagline': 'Hecho para humanos, optimizado para máquinas.',
   'app.meta.description': 'Better Resume – Hecho para humanos, optimizado para máquinas.',
   'app.language': 'Idioma',
+  'errorBoundary.title': 'Algo salió mal',
+  'errorBoundary.body': 'Ocurrió un error inesperado. Recargar la página suele solucionarlo; tu progreso está guardado localmente.',
+  'errorBoundary.reload': 'Recargar',
     'user.id': 'ID de Usuario',
     'format': 'Formato',
   'format.latex': 'LaTeX',
@@ -315,8 +348,12 @@ const dictionaries: Record<Language, Dict> = {
     'button.cancel': 'Cancelar',
     'button.addEntry': 'Agregar Entrada',
     'button.updateEntry': 'Actualizar Entrada',
-  'button.clear': 'Borrar Todo',
-  'confirm.clear': 'Esto eliminará el progreso local guardado. ¿Continuar?',
+  'confirm.deleteEntry.title': '¿Eliminar esta entrada?',
+  'confirm.deleteEntry.body': 'Esto la eliminará permanentemente. No se puede deshacer.',
+  'confirm.deleteEntry.confirm': 'Sí, eliminar',
+  'confirm.deleteLanguage.title': '¿Eliminar este idioma?',
+  'confirm.deleteLanguage.body': 'Esto lo eliminará permanentemente. No se puede deshacer.',
+  'confirm.deleteLanguage.confirm': 'Sí, eliminar',
     'entries.none': 'Sin entradas todavía.',
     'entry.edit': 'Editar',
     'entry.delete': 'Borrar',
@@ -351,6 +388,8 @@ const dictionaries: Record<Language, Dict> = {
     'resume.import.section.languages': 'Idiomas',
     'resume.import.none': 'No se encontró nada en esta sección.',
     'resume.import.success': 'Importación agregada correctamente.',
+    'resume.import.error.tooLarge': 'El archivo es demasiado grande (máx. 10 MB).',
+    'resume.import.error.failed': 'Falló la importación',
     'profile.section.title': 'Foto de perfil',
     'profile.upload': 'Elegir foto',
     'profile.uploading': 'Subiendo…',
@@ -380,6 +419,7 @@ const dictionaries: Record<Language, Dict> = {
   'json.title': 'JSON del Currículum',
   'preview.title': 'Vista previa',
   'preview.pdf.unavailable': 'PDF no disponible',
+  'preview.pdf.fetchFailed': 'No se pudo cargar la vista previa del PDF. Igual podés descargarlo abajo.',
   'download.pdf': 'Descargar PDF',
   'download.source': 'Editar (Descargar fuente)',
   'download.downloading': 'Descargando…',
@@ -409,6 +449,7 @@ const dictionaries: Record<Language, Dict> = {
   'wizard.personal.websites': 'Sitios / Perfiles',
   'wizard.personal.label': 'Etiqueta',
   'wizard.personal.add': 'Agregar',
+  'wizard.personal.url.invalid': 'Ingresá una URL válida (ej. https://ejemplo.com)',
   'wizard.personal.remove': 'Quitar',
   'wizard.personal.help': 'Agrega los enlaces personales/profesionales que quieras (portafolio, GitHub, LinkedIn, etc.). Cada enlace puede tener su propia etiqueta.',
   'education.degree.placeholder': 'Título / Programa',
@@ -444,6 +485,17 @@ const dictionaries: Record<Language, Dict> = {
   'auth.error.generic': 'Fallo de autenticación',
   'auth.error.google': 'Fallo con Google',
   'auth.error.guest': 'Fallo al entrar como invitado',
+  'auth.error.invalidCredential': 'Correo o contraseña incorrectos.',
+  'auth.error.userNotFound': 'No existe una cuenta con ese correo.',
+  'auth.error.wrongPassword': 'Contraseña incorrecta.',
+  'auth.error.emailInUse': 'Ya existe una cuenta con ese correo.',
+  'auth.error.weakPassword': 'La contraseña debe tener al menos 6 caracteres.',
+  'auth.error.invalidEmail': 'Ingresá un correo válido.',
+  'auth.error.tooManyRequests': 'Demasiados intentos. Esperá un momento e intentá de nuevo.',
+  'auth.forgotPassword': '¿Olvidaste tu contraseña?',
+  'auth.resetPassword.sent': 'Correo de recuperación enviado — revisá tu bandeja de entrada.',
+  'auth.resetPassword.needEmail': 'Ingresá tu correo arriba y luego hacé clic en "¿Olvidaste tu contraseña?".',
+  'auth.resetPassword.error': 'No se pudo enviar el correo de recuperación. Intentá de nuevo.',
     'jobs.none': 'Aún no se agregaron trabajos.',
     'jobs.title': 'Título',
     'jobs.company': 'Empresa',
@@ -470,6 +522,9 @@ const dictionaries: Record<Language, Dict> = {
   'guide.tip': 'Consejo: Para mejores resultados, incluye palabras clave de la oferta (habilidades, herramientas, responsabilidades) en tus entradas.',
   'guide.gotIt': 'Entendido',
   'guide.button.title': 'Guía rápida',
+  'theme.light': 'Tema claro',
+  'theme.dark': 'Tema oscuro',
+  'theme.system': 'Tema del sistema',
   // Footer
   'footer.brandline': 'Better resume — una herramienta creada por Ian Dalton',
   'footer.gotJob': '¿Conseguiste el trabajo? ¡Considera donar para mantener la herramienta gratis!',
@@ -478,6 +533,7 @@ const dictionaries: Record<Language, Dict> = {
   'donate.toast.body': 'El tráfico creció mucho. Una pequeña donación (~$5.000 ARS, menos que una hamburguesa) ayuda a mantener el servidor y esta herramienta gratis.',
   'donate.toast.cta': 'Donar',
   'donate.toast.dismiss': 'Ahora no',
+  'donate.toast.close': 'Cerrar',
   // Stripe donation
   'donate.stripe.title': 'Ayúdanos a mantener BetterResume gratis',
   'donate.stripe.body.international': 'Si te resultó útil, considera apoyar el desarrollo con una pequeña donación. Pagos seguros a través de Stripe.',
@@ -495,6 +551,7 @@ const dictionaries: Record<Language, Dict> = {
   'donate.complete.title': '¡Gracias por ayudar a mantener esta herramienta gratuita!',
   'donate.changeAmount': 'Donar de nuevo',
   'donate.back': 'Volver al Inicio',
+  'donate.loadingPayment': 'Cargando el pago...',
   'donate.support.title': 'Apoya a Better Resume',
   'donate.support.subtitle': 'Ayúdanos a mantener esta herramienta gratuita para todos.',
   'donate.amount.label': 'Monto (USD)',
@@ -521,7 +578,10 @@ const dictionaries: Record<Language, Dict> = {
   'download.error.failed': 'Fallo en la descarga',
   'validation.personal': 'Por favor completa tu información personal (nombre y correo).',
   'validation.experience': 'Por favor agrega al menos una experiencia.',
-  'validation.education': 'Por favor agrega al menos una entrada de educación.'
+  'validation.education': 'Por favor agrega al menos una entrada de educación.',
+  'validation.jobDescription': 'Por favor pega la descripción del puesto arriba.',
+  'validation.generating': 'Generando tu currículum — por favor esperá.',
+  'button.cancelGeneration': 'Cancelar',
   }
 };
 
@@ -533,7 +593,12 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | undefined>(undefined);
 
-function detectInitialLang(): Language {
+/**
+ * Exported (alongside `dictionaries`) so code that must render text before/without
+ * an I18nProvider in the tree — e.g. ErrorBoundary, which can catch errors thrown
+ * by I18nProvider itself — can still resolve a reasonable language without useI18n().
+ */
+export function detectInitialLang(): Language {
   try {
     const stored = localStorage.getItem('lang') as Language | null;
     if (stored && (stored in dictionaries)) return stored;

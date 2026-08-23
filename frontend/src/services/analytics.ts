@@ -61,6 +61,22 @@ export function setupErrorTracking() {
   });
 }
 
+const CONSOLE_MSG_MAX_LEN = 200;
+
+/** Extracts a safe-to-export summary of a console.error/warn's first argument.
+ * Deliberately narrow: only a string or an Error's `.message` is forwarded, truncated.
+ * Never serializes arbitrary objects/arrays — a stray `console.error(profile)` or
+ * `console.error('failed', resumeText)` elsewhere in the app must not turn into a resume
+ * or profile field being exported to a third-party analytics service. */
+function summarizeConsoleArg(arg: unknown): string {
+  let text: string;
+  if (typeof arg === 'string') text = arg;
+  else if (arg instanceof Error) text = arg.message;
+  else if (arg == null) text = '';
+  else text = `[${typeof arg}]`;
+  return text.length > CONSOLE_MSG_MAX_LEN ? text.slice(0, CONSOLE_MSG_MAX_LEN) + '…' : text;
+}
+
 export function trackConsole(maxPerMinute = 10) {
   if (!enabled) return;
   const origError = console.error.bind(console);
@@ -74,11 +90,11 @@ export function trackConsole(maxPerMinute = 10) {
     return false;
   }
   console.error = (...args: any[]) => {
-    if (allow()) trackEvent('console_error', { msg: String(args[0] || ''), extra: args.length>1 ? '1' : '0' });
+    if (allow()) trackEvent('console_error', { msg: summarizeConsoleArg(args[0]), extra: args.length>1 ? '1' : '0' });
     return origError(...args);
   };
   console.warn = (...args: any[]) => {
-    if (allow()) trackEvent('console_warn', { msg: String(args[0] || ''), extra: args.length>1 ? '1' : '0' });
+    if (allow()) trackEvent('console_warn', { msg: summarizeConsoleArg(args[0]), extra: args.length>1 ? '1' : '0' });
     return origWarn(...args);
   };
 }

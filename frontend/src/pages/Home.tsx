@@ -15,7 +15,8 @@ import { splitLegacyEntries, hasLegacyEntries, loadLocalDataWithMigration } from
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
-import { Dialog, Button } from '../components/ui';
+import { useDonationNudges } from '../hooks/useDonationNudges';
+import { Dialog, Button, Select, Spinner } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -44,7 +45,6 @@ export function Home() {
   });
   const userId = user?.uid || guestId;
   const [loading, setLoading] = useState(false);
-  const [resumeJson, setResumeJson] = useState<any>(null);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
   const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
   const [jobDescription, setJobDescription] = useState(() => {
@@ -54,21 +54,20 @@ export function Home() {
     try { const f = localStorage.getItem('br.format'); if (f === 'word' || f === 'latex') return f; } catch {}
     return 'word';
   });
-  const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{stage:string; message?:string}[]>([]);
   const [downloading, setDownloading] = useState<null | 'pdf' | 'source'>(null);
   const [showGenModal, setShowGenModal] = useState(false);
-  const [showJson, setShowJson] = useState(false);
   const [genStartAt, setGenStartAt] = useState<number | null>(null);
   const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
   const [resumeCount, setResumeCount] = useState<number>(()=>{
     try { const v = localStorage.getItem('br.resumeCount'); return v? parseInt(v)||0 : 0; } catch { return 0; }
   });
+  // Manual open (e.g. the Footer's "Donate" link); the nudge hook's showModal can also
+  // drive this same dialog, see the Dialog wiring below.
   const [showDonate, setShowDonate] = useState(false);
   const [showGuide, setShowGuide] = useState<boolean>(() => {
     try { return localStorage.getItem('br.guideSeen') !== '1'; } catch { return true; }
   });
-  const [showDonateToast, setShowDonateToast] = useState(false);
   const [geoLocation, setGeoLocation] = useState<{isOutsideUS: boolean; isArgentina: boolean; country: string} | null>(null);
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
@@ -233,46 +232,9 @@ export function Home() {
       setIncludeProfilePicture(false);
     }
   }, [profilePictureUrl, includeProfilePicture]);
-  // Utility: show toast now and record timestamps/counters
-  const triggerDonateToast = useCallback((reason: 'daily' | 'count') => {
-    try {
-      if (reason === 'count') localStorage.setItem('br.toastDonateGenCount', '0');
-      localStorage.setItem('br.toastDonateLastShown', String(Date.now()));
-    } catch {}
-    setShowDonateToast(true);
-  }, []);
-
-  useEffect(() => {
-    // Passive daily reminder: show at most once per day
-    const lastShown = Number.parseInt(localStorage.getItem('br.toastDonateLastShown') || '0');
-    const dayElapsed = (Date.now() - lastShown) > 86_400_000; // 24h
-    if (dayElapsed) {
-      const id = setTimeout(() => {
-        if (!showGenModal && !showGuide) triggerDonateToast('daily');
-      }, 1500);
-      return () => clearTimeout(id);
-    }
-  }, [showGenModal, showGuide, triggerDonateToast]);
-
-  // Stripe donation toast: show to non-US users after 3 resumes or daily
-  useEffect(() => {
-    if (!geoLocation || !geoLocation.isOutsideUS || geoLocation.isArgentina) return;
-    
-    const lastShown = Number.parseInt(localStorage.getItem('br.stripeDonateShown') || '0');
-    const dayElapsed = (Date.now() - lastShown) > 86_400_000; // 24h
-    
-    // Show if 3+ resumes generated or daily reminder
-    if ((resumeCount >= 3 && dayElapsed) || (resumeCount >= 5)) {
-      const id = setTimeout(() => {
-        if (!showGenModal && !showGuide && !showDonateToast) {
-          // Instead of showing toast, maybe just show the donate modal or navigate?
-          // For now, let's just show the donate toast which leads to /donate
-          setShowDonateToast(true);
-        }
-      }, 2000);
-      return () => clearTimeout(id);
-    }
-  }, [resumeCount, geoLocation, showGenModal, showGuide, showDonateToast]);
+  // Single source of truth for donation nudges (see useDonationNudges for why this
+  // replaces what used to be three independent toast triggers plus a modal trigger).
+  const donationNudges = useDonationNudges({ resumeCount, busy: showGenModal || showGuide });
 
   const addEntry = (entry: ResumeEntry) => setEntries(p => [...p, entry]);
   const updateEntry = (index: number, entry: ResumeEntry) => setEntries(p => p.map((e,i)=> i===index? entry : e));
@@ -304,7 +266,6 @@ export function Home() {
 
   const handleUpload = async () => {
     try {
-      setError(null);
       setLoading(true);
       const res: any = await performUpload();
       if (res?.status === 'unchanged') {
@@ -315,20 +276,25 @@ export function Home() {
         toast({ title: t('upload.success'), variant: 'success' });
       }
     } catch (e: any) {
-      const message = e.message || t('upload.failed');
-      setError(message);
-      toast({ title: message, variant: 'error' });
+      toast({ title: e.message || t('upload.failed'), variant: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
+  const genAbortRef = useRef<AbortController | null>(null);
+
+  const handleCancelGenerate = () => {
+    genAbortRef.current?.abort();
+  };
+
   const handleGenerate = async () => {
+    const abortController = new AbortController();
+    genAbortRef.current = abortController;
     try {
-      setError(null);
       // Frontend guard: block calls if requirements not met
-      if (!hasPersonalBasics) { setError(t('generate.error.personal')); return; }
-      if (!hasExperience) { setError(t('generate.error.experience')); return; }
+      if (!hasPersonalBasics) { toast({ title: t('generate.error.personal'), variant: 'error' }); return; }
+      if (!hasExperience) { toast({ title: t('generate.error.experience'), variant: 'error' }); return; }
       setLoading(true);
       setGenStartAt(Date.now());
       setFirstEventAt(null);
@@ -336,7 +302,6 @@ export function Home() {
       setProgress([]);
   // Clear previous outputs so UI doesn't show outdated preview while regenerating
   setDownloadLinks(null);
-  setResumeJson(null);
   setShowGenModal(true);
       // First upload latest entries as jobs.csv (silent: no alert)
       await performUpload();
@@ -356,41 +321,25 @@ export function Home() {
         if (evt.stage === 'error') {
           try { trackEvent('resume_generate_error', { message: evt.message||'error' }); } catch {}
         }
-      });
-      setResumeJson(res.result);
+      }, abortController.signal);
       if (res.files) setDownloadLinks(res.files);
       try {
         const dur = genStartAt ? (Date.now() - genStartAt) : undefined;
         const first = genStartAt && firstEventAt ? (firstEventAt - genStartAt) : undefined;
         trackEvent('resume_generate_success', { format, duration_ms: dur, first_event_ms: first });
       } catch {}
-      // Increment successful generation count
+      // Increment successful generation count; useDonationNudges reacts to this itself.
       setResumeCount(c => {
         const next = c + 1;
         try { localStorage.setItem('br.resumeCount', String(next)); } catch {}
-        // Donation toast cadence: every 5 generations
-        try {
-          const cur = Number.parseInt(localStorage.getItem('br.toastDonateGenCount') || '0');
-          const updated = cur + 1;
-          localStorage.setItem('br.toastDonateGenCount', String(updated));
-          if (updated >= 5) {
-            const lastShown = Number.parseInt(localStorage.getItem('br.toastDonateLastShown') || '0');
-            const dayElapsed = (Date.now() - lastShown) > 86_400_000;
-            if (!showGenModal && dayElapsed) {
-              // Show and reset the counter
-              setTimeout(() => triggerDonateToast('count'), 400);
-            } else if (!showGenModal && lastShown === 0) {
-              setTimeout(() => triggerDonateToast('count'), 400);
-            }
-          }
-        } catch {}
-        // Show donation modal exactly once when reaching 3 (unless previously dismissed)
-  try { const prompted = localStorage.getItem('br.donatePrompted'); if (next >= 5 && !prompted) { setShowDonate(true); localStorage.setItem('br.donatePrompted','1'); } } catch {}
         return next;
       });
     } catch (e: any) {
-      setError(e.message || t('generate.error.failed'));
+      if (e?.name !== 'AbortError') {
+        toast({ title: e.message || t('generate.error.failed'), variant: 'error' });
+      }
     } finally {
+      genAbortRef.current = null;
       setLoading(false);
   setTimeout(()=> setShowGenModal(false), 600); // slight delay for UX
     }
@@ -435,30 +384,10 @@ export function Home() {
       link.remove();
       setTimeout(()=> URL.revokeObjectURL(link.href), 5000);
     } catch (e:any) {
-      setError(e.message || t('download.error.failed'));
+      toast({ title: e.message || t('download.error.failed'), variant: 'error' });
     } finally {
       setDownloading(null);
     }
-  };
-
-  const clearAll = () => {
-    if (!confirm(t('confirm.clear'))) return;
-    try {
-      localStorage.removeItem('br.entries');
-      localStorage.removeItem('br.profile');
-      localStorage.removeItem('br.languages');
-    localStorage.removeItem('br.guestId');
-      localStorage.removeItem('br.jobDescription');
-      localStorage.removeItem('br.format');
-    } catch {}
-    setEntries([]);
-    setProfile({ ...emptyProfile });
-    setLanguages([]);
-  setUser(null);
-    setJobDescription('');
-    setFormat('latex');
-    setResumeJson(null);
-    setError(null);
   };
 
   // Require basic personal info (name + email) and at least one experience entry.
@@ -472,15 +401,26 @@ export function Home() {
   const percent = idx >= 0 ? Math.min(100, Math.round(((idx + 1) / stageOrder.length) * 100)) : (showGenModal ? 5 : 0);
 
   const [pdfUrl, setPdfUrl] = useState<string|null>(null);
+  // Tracks a blob URL *we* created via createObjectURL, so we can revoke it
+  // (and only it — never a caller-supplied blob:/data: URL) on the next run/unmount.
+  const createdPdfBlobUrlRef = useRef<string | null>(null);
 
   useEffect(()=>{
     if (downloadLinks?.pdf && pdfSectionRef.current) {
       // Scroll PDF section into view after generation completes
       pdfSectionRef.current.scrollIntoView({behavior:'smooth'});
     }
-    
+
+    const revokeOwnedBlobUrl = () => {
+      if (createdPdfBlobUrlRef.current) {
+        URL.revokeObjectURL(createdPdfBlobUrlRef.current);
+        createdPdfBlobUrlRef.current = null;
+      }
+    };
+
     // Fetch PDF as blob to bypass CSP frame-ancestors restrictions
     let active = true;
+    revokeOwnedBlobUrl();
     if (downloadLinks?.pdf) {
       if (downloadLinks.pdf.startsWith('blob:') || downloadLinks.pdf.startsWith('data:')) {
         setPdfUrl(downloadLinks.pdf);
@@ -490,26 +430,32 @@ export function Home() {
           .then(blob => {
             if (active) {
               const url = URL.createObjectURL(blob);
+              createdPdfBlobUrlRef.current = url;
               setPdfUrl(url);
             }
           })
           .catch(err => {
             console.error('Failed to fetch PDF blob:', err);
-            if (active) setPdfUrl(downloadLinks.pdf);
+            if (active) {
+              setPdfUrl(null);
+              toast({ title: t('preview.pdf.fetchFailed'), variant: 'error' });
+            }
           });
       }
     } else {
       setPdfUrl(null);
     }
     return () => {
-      active = false; 
-      // Note: we strictly should revokeObjectURL here if we created one, 
-      // but simplistic handling suffices for this single-page view.
+      active = false;
+      revokeOwnedBlobUrl();
     };
   }, [downloadLinks?.pdf]);
 
+  // pb-28 on mobile: the fixed Footer's content can wrap to 2 lines at narrow widths
+  // (brand line + link + Donate button), so a single-line-height reserve would let it
+  // cover page content. sm:pb-16 matches the footer's actual single-line height there.
   return (
-  <div className="max-w-5xl mx-auto p-4 pb-16 font-sans relative">
+  <div className="max-w-5xl mx-auto p-4 pb-28 sm:pb-16 font-sans relative">
       <header className="mb-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
@@ -520,9 +466,9 @@ export function Home() {
             </div>
           </div>
           <div className="flex gap-3 items-center flex-wrap justify-end">
-          <button type="button" title={t('guide.button.title')} onClick={()=>setShowGuide(true)} className="btn-secondary btn-sm px-2 py-1">
-            <span aria-hidden>❓</span>
-          </button>
+          <Button type="button" variant="secondary" size="sm" onClick={()=>setShowGuide(true)}>
+            <span aria-hidden className="mr-1">❓</span>{t('guide.button.title')}
+          </Button>
           {user && <UserBar user={user} onLogout={async ()=>{
   await logout();
   setUser(null);
@@ -539,15 +485,25 @@ export function Home() {
   }
 }} />}
           <label className="text-sm flex flex-col">{t('format')}
-            <select className="mt-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-sm" value={format} onChange={e => setFormat(e.target.value as any)}>
-        <option value='latex'>{t('format.latex')}</option>
-        <option value='word'>{t('format.word')}</option>
-            </select>
+            <span className="mt-1">
+              <Select
+                value={format}
+                onValueChange={(v) => setFormat(v as any)}
+                options={[
+                  { value: 'latex', label: t('format.latex') },
+                  { value: 'word', label: t('format.word') },
+                ]}
+              />
+            </span>
           </label>
           <label className="text-sm flex flex-col">{t('app.language')}
-            <select className="mt-1 bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-2 py-1 text-sm" value={lang} onChange={e => setLang(e.target.value as any)}>
-              {availableLanguages.map(l => <option key={l.code} value={l.code}>{t(l.labelKey)}</option>)}
-            </select>
+            <span className="mt-1">
+              <Select
+                value={lang}
+                onValueChange={(v) => setLang(v as any)}
+                options={availableLanguages.map(l => ({ value: l.code, label: t(l.labelKey) }))}
+              />
+            </span>
           </label>
           <ThemeToggle />
           </div>
@@ -579,34 +535,23 @@ export function Home() {
   <section className="space-y-4 mb-12">
         <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
   <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
-        <div className="flex flex-wrap gap-2">
-          <button className="btn-primary btn-sm" disabled={loading || !jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</button>
-          <button type="button" className="btn-secondary btn-sm" onClick={()=>{ trackEvent('clear_click'); clearAll(); }}>{t('button.clear')}</button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" loading={loading} disabled={!jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</Button>
         </div>
-        {(!hasPersonalBasics || !hasExperience) && (
+        {!loading && (!hasPersonalBasics || !hasExperience || !jobDescription) && (
           <p className="text-xs text-red-500">
-            {!hasPersonalBasics ? t('validation.personal') : t('validation.experience')}
+            {!hasPersonalBasics ? t('validation.personal') : !hasExperience ? t('validation.experience') : t('validation.jobDescription')}
           </p>
         )}
-  {loading && <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('working')}</p>}
+  {loading && (
+    <p className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
+      <Spinner size="sm" /> {t('validation.generating')}
+    </p>
+  )}
         {progress.length>0 && (
           <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded p-2 max-h-48 overflow-auto">
             {progress.map((p,i)=>(<li key={i}><span className="font-mono text-neutral-500">{i+1}.</span> {p.stage}{p.message?`: ${p.message}`:''}</li>))}
           </ul>
-        )}
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        {resumeJson && (
-          <div className="mt-6 space-y-2 bg-neutral-50/80 dark:bg-neutral-900/40 rounded">
-            <button type="button" onClick={()=>setShowJson(s=>!s)} className="btn-link-primary text-xs px-3 py-2">
-              {showJson ? t('json.hide') : t('json.show')}
-            </button>
-            {showJson && (
-              <div className="space-y-3 border-t border-neutral-800 pt-3 px-4 pb-4">
-                <h3 className="text-sm font-semibold">{t('json.title')}</h3>
-                <pre className="text-xs overflow-auto max-h-96 bg-neutral-100 dark:bg-neutral-950 p-3 rounded border border-neutral-200 dark:border-neutral-800">{JSON.stringify(resumeJson, null, 2)}</pre>
-              </div>
-            )}
-          </div>
         )}
     </section>
     {downloadLinks && (
@@ -621,10 +566,10 @@ export function Home() {
         </div>
         <div className="flex gap-4 flex-wrap">
           {downloadLinks.pdf && (
-            <button disabled={downloading==='pdf'} onClick={()=>handleDownload('pdf')} className="btn-primary disabled:opacity-50">{downloading==='pdf' ? t('download.downloading') : t('download.pdf')}</button>
+            <Button variant="primary" loading={downloading==='pdf'} onClick={()=>handleDownload('pdf')}>{downloading==='pdf' ? t('download.downloading') : t('download.pdf')}</Button>
           )}
           {downloadLinks.source && (
-            <button disabled={downloading==='source'} onClick={()=>handleDownload('source')} className="btn-secondary disabled:opacity-50">{downloading==='source' ? t('download.preparing') : t('download.source')}</button>
+            <Button variant="secondary" loading={downloading==='source'} onClick={()=>handleDownload('source')}>{downloading==='source' ? t('download.preparing') : t('download.source')}</Button>
           )}
         </div>
       </section>
@@ -643,6 +588,7 @@ export function Home() {
         </span>
       }
       description={t('modal.building.subtitle')}
+      footer={<Button variant="secondary" size="sm" onClick={handleCancelGenerate}>{t('button.cancelGeneration')}</Button>}
     >
       <div className="space-y-6">
         <div>
@@ -657,37 +603,29 @@ export function Home() {
         <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
           {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
         </div>
-        {geoLocation?.isArgentina && (
-        <div className="mt-2">
-          <div className="text-[10px] uppercase tracking-wide text-neutral-600 mb-1">Ad</div>
-          <a href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume" target="_blank" rel="noreferrer" className="block">
-            <img src="/Lannis Ads-25.png" alt="Lannis" className="w-full h-auto" />
-          </a>
-        </div>
-        )}
       </div>
     </Dialog>
   <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
-  <DonateToast 
-    open={showDonateToast} 
-    onClose={()=>{ try { localStorage.setItem('br.toastDonateLastShown', String(Date.now())); localStorage.setItem('br.toastDonateGenCount','0'); } catch {} setShowDonateToast(false); }} 
-    onDonateClick={!geoLocation || !geoLocation.isArgentina ? () => { navigate('/donate'); setShowDonateToast(false); } : undefined}
+  <DonateToast
+    open={donationNudges.showToast}
+    onClose={donationNudges.dismissToast}
+    onDonateClick={!geoLocation || !geoLocation.isArgentina ? () => { navigate('/donate'); donationNudges.dismissToast(); } : undefined}
   />
     <Dialog
-      open={showDonate}
-      onOpenChange={setShowDonate}
+      open={showDonate || donationNudges.showModal}
+      onOpenChange={(open) => { if (!open) { setShowDonate(false); donationNudges.dismissModal(); } }}
       title={t('donate.title')}
       description={t('donate.body')}
       footer={
         <>
           {!geoLocation || !geoLocation.isArgentina ? (
-            <Button variant="primary" onClick={() => { navigate('/donate'); setShowDonate(false); }}>{t('donate.cta')}</Button>
+            <Button variant="primary" onClick={() => { navigate('/donate'); setShowDonate(false); donationNudges.dismissModal(); }}>{t('donate.cta')}</Button>
           ) : (
             <Button asChild variant="primary">
-              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer">{t('donate.cta')}</a>
+              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" onClick={() => { setShowDonate(false); donationNudges.dismissModal(); }}>{t('donate.cta')}</a>
             </Button>
           )}
-          <Button variant="secondary" onClick={()=>setShowDonate(false)}>{t('donate.later')}</Button>
+          <Button variant="secondary" onClick={() => { setShowDonate(false); donationNudges.dismissModal(); }}>{t('donate.later')}</Button>
         </>
       }
     >

@@ -70,7 +70,7 @@ export function StatsTab({ user }: { user: User }) {
           <button
             key={d}
             onClick={() => setDays(d)}
-            className={`px-2 py-1 rounded border ${days === d
+            className={`px-2 py-1 rounded border focus-ring ${days === d
               ? 'border-primary-500 text-primary-500'
               : 'border-neutral-300 dark:border-neutral-700 text-neutral-500'}`}
           >
@@ -81,7 +81,7 @@ export function StatsTab({ user }: { user: User }) {
         <button
           onClick={handleExport}
           disabled={exporting}
-          className="ml-auto px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-primary-500 hover:text-primary-500 disabled:opacity-50"
+          className="ml-auto px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:border-primary-500 hover:text-primary-500 disabled:opacity-50 focus-ring"
         >
           {exporting ? 'Exporting…' : 'Export logs (CSV)'}
         </button>

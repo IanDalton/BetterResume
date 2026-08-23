@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { resolveProfilePictureUrl, uploadProfilePicture } from '../services';
+import { Button } from './ui';
 
 interface ProfilePictureUploaderProps {
   userId: string;
@@ -479,9 +480,9 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
               <span className="px-2 text-center text-xs">{t('profile.none')}</span>
             )}
           </div>
-          <button type="button" className="btn-secondary btn-sm" onClick={triggerFileSelect} disabled={uploading}>
+          <Button type="button" variant="secondary" size="sm" onClick={triggerFileSelect} disabled={uploading}>
             {t('profile.upload')}
-          </button>
+          </Button>
         </div>
         <div className="flex-1 space-y-2 text-sm text-neutral-600 dark:text-neutral-300">
           <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.upload.hint')}</p>
@@ -646,28 +647,28 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
                     <span className="font-medium uppercase tracking-wide text-[11px]">
                       {t('profile.editing.shapeLabel')}
                     </span>
-                    <button
+                    <Button
                       type="button"
-                      className={`btn-tertiary btn-xs ${
-                        shape === 'square' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''
-                      }`}
+                      variant="tertiary"
+                      size="xs"
+                      className={shape === 'square' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''}
                       onClick={() => setShape('square')}
                     >
                       {t('profile.shape.square')}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className={`btn-tertiary btn-xs ${
-                        shape === 'circle' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''
-                      }`}
+                      variant="tertiary"
+                      size="xs"
+                      className={shape === 'circle' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''}
                       onClick={() => setShape('circle')}
                     >
                       {t('profile.shape.circle')}
-                    </button>
+                    </Button>
                     <div className="ml-auto">
-                      <button type="button" className="btn-tertiary btn-xs" onClick={resetPlacement}>
+                      <Button type="button" variant="tertiary" size="xs" onClick={resetPlacement}>
                         {t('profile.editing.reset')}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -677,22 +678,23 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
               </div>
 
               <div className="flex flex-col-reverse gap-3 border-t border-neutral-200 pt-4 text-sm sm:flex-row sm:justify-end dark:border-neutral-800">
-                <button
+                <Button
                   type="button"
-                  className="btn-tertiary btn-sm"
+                  variant="tertiary"
+                  size="sm"
                   onClick={handleCancel}
                   disabled={uploading}
                 >
                   {t('profile.editing.cancel')}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="btn-primary btn-sm"
+                  size="sm"
+                  loading={uploading}
                   onClick={handleUpload}
-                  disabled={uploading}
                 >
                   {uploading ? t('profile.uploading') : t('profile.editing.save')}
-                </button>
+                </Button>
               </div>
             </div>
           </div>

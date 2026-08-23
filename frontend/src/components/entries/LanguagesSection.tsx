@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LanguageEntry } from '../../types';
-import { Dialog, Button, FormField, Input, Select } from '../ui';
+import { Dialog, Button, FormField, Input, Select, ConfirmDialog } from '../ui';
 import { languageEntrySchema } from './validation';
 import { useI18n } from '../../i18n';
 
@@ -17,6 +17,7 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<LanguageEntry>(emptyLanguage);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pendingDelete, setPendingDelete] = useState<number | null>(null);
 
   const proficiencyOptions = [
     { value: 'Native', label: t('proficiency.native') },
@@ -70,7 +71,7 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
               </span>
               <div className="flex shrink-0 gap-2">
                 <Button variant="link" size="xs" onClick={() => openEdit(i)}>{t('entry.edit')}</Button>
-                <Button variant="danger" size="xs" onClick={() => remove(i)}>{t('entry.delete')}</Button>
+                <Button variant="danger" size="xs" onClick={() => setPendingDelete(i)}>{t('entry.delete')}</Button>
               </div>
             </li>
           ))}
@@ -100,12 +101,23 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
           <FormField label={t('field.proficiency')} required error={errors.proficiency}>
             <Select
               options={proficiencyOptions}
-              value={draft.proficiency || 'Native'}
+              value={draft.proficiency}
+              placeholder={t('proficiency.select')}
+              invalid={!!errors.proficiency}
               onValueChange={(v) => setDraft((d) => ({ ...d, proficiency: v }))}
             />
           </FormField>
         </div>
       </Dialog>
+      <ConfirmDialog
+        open={pendingDelete != null}
+        onOpenChange={(open) => { if (!open) setPendingDelete(null); }}
+        title={t('confirm.deleteLanguage.title')}
+        description={t('confirm.deleteLanguage.body')}
+        confirmLabel={t('confirm.deleteLanguage.confirm')}
+        cancelLabel={t('button.cancel')}
+        onConfirm={() => { if (pendingDelete != null) remove(pendingDelete); }}
+      />
     </div>
   );
 };

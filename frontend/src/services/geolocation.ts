@@ -52,18 +52,18 @@ export async function detectCountry(): Promise<GeoLocation> {
     return result;
   } catch (error) {
     console.error('Failed to detect country:', error);
-    
-    // Fallback: assume US if detection fails
-    const fallback: GeoLocation = {
+
+    // Fallback: assume US if detection fails. Deliberately NOT cached — this drives
+    // which donate flow/ad is shown, so a transient failure (ad blocker, flaky network)
+    // should get a fresh retry on the next call rather than silently sticking to the
+    // wrong flow for the rest of the session.
+    return {
       country: 'Unknown',
       countryCode: 'US',
       isOutsideUS: false,
       isArgentina: false,
       error: String(error),
     };
-    
-    cachedGeo = fallback;
-    return fallback;
   }
 }
 
