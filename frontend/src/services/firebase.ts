@@ -2,7 +2,7 @@
 // Replace the below config with your Firebase project settings (env-driven preferred)
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -38,6 +38,10 @@ export async function emailPasswordSignIn(email: string, password: string) {
 }
 
 export async function logout() { await signOut(getFirebaseAuth()); }
+
+export async function resetPassword(email: string) {
+  await sendPasswordResetEmail(getFirebaseAuth(), email);
+}
 
 // Google SSO
 const _googleProvider = new GoogleAuthProvider();

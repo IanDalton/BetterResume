@@ -1,8 +1,36 @@
 import React, { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
-import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, logout, loadUserData, UserDataDoc, googleSignIn } from '../services/firebase';
+import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, logout, loadUserData, UserDataDoc, googleSignIn, resetPassword } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 import { Dialog, FormField, Input, Button } from './ui';
+import { useToast } from './ui/use-toast';
+
+/** Maps a Firebase Auth error code to a translated, user-facing message. Firebase's own
+ * `err.message` is English-only, technical, and inconsistent with the rest of this form's
+ * i18n — this keeps the common cases in the app's own voice and falls back to a generic
+ * translated message for anything unmapped rather than showing the raw SDK string. */
+function authErrorMessage(err: any, t: (key: string) => string, fallbackKey: string): string {
+  const code: string | undefined = err?.code;
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
+      return t('auth.error.invalidCredential');
+    case 'auth/user-not-found':
+      return t('auth.error.userNotFound');
+    case 'auth/wrong-password':
+      return t('auth.error.wrongPassword');
+    case 'auth/email-already-in-use':
+      return t('auth.error.emailInUse');
+    case 'auth/weak-password':
+      return t('auth.error.weakPassword');
+    case 'auth/invalid-email':
+      return t('auth.error.invalidEmail');
+    case 'auth/too-many-requests':
+      return t('auth.error.tooManyRequests');
+    default:
+      return t(fallbackKey);
+  }
+}
 
 interface AuthGateProps {
   onResolved: (user: { mode: 'auth' | 'guest'; uid: string; email?: string }, data?: UserDataDoc | null) => void;
@@ -18,7 +46,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
   const [loading, setLoading] = useState(false);
   // Start hidden; only show after we know we need user interaction
   const [show, setShow] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const { t } = useI18n();
+  const { toast } = useToast();
 
   useEffect(() => {
     const unsub = authStateListener(user => {
@@ -57,7 +87,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
       if (mode === 'signup') await emailPasswordSignUp(email, password); else await emailPasswordSignIn(email, password);
       // auth listener will handle resolution
     } catch (err: any) {
-      setError(err.message || 'Auth failed');
+      setError(authErrorMessage(err, t, 'auth.error.generic'));
     } finally { setLoading(false); }
   };
 
@@ -66,8 +96,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
       setError(null); setLoading(true);
       await googleSignIn(); // auth listener will resolve
     } catch (e:any) {
-      setError(e.message || 'Google sign-in failed');
+      setError(authErrorMessage(e, t, 'auth.error.google'));
     } finally { setLoading(false); }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      setError(t('auth.resetPassword.needEmail'));
+      return;
+    }
+    try {
+      setError(null); setResetting(true);
+      await resetPassword(email.trim());
+      toast({ title: t('auth.resetPassword.sent'), variant: 'success' });
+    } catch (err: any) {
+      setError(authErrorMessage(err, t, 'auth.resetPassword.error'));
+    } finally { setResetting(false); }
   };
 
   const continueGuest = () => {
@@ -81,7 +125,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
   setShow(false); // hide modal immediately for UX
   onResolved({ mode: 'guest', uid: id });
     } catch (e:any) {
-      setError('Guest sign-in failed');
+      setError(t('auth.error.guest'));
     }
   };
 
@@ -101,8 +145,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
         </FormField>
         {error && <p className="text-sm text-red-500">{error}</p>}
         <div className="flex items-center justify-between text-xs text-neutral-400">
-          <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')} className="btn-link-primary">{mode==='signin'? t('auth.needAccount'): t('auth.haveAccount')}</button>
-          {/* Guest option hidden because user is already a guest by default */}
+          <button type="button" onClick={()=>{ setError(null); setMode(mode==='signin'?'signup':'signin'); }} className="btn-link-primary">{mode==='signin'? t('auth.needAccount'): t('auth.haveAccount')}</button>
+          {mode === 'signin' && (
+            <button type="button" onClick={handleForgotPassword} disabled={resetting} className="btn-link-primary disabled:opacity-50">
+              {resetting ? t('auth.working') : t('auth.forgotPassword')}
+            </button>
+          )}
         </div>
         <Button type="submit" variant="primary" loading={loading} className="w-full mt-2">
           {mode==='signin'? t('auth.signIn'): t('auth.createAccount')}

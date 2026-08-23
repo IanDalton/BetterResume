@@ -32,7 +32,7 @@ export function AdBanner({ lightSrc, darkSrc, alt = 'Ad', href, className = '' }
   }, []);
 
   const content = (
-    <div className={`w-full overflow-hidden rounded border border-neutral-800 bg-neutral-900 ${className}`}>
+    <div className={`w-full overflow-hidden rounded border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900 ${className}`}>
       <img src={isDark ? darkSrc : lightSrc} alt={alt} className="w-full h-auto" />
     </div>
   );
