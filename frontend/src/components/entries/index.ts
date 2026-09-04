@@ -6,6 +6,8 @@ export * from './ExperienceSection';
 export * from './LanguagesSection';
 export * from './EntryList';
 export * from './EntrySectionCard';
+export * from './SectionStatusBadge';
 export * from './MonthYearInput';
+export * from './monthYear';
 export * from './SaveStatusIndicator';
 export * from './validation';

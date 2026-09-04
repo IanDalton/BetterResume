@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { EXPERIENCE_TYPES, ResumeEntry } from '../../types';
 import { FormField, Input, Textarea, Select } from '../ui';
 import { EntrySectionCard } from './EntrySectionCard';
@@ -17,6 +17,7 @@ export const ExperienceSection: React.FC<Props> = ({ entries, onAdd, onUpdate, o
   const { t } = useI18n();
   const hasAny = entries.some((e) => EXPERIENCE_TYPES.includes(e.type));
   const typeOptions = EXPERIENCE_TYPES.map((v) => ({ value: v, label: t(`type.${v}`) }));
+  const schema = useMemo(() => experienceEntrySchema(t), [t]);
 
   return (
     <EntrySectionCard
@@ -30,20 +31,21 @@ export const ExperienceSection: React.FC<Props> = ({ entries, onAdd, onUpdate, o
       onAdd={onAdd}
       onUpdate={onUpdate}
       onRemove={onRemove}
-      schema={experienceEntrySchema}
+      schema={schema}
       isComplete={hasAny}
+      required
       renderFields={({ value, setField, errors }) => (
         <>
-          <FormField label={t('field.type')}>
+          <FormField label={t('field.type')} hint={t('field.type.hint')}>
             <Select options={typeOptions} value={value.type} onValueChange={(v) => setField('type', v)} />
           </FormField>
-          <FormField label={t('experience.role.placeholder')} required error={errors.role}>
+          <FormField label={t('experience.role')} required error={errors.role}>
             <Input value={value.role} onChange={(e) => setField('role', e.target.value)} invalid={!!errors.role} />
           </FormField>
-          <FormField label={t('experience.company.placeholder')} required error={errors.company}>
+          <FormField label={t('experience.company')} required error={errors.company}>
             <Input value={value.company || ''} onChange={(e) => setField('company', e.target.value)} invalid={!!errors.company} />
           </FormField>
-          <FormField label={t('experience.location.placeholder')}>
+          <FormField label={t('experience.location')}>
             <Input value={value.location || ''} onChange={(e) => setField('location', e.target.value)} />
           </FormField>
           <FormField label={t('field.start')} error={errors.start}>
@@ -58,8 +60,12 @@ export const ExperienceSection: React.FC<Props> = ({ entries, onAdd, onUpdate, o
               invalid={!!errors.end}
             />
           </FormField>
-          <FormField label={t('experience.description.placeholder')} className="sm:col-span-2">
-            <Textarea value={value.description || ''} onChange={(e) => setField('description', e.target.value)} />
+          <FormField label={t('experience.description')} className="sm:col-span-2">
+            <Textarea
+              value={value.description || ''}
+              placeholder={t('experience.description.placeholder')}
+              onChange={(e) => setField('description', e.target.value)}
+            />
           </FormField>
         </>
       )}

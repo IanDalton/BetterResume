@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { LanguageEntry } from '../../types';
 import { Dialog, Button, FormField, Input, Select, ConfirmDialog } from '../ui';
-import { languageEntrySchema } from './validation';
+import { SectionStatusBadge } from './SectionStatusBadge';
+import { issuesToFieldErrors, languageEntrySchema, scrollToFirstInvalid } from './validation';
 import { useI18n } from '../../i18n';
 
 interface Props {
@@ -11,6 +12,16 @@ interface Props {
 
 const emptyLanguage: LanguageEntry = { name: '', proficiency: '' };
 
+/** Stored proficiency values are English (the backend renders them); the UI always
+ * shows the translated label for whichever value is stored. */
+const PROFICIENCY_KEYS: Record<string, string> = {
+  'Native': 'proficiency.native',
+  'Full professional proficiency (C2)': 'proficiency.c2',
+  'Advanced (C1)': 'proficiency.c1',
+  'Intermediate (B2)': 'proficiency.b2',
+  'Basic (A2/B1)': 'proficiency.basic',
+};
+
 export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -18,28 +29,21 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
   const [draft, setDraft] = useState<LanguageEntry>(emptyLanguage);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pendingDelete, setPendingDelete] = useState<number | null>(null);
+  const formRef = useRef<HTMLDivElement | null>(null);
+  const schema = useMemo(() => languageEntrySchema(t), [t]);
 
-  const proficiencyOptions = [
-    { value: 'Native', label: t('proficiency.native') },
-    { value: 'Full professional proficiency (C2)', label: t('proficiency.c2') },
-    { value: 'Advanced (C1)', label: t('proficiency.c1') },
-    { value: 'Intermediate (B2)', label: t('proficiency.b2') },
-    { value: 'Basic (A2/B1)', label: t('proficiency.basic') },
-  ];
+  const proficiencyOptions = Object.entries(PROFICIENCY_KEYS).map(([value, key]) => ({ value, label: t(key) }));
+  const proficiencyLabel = (value: string) => (PROFICIENCY_KEYS[value] ? t(PROFICIENCY_KEYS[value]) : value);
 
   const openAdd = () => { setDraft(emptyLanguage); setErrors({}); setEditingIndex(null); setOpen(true); };
   const openEdit = (i: number) => { setDraft(languages[i]); setErrors({}); setEditingIndex(i); setOpen(true); };
   const remove = (i: number) => onChange(languages.filter((_, idx) => idx !== i));
 
   const submit = () => {
-    const result = languageEntrySchema.safeParse(draft);
+    const result = schema.safeParse(draft);
     if (!result.success) {
-      const fieldErrors: Record<string, string> = {};
-      for (const issue of result.error.issues) {
-        const key = issue.path[0];
-        if (typeof key === 'string' && !fieldErrors[key]) fieldErrors[key] = issue.message;
-      }
-      setErrors(fieldErrors);
+      setErrors(issuesToFieldErrors(result.error.issues));
+      scrollToFirstInvalid(formRef.current);
       return;
     }
     if (editingIndex == null) onChange([...languages, draft]);
@@ -49,9 +53,12 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="mb-3 flex items-start justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">{t('section.languages.title')}</h3>
+          <h3 className="flex items-center gap-2 text-base font-semibold text-neutral-900 dark:text-neutral-100">
+            {t('section.languages.title')}
+            <SectionStatusBadge complete={languages.length > 0} />
+          </h3>
           <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{t('section.languages.hint')}</p>
         </div>
         <Button size="sm" variant="secondary" onClick={openAdd}>{t('languages.add')}</Button>
@@ -67,11 +74,11 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
             >
               <span className="text-sm">
                 <span className="font-semibold">{l.name}</span>
-                {l.proficiency ? ` — ${l.proficiency}` : ''}
+                {l.proficiency ? ` — ${proficiencyLabel(l.proficiency)}` : ''}
               </span>
-              <div className="flex shrink-0 gap-2">
+              <div className="flex shrink-0 gap-1">
                 <Button variant="link" size="xs" onClick={() => openEdit(i)}>{t('entry.edit')}</Button>
-                <Button variant="danger" size="xs" onClick={() => setPendingDelete(i)}>{t('entry.delete')}</Button>
+                <Button variant="tertiary" size="xs" onClick={() => setPendingDelete(i)}>{t('entry.delete')}</Button>
               </div>
             </li>
           ))}
@@ -90,10 +97,11 @@ export const LanguagesSection: React.FC<Props> = ({ languages, onChange }) => {
           </>
         }
       >
-        <div className="grid gap-4">
-          <FormField label={t('placeholder.languageName')} required error={errors.name}>
+        <div ref={formRef} className="grid gap-4">
+          <FormField label={t('language.name')} required error={errors.name}>
             <Input
               value={draft.name}
+              placeholder={t('language.name.placeholder')}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
               invalid={!!errors.name}
             />
