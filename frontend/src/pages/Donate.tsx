@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
 import {
   EmbeddedCheckoutProvider,
   EmbeddedCheckout
@@ -11,16 +10,24 @@ import { getStripe } from '../services/stripe';
 import { API_BASE } from '../services/api';
 import { Button, Input, useToast } from '../components/ui';
 
+const AMOUNT_PRESETS = [5, 10, 20, 25];
+const JOB_PRESET = 25;
+const MIN_AMOUNT = 1;
+
 export function Donate() {
   const { t } = useI18n();
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const [clientSecret, setClientSecret] = useState<string | null>(searchParams.get('client_secret'));
   const [stripePromise, setStripePromise] = useState<Promise<any> | null>(null);
-  const [amount, setAmount] = useState(5);
+  // Kept as the raw field text so clearing the input is possible; `amount` is derived.
+  const [amountText, setAmountText] = useState('5');
   const [reason, setReason] = useState<'support' | 'job'>('support');
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const amount = Number(amountText);
+  const amountValid = Number.isFinite(amount) && amount >= MIN_AMOUNT;
 
   useEffect(() => {
     setStripePromise(getStripe());
@@ -47,10 +54,7 @@ export function Donate() {
   }, [searchParams]);
 
   const handleDonateClick = async () => {
-    if (!amount || amount < 1) {
-      toast({ title: t('donate.error.amount'), variant: 'error' });
-      return;
-    }
+    if (!amountValid) return;
     setIsLoading(true);
     try {
       // Call backend to create Stripe checkout session
@@ -65,23 +69,18 @@ export function Donate() {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`${t('donate.error.session')}: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Donation session failed: ${response.status}`);
 
       const data = await response.json();
       const secret = data.clientSecret;
-
-      if (!secret) {
-        throw new Error(t('donate.error.secret'));
-      }
+      if (!secret) throw new Error('No client secret returned');
 
       setClientSecret(secret);
       // Optionally update URL so refresh works
       setSearchParams({ client_secret: secret });
     } catch (err: any) {
       console.error('Donation error:', err);
-      toast({ title: err.message || t('donate.error.process'), variant: 'error' });
+      toast({ title: t('donate.error.process'), variant: 'error' });
     } finally {
       setIsLoading(false);
     }
@@ -89,25 +88,25 @@ export function Donate() {
   const handleReasonChange = (newReason: 'support' | 'job') => {
     setReason(newReason);
     if (newReason === 'job') {
-      setAmount(25);
+      setAmountText(String(JOB_PRESET));
     }
   };
 
 
   if (clientSecret) {
     return (
-      <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-3xl mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">
               {t('donate.complete.title')}
             </h1>
-            <Link to="/donate" onClick={() => { setClientSecret(null); setSearchParams({}); }} className="text-sm text-primary-600 hover:underline mt-2 inline-block">
+            <Link to="/donate" onClick={() => { setClientSecret(null); setSearchParams({}); }} className="btn-link-primary text-sm mt-2 inline-block">
               {t('donate.changeAmount')}
             </Link>
           </div>
 
-          <div className="bg-white dark:bg-neutral-800 rounded-xl shadow-lg overflow-hidden">
+          <div className="bg-white dark:bg-neutral-900 rounded-xl shadow-lg overflow-hidden">
             {stripePromise ? (
               <EmbeddedCheckoutProvider
                 stripe={stripePromise}
@@ -133,8 +132,8 @@ export function Donate() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-900 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
-      <div className="max-w-md w-full space-y-8 bg-white dark:bg-neutral-800 p-8 rounded-xl shadow-lg">
+    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 py-12 px-4 sm:px-6 lg:px-8 flex items-center justify-center">
+      <div className="max-w-md w-full space-y-8 bg-white dark:bg-neutral-900 p-8 rounded-xl shadow-lg">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-neutral-900 dark:text-white">
             {t('donate.support.title')}
@@ -145,41 +144,26 @@ export function Donate() {
         </div>
 
         <div className="space-y-6">
-
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+          <fieldset>
+            <legend className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
               {t('donate.reason.label')}
-            </label>
-            <div className="flex space-x-4">
-              <Button
-                variant="secondary"
-                onClick={() => handleReasonChange('support')}
-                className={`flex-1 !py-3 !px-4 !rounded-lg border transition-colors ${reason === 'support'
-                    ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
-                    : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
-                  }`}
-              >
+            </legend>
+            <div className="grid grid-cols-2 gap-3">
+              <Button variant="option" selected={reason === 'support'} onClick={() => handleReasonChange('support')}>
                 {t('donate.reason.support')}
               </Button>
-              <Button
-                variant="secondary"
-                onClick={() => handleReasonChange('job')}
-                className={`flex-1 !py-3 !px-4 !rounded-lg border transition-colors ${reason === 'job'
-                    ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-300'
-                    : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600 text-neutral-600 dark:text-neutral-400'
-                  }`}
-              >
+              <Button variant="option" selected={reason === 'job'} onClick={() => handleReasonChange('job')}>
                 {t('donate.reason.job')}
               </Button>
             </div>
-          </div>
+          </fieldset>
 
           {reason === 'job' && (
-            <div className="bg-primary-50 dark:bg-primary-900/20 p-4 rounded-lg border border-primary-200 dark:border-primary-800">
-              <h3 className="text-lg font-semibold text-primary-800 dark:text-primary-300 mb-2">
+            <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-800">
+              <h3 className="text-lg font-semibold text-red-800 dark:text-red-300 mb-1">
                 {t('donate.job.title')}
               </h3>
-              <p className="text-sm text-primary-700 dark:text-primary-400 mb-3">
+              <p className="text-sm text-red-700 dark:text-red-300">
                 {t('donate.job.subtitle')}
               </p>
             </div>
@@ -189,45 +173,44 @@ export function Donate() {
             <label htmlFor="amount" className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
               {t('donate.amount.label')}
             </label>
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              {[5, 10, 20].map((val) => (
-                <Button
-                  key={val}
-                  variant="secondary"
-                  onClick={() => setAmount(val)}
-                  className={`!py-2 !px-4 !rounded-lg border ${amount === val
-                      ? 'bg-primary-50 border-primary-500 text-primary-700 dark:bg-primary-900/30 dark:border-primary-400 dark:text-primary-300'
-                      : 'border-neutral-300 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-700'
-                    }`}
-                >
+            <div className="grid grid-cols-4 gap-2 mb-3">
+              {AMOUNT_PRESETS.map((val) => (
+                <Button key={val} variant="option" selected={amount === val} onClick={() => setAmountText(String(val))}>
                   ${val}
                 </Button>
               ))}
             </div>
-            <div className="relative rounded-md shadow-sm">
+            <div className="relative">
               <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                <span className="text-neutral-900 dark:text-white sm:text-sm">$</span>
+                <span className="text-neutral-900 dark:text-white text-sm">$</span>
               </div>
               <Input
                 type="number"
                 name="amount"
                 id="amount"
-                min="1"
-                className="block w-full pl-7 pr-12 py-3 font-semibold"
+                min={MIN_AMOUNT}
+                step="1"
+                inputMode="decimal"
+                className="block w-full pl-7 pr-4 py-3 font-semibold"
                 placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
+                value={amountText}
+                invalid={!amountValid}
+                onChange={(e) => setAmountText(e.target.value)}
               />
             </div>
+            {!amountValid && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{t('donate.amount.invalid')}</p>
+            )}
           </div>
 
           <Button
             variant="primary"
             onClick={handleDonateClick}
             loading={isLoading}
+            disabled={!amountValid}
             className="w-full"
           >
-            {isLoading ? t('donate.processing') : `${t('donate.button')}${amount}`}
+            {isLoading ? t('donate.processing') : `${t('donate.button')}${amountValid ? amount : ''}`}
           </Button>
 
           <div className="text-center">

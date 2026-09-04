@@ -1,7 +1,9 @@
 import React from 'react';
 import * as RadixToast from '@radix-ui/react-toast';
 import { cn } from './cn';
+import { Button } from './Button';
 import { ToastContext, useToastState, type ToastVariant } from './use-toast';
+import { useI18n } from '../../i18n';
 
 const variantClass: Record<ToastVariant, string> = {
   default: 'border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-800',
@@ -9,8 +11,14 @@ const variantClass: Record<ToastVariant, string> = {
   error: 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-900/40',
 };
 
+/**
+ * The only toast surface in the app. Anything that needs to notify the user — errors,
+ * confirmations, the donation nudge — goes through `useToast().toast(...)` so toasts
+ * never stack on top of each other from separate systems.
+ */
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const state = useToastState();
+  const { t: tr } = useI18n();
 
   return (
     <ToastContext.Provider value={state}>
@@ -21,7 +29,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             key={t.id}
             duration={t.durationMs ?? 5000}
             className={cn(
-              'relative rounded-lg border p-4 pr-8 shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-bottom-2',
+              'relative rounded-xl border p-4 pr-10 shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-bottom-2',
               variantClass[t.variant ?? 'default']
             )}
             onOpenChange={(open) => {
@@ -36,15 +44,31 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 {t.description}
               </RadixToast.Description>
             )}
+            {t.action && (
+              <div className="mt-3">
+                <RadixToast.Action altText={t.action.label} asChild>
+                  <Button
+                    size="sm"
+                    variant={t.variant === 'error' ? 'secondary' : 'primary'}
+                    onClick={() => {
+                      t.action?.onClick();
+                      state.dismiss(t.id);
+                    }}
+                  >
+                    {t.action.label}
+                  </Button>
+                </RadixToast.Action>
+              </div>
+            )}
             <RadixToast.Close
-              className="absolute right-2 top-2 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
-              aria-label="Dismiss"
+              className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg text-neutral-500 hover:bg-black/5 hover:text-neutral-800 dark:hover:bg-white/10 dark:hover:text-neutral-100"
+              aria-label={tr('aria.dismiss')}
             >
-              ✕
+              <span aria-hidden>✕</span>
             </RadixToast.Close>
           </RadixToast.Root>
         ))}
-        <RadixToast.Viewport className="fixed bottom-4 right-4 z-[100] flex w-full max-w-sm flex-col gap-2 outline-none" />
+        <RadixToast.Viewport className="fixed bottom-4 right-4 z-[100] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2 outline-none" />
       </RadixToast.Provider>
     </ToastContext.Provider>
   );
