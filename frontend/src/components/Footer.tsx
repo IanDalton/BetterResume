@@ -2,8 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { ThemeToggle } from './ThemeToggle';
-
-const MERCADOPAGO_URL = 'https://link.mercadopago.com.ar/betterresume';
+import { MERCADOPAGO_URL } from '../services/config';
 
 /** Plain page footer: brand line, author link, a discreet donate link and the theme
  * toggle. It flows with the page instead of floating over it. */

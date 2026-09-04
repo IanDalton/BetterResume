@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages } from '../services';
+import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages, MERCADOPAGO_URL } from '../services';
 import { EXPERIENCE_TYPES, LanguageEntry, ResumeEntry, UserProfile, emptyProfile } from '../types';
 import { ProfileEditor } from '../components/entries';
 import { SaveStatus } from '../components/entries/SaveStatusIndicator';
@@ -17,7 +17,6 @@ import { useDonationNudges } from '../hooks/useDonationNudges';
 import { Dialog, Button, Select, Spinner, ConfirmDialog, FormField, Textarea } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
 
-const MERCADOPAGO_URL = 'https://link.mercadopago.com.ar/betterresume';
 
 /** Backend stream stages -> the phrase the user sees. Anything unmapped keeps the
  * previous phrase, so internals never leak into the progress dialog. */
@@ -461,13 +460,113 @@ export function Home() {
   }, [downloadLinks?.pdf]);
 
   const handleLogoutConfirmed = async () => {
-    // Signing out never wipes what is stored in this browser: the auth listener
-    // resolves back to the stored guest id and the page keeps its data and settings.
     await logout();
+    // The signed-out account's profile/languages/entries must never ride along
+    // into the guest identity: userId flips from the auth uid to `guestId` on
+    // the very next render, and the autosave effect below persists whatever
+    // `profile`/`languages` currently hold under whatever `userId` currently
+    // is. Blank the in-memory state back to a fresh guest first...
+    setProfile(emptyProfile);
+    setLanguages([]);
+    setEntries([]);
+    setJobDescription('');
+    // ...and mark that blank state as already-synced for the guest id, so the
+    // userId transition reads as a fresh hydration (like the initial-mount
+    // case) instead of an edit the autosave effect needs to push.
+    lastSynced.current = { userId: guestId, profile: JSON.stringify(emptyProfile), languages: JSON.stringify([]) };
     setUser(null);
   };
 
   const stagePhrase = stage ? t(STAGE_PHRASES[stage]) : t('progress.starting');
+
+  // Returning users with an already-generate-ready profile shouldn't have to
+  // scroll past five profile cards on every visit just to paste a new job
+  // description -- promote "El puesto" above the profile section once the
+  // profile already satisfies Generate's own requirements.
+  const profileReadyForJob = hasPersonalBasics && hasExperience;
+
+  const profileSection = (
+    <section ref={profileSectionRef} aria-labelledby="step-profile" className="scroll-mt-4">
+      <StepHeading id="step-profile" title={t('home.step.profile.title')} hint={t('home.step.profile.hint')} />
+      <ProfileEditor
+        userId={userId}
+        profile={profile}
+        onProfileChange={setProfile}
+        languages={languages}
+        onLanguagesChange={setLanguages}
+        entries={entries}
+        onAddEntry={addEntry}
+        onUpdateEntry={updateEntry}
+        onRemoveEntry={removeEntry}
+        saveStatus={saveStatus}
+      >
+        <ProfilePictureUploader userId={userId} imageUrl={profilePictureUrl} onUploaded={handleProfileUploaded} />
+      </ProfileEditor>
+    </section>
+  );
+
+  const jobSection = (
+    <section aria-labelledby="step-job">
+      <StepHeading id="step-job" title={t('home.step.job.title')} hint={t('home.step.job.hint')} />
+      <div className="space-y-5 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <FormField label={t('job.description.label')} htmlFor="job-description" required>
+          <Textarea
+            id="job-description"
+            className="w-full min-h-[200px]"
+            value={jobDescription}
+            onChange={e => setJobDescription(e.target.value)}
+            placeholder={t('job.description.placeholder')}
+            invalid={generateAttempted && !hasJobDescription}
+          />
+        </FormField>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField label={t('format')} hint={t('format.hint')}>
+            <Select
+              value={format}
+              aria-label={t('format')}
+              onValueChange={(v) => setFormat(v as any)}
+              options={[
+                { value: 'word', label: t('format.word') },
+                { value: 'latex', label: t('format.latex') },
+              ]}
+            />
+          </FormField>
+          <div className="flex flex-col gap-1">
+            <label className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-red-600"
+                checked={includeProfilePicture && !!profilePictureUrl}
+                onChange={e => setIncludeProfilePicture(e.target.checked)}
+                disabled={!profilePictureUrl}
+              />
+              <span className={!profilePictureUrl ? 'text-neutral-400 dark:text-neutral-500' : ''}>{t('profile.toggle')}</span>
+            </label>
+            {!profilePictureUrl && (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.toggle.disabled')}</p>
+            )}
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Button size="md" className="w-full sm:w-auto sm:min-w-[16rem]" loading={loading} onClick={handleGenerate}>
+            {t('generate.resume')}
+          </Button>
+          {loading ? (
+            <p className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
+              <Spinner size="sm" /> {t('validation.generating')}
+            </p>
+          ) : missingHint ? (
+            <p
+              className={generateAttempted ? 'text-sm text-red-600 dark:text-red-400' : 'text-sm text-neutral-500 dark:text-neutral-400'}
+              role={generateAttempted ? 'alert' : undefined}
+            >
+              {missingHint}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
 
   return (
   <div className="max-w-5xl mx-auto p-4 font-sans">
@@ -486,84 +585,17 @@ export function Home() {
       </header>
 
       <main className="space-y-12">
-        <section ref={profileSectionRef} aria-labelledby="step-profile" className="scroll-mt-4">
-          <StepHeading id="step-profile" title={t('home.step.profile.title')} hint={t('home.step.profile.hint')} />
-          <ProfileEditor
-            userId={userId}
-            profile={profile}
-            onProfileChange={setProfile}
-            languages={languages}
-            onLanguagesChange={setLanguages}
-            entries={entries}
-            onAddEntry={addEntry}
-            onUpdateEntry={updateEntry}
-            onRemoveEntry={removeEntry}
-            saveStatus={saveStatus}
-          >
-            <ProfilePictureUploader userId={userId} imageUrl={profilePictureUrl} onUploaded={handleProfileUploaded} />
-          </ProfileEditor>
-        </section>
-
-        <section aria-labelledby="step-job">
-          <StepHeading id="step-job" title={t('home.step.job.title')} hint={t('home.step.job.hint')} />
-          <div className="space-y-5 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-            <FormField label={t('job.description.label')} htmlFor="job-description" required>
-              <Textarea
-                id="job-description"
-                className="w-full min-h-[200px]"
-                value={jobDescription}
-                onChange={e => setJobDescription(e.target.value)}
-                placeholder={t('job.description.placeholder')}
-                invalid={generateAttempted && !hasJobDescription}
-              />
-            </FormField>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label={t('format')} hint={t('format.hint')}>
-                <Select
-                  value={format}
-                  aria-label={t('format')}
-                  onValueChange={(v) => setFormat(v as any)}
-                  options={[
-                    { value: 'word', label: t('format.word') },
-                    { value: 'latex', label: t('format.latex') },
-                  ]}
-                />
-              </FormField>
-              <div className="flex flex-col gap-1">
-                <label className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 accent-red-600"
-                    checked={includeProfilePicture && !!profilePictureUrl}
-                    onChange={e => setIncludeProfilePicture(e.target.checked)}
-                    disabled={!profilePictureUrl}
-                  />
-                  <span className={!profilePictureUrl ? 'text-neutral-400 dark:text-neutral-500' : ''}>{t('profile.toggle')}</span>
-                </label>
-                {!profilePictureUrl && (
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.toggle.disabled')}</p>
-                )}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Button size="md" className="w-full sm:w-auto sm:min-w-[16rem]" loading={loading} onClick={handleGenerate}>
-                {t('generate.resume')}
-              </Button>
-              {loading ? (
-                <p className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
-                  <Spinner size="sm" /> {t('validation.generating')}
-                </p>
-              ) : missingHint ? (
-                <p
-                  className={generateAttempted ? 'text-sm text-red-600 dark:text-red-400' : 'text-sm text-neutral-500 dark:text-neutral-400'}
-                  role={generateAttempted ? 'alert' : undefined}
-                >
-                  {missingHint}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        </section>
+        {profileReadyForJob ? (
+          <>
+            {jobSection}
+            {profileSection}
+          </>
+        ) : (
+          <>
+            {profileSection}
+            {jobSection}
+          </>
+        )}
 
         {downloadLinks && (
           <section ref={pdfSectionRef} aria-labelledby="step-resume" className="scroll-mt-4">

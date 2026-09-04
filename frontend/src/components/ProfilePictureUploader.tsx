@@ -349,7 +349,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({ 
             </div>
 
             <div className="space-y-3">
-              <div className="flex items-center gap-3 text-sm text-neutral-700 dark:text-neutral-300">
+              <div className="flex flex-wrap items-center gap-3 text-sm text-neutral-700 dark:text-neutral-300">
                 <span className="font-medium">{t('profile.editing.zoom')}</span>
                 <Button
                   type="button"
@@ -368,7 +368,7 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({ 
                   step={1}
                   value={Math.round(zoom * 100)}
                   onChange={event => applyZoom(Number(event.target.value) / 100)}
-                  className="flex-1 accent-red-600"
+                  className="min-w-[120px] flex-1 accent-red-600"
                   aria-label={t('profile.editing.zoom')}
                 />
                 <Button
