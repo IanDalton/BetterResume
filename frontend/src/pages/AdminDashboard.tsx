@@ -5,7 +5,7 @@ import { authStateListener, googleSignIn, logout, emailPasswordSignIn } from '..
 import { StatsTab } from './admin/StatsTab';
 import { ModelsTab } from './admin/ModelsTab';
 import { EvalsTab } from './admin/EvalsTab';
-import { FormField, Input, Button } from '../components/ui';
+import { FormField, Input, Button, Tabs } from '../components/ui';
 
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || 'daltioan@gmail.com').toLowerCase();
 
@@ -58,7 +58,7 @@ export function AdminDashboard() {
           {user && (
             <div className="flex items-center gap-3 text-xs">
               <span className="text-neutral-500">{user.email}</span>
-              <button onClick={() => logout()} className="text-red-400 hover:text-red-300 focus-ring rounded">Sign out</button>
+              <button onClick={() => logout()} className="text-neutral-600 hover:text-neutral-900 underline-offset-2 hover:underline focus-ring rounded dark:text-neutral-400 dark:hover:text-neutral-100">Sign out</button>
             </div>
           )}
         </header>
@@ -71,7 +71,7 @@ export function AdminDashboard() {
             <Button onClick={() => { setError(null); googleSignIn().catch(e => setError(e.message)); }} className="w-full">
               Sign in with Google
             </Button>
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-neutral-500">
+            <div className="flex items-center gap-2 text-xs text-neutral-500">
               <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" /> or <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
             </div>
             {/* Fallback for admin accounts that aren't Google-linked, or when Google auth
@@ -97,19 +97,7 @@ export function AdminDashboard() {
 
         {authReady && user && isAdminEmail && (
           <>
-            <nav className="flex gap-1 border-b border-neutral-200 dark:border-neutral-800">
-              {TABS.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={`px-3 py-2 text-sm border-b-2 -mb-px focus-ring rounded-t ${tab === t.id
-                    ? 'border-primary-500 text-primary-500'
-                    : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </nav>
+            <Tabs tabs={TABS} value={tab} onChange={setTab} aria-label="Admin sections" />
             {tab === 'stats' && <StatsTab user={user} />}
             {tab === 'models' && <ModelsTab user={user} />}
             {tab === 'evals' && <EvalsTab user={user} onNavigateToModels={() => setTab('models')} />}

@@ -52,7 +52,7 @@ function ResumePreview({ resumeJson }: { resumeJson: any }) {
     <div className="space-y-4">
       <div>
         <h4 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{section.title}</h4>
-        {resumeJson.language && <p className="text-[11px] text-neutral-500 mt-0.5">Language: {resumeJson.language}</p>}
+        {resumeJson.language && <p className="text-xs text-neutral-500 mt-0.5">Language: {resumeJson.language}</p>}
       </div>
 
       {section.professional_summary && (
@@ -61,7 +61,7 @@ function ResumePreview({ resumeJson }: { resumeJson: any }) {
 
       {experience.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1.5">Experience</p>
+          <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1.5">Experience</p>
           <div className="space-y-3">
             {experience.map((exp, i) => (
               <div key={i}>
@@ -87,7 +87,7 @@ function ResumePreview({ resumeJson }: { resumeJson: any }) {
 
       {skills.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1.5">Skills</p>
+          <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1.5">Skills</p>
           <ul className="text-sm space-y-0.5 text-neutral-700 dark:text-neutral-300">
             {skills.map((s, i) => (
               <li key={i}>
@@ -101,7 +101,7 @@ function ResumePreview({ resumeJson }: { resumeJson: any }) {
 
       {education.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1.5">Education</p>
+          <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1.5">Education</p>
           <ul className="text-sm space-y-0.5 text-neutral-700 dark:text-neutral-300">
             {education.map((e, i) => (
               <li key={i}>{[e.institution, e.degree, e.dates].filter(Boolean).join(' · ')}</li>
@@ -112,7 +112,7 @@ function ResumePreview({ resumeJson }: { resumeJson: any }) {
 
       {languages.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1.5">Languages</p>
+          <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1.5">Languages</p>
           <p className="text-sm text-neutral-700 dark:text-neutral-300">
             {languages.map((l: any) => `${l.name} (${l.proficiency})`).join(', ')}
           </p>
@@ -178,7 +178,7 @@ export interface ResultsTableProps {
  * more per token, and one that only asks for its tool is less reliable than the
  * number alone suggests. */
 function ConcessionBadges({ unforced, reasoning }: { unforced: boolean; reasoning: boolean }) {
-  const tone = 'ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300';
+  const tone = 'ml-1.5 inline-block text-xs px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300';
   return (
     <>
       {unforced && <span className={tone} title="Rejects a forced tool choice; the tool is requested, not required">asks tool</span>}
@@ -295,14 +295,14 @@ export function ResultsTable({ results, getToken, onPromote }: ResultsTableProps
                     <td className="p-2 font-mono text-xs">
                       {r.model}
                       {r.fallback_used && (
-                        <span className="ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                        <span className="ml-1.5 inline-block text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
                           fallback
                         </span>
                       )}
                       <ConcessionBadges unforced={r.unforced_tool_choice} reasoning={r.allow_reasoning} />
                       {r.judge_error && (
                         <span
-                          className="ml-1.5 inline-block text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                          className="ml-1.5 inline-block text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
                           title={`Judge failed: ${r.judge_error}. Composite is schema/ATS only.`}
                         >
                           no judge
@@ -336,14 +336,14 @@ export function ResultsTable({ results, getToken, onPromote }: ResultsTableProps
 
                           {r.judge_reasoning && (
                             <div>
-                              <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1">Judge reasoning</p>
+                              <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Judge reasoning</p>
                               <p className="text-sm whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">{r.judge_reasoning}</p>
                             </div>
                           )}
 
                           {(r.missing_keywords?.length ?? 0) > 0 && (
                             <div>
-                              <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1">Missing keywords</p>
+                              <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Missing keywords</p>
                               <div className="flex flex-wrap gap-1.5">
                                 {r.missing_keywords?.map(k => (
                                   <span
@@ -644,7 +644,7 @@ export function ModelComparison({ getToken }: ModelComparisonProps) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-neutral-500">Aggregated across every stored eval result, including older runs.</p>
+      <p className="text-xs text-neutral-500">Aggregated across every stored eval result, including older runs.</p>
     </div>
   );
 }

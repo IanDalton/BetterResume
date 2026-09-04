@@ -92,13 +92,13 @@ export function StatsTab({ user }: { user: User }) {
       {stats && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard label="Resumes generated" value={stats.totals.generations} hint={`${stats.totals.successful_generations} successful`} />
-            <StatCard label="Success rate" value={successRate} hint={`avg ${Math.round(stats.totals.avg_duration_ms / 1000)}s per resume`} />
-            <StatCard label="Resume requests" value={stats.totals.resume_requests} hint={`${stats.totals.requesting_users} unique users`} />
-            <StatCard label="Registered users" value={stats.totals.users} />
+            <StatCard label="Resumes generated" value={stats.totals.generations} hint={`${stats.totals.successful_generations} successful`} targetId="by-status" />
+            <StatCard label="Success rate" value={successRate} hint={`avg ${Math.round(stats.totals.avg_duration_ms / 1000)}s per resume`} targetId="recent-errors" />
+            <StatCard label="Resume requests" value={stats.totals.resume_requests} hint={`${stats.totals.requesting_users} unique users`} targetId="recent-requests" />
+            <StatCard label="Registered users" value={stats.totals.users} targetId="top-users" />
           </div>
 
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4">
+          <div id="recent-errors" className="scroll-mt-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4">
             <h3 className="text-sm font-medium mb-3">
               Recent generation errors
               {(stats.recent_errors?.length ?? 0) > 0 && (
@@ -106,7 +106,7 @@ export function StatsTab({ user }: { user: User }) {
               )}
             </h3>
             {(stats.recent_errors?.length ?? 0) === 0 ? (
-              <p className="text-sm text-neutral-500">No errors 🎉</p>
+              <p className="text-sm text-neutral-500">No errors in this window.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -165,15 +165,14 @@ export function StatsTab({ user }: { user: User }) {
           </div>
 
           {/* Funnel & reliability */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <StatCard label="Requests → Generations" value={`${stats.totals.resume_requests} → ${stats.totals.generations}`} hint={`${stats.totals.successful_generations} successful`} />
-            <StatCard label="Success rate" value={successRate} />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="Requests → Generations" value={`${stats.totals.resume_requests} → ${stats.totals.generations}`} hint={`${stats.totals.successful_generations} successful`} targetId="recent-requests" />
             <StatCard label="Fallback rate" value={fallbackRate} hint={`${stats.totals.fallback_generations} generation${stats.totals.fallback_generations === 1 ? '' : 's'} served by fallback (last ${days}d)`} />
             <StatCard label="Latency p50" value={fmtMs(stats.duration_percentiles?.p50_ms ?? null)} hint="successful generations" />
             <StatCard label="Latency p95" value={fmtMs(stats.duration_percentiles?.p95_ms ?? null)} hint="successful generations" />
           </div>
 
-          <p className="text-[11px] text-neutral-500">
+          <p className="text-xs text-neutral-500">
             Generation metrics (model / format / language / status / latency / success rate) cover only
             events recorded since instrumentation was added; request metrics reflect full history.
           </p>
@@ -182,11 +181,13 @@ export function StatsTab({ user }: { user: User }) {
             <CountTable title="By model" keyLabel="Model" rows={stats.by_model.map(m => ({ label: m.model, count: m.count }))} />
             <CountTable title="By format" keyLabel="Format" rows={stats.by_format.map(f => ({ label: f.format, count: f.count }))} />
             <CountTable title="By language" keyLabel="Language" rows={stats.by_language.map(l => ({ label: l.language, count: l.count }))} />
-            <CountTable title="By status" keyLabel="Status" rows={(stats.by_status ?? []).map(s => ({ label: s.status, count: s.count }))} />
+            <div id="by-status" className="scroll-mt-4">
+              <CountTable title="By status" keyLabel="Status" rows={(stats.by_status ?? []).map(s => ({ label: s.status, count: s.count }))} />
+            </div>
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
-            <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
+            <div id="top-users" className="scroll-mt-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
               <h3 className="text-sm font-medium mb-3">Top users</h3>
               <table className="w-full text-xs">
                 <thead>
@@ -235,7 +236,7 @@ export function StatsTab({ user }: { user: User }) {
             </div>
           </div>
 
-          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
+          <div id="recent-requests" className="scroll-mt-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
             <h3 className="text-sm font-medium mb-3">Recent resume requests</h3>
             {stats.recent_requests.length === 0 ? (
               <p className="text-xs text-neutral-500">No requests yet.</p>
