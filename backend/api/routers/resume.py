@@ -2,11 +2,13 @@ import os
 import time
 import logging
 import hmac
-from fastapi import APIRouter, HTTPException, Request
+from typing import Optional
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from pydantic import ValidationError
 
-from api.config import OUTPUTS_BASE
-from api.schemas import ResumeRequest
+from api.config import IMPORT_PDF_MAX_BYTES, OUTPUTS_BASE
+from api.schemas import ResumeAnalysisRequest, ResumeRequest
 from api.utils import (
     _validate_user_id,
     _resolve_user_jobs_csv,
@@ -32,7 +34,10 @@ from utils.db_storage import DBStorage
 
 from bot import Bot
 from llm import agent
+from llm.resume_analysis import ResumeAnalysis, analyze_resume
 from models.resume import ResumeOutputFormat
+from utils.imported_resume import NoExperienceError, imported_to_resume
+from utils.resume_import import ResumePdfEmptyError, parse_resume_pdf
 
 logger = logging.getLogger("betterresume.api.resume")
 router = APIRouter()
@@ -55,6 +60,32 @@ def _record_generation(user_id, model, fmt, language, started_at, status, error=
         )
     except Exception:
         logger.warning("Failed to record generation event for user_id=%s", user_id, exc_info=True)
+
+
+def _record_analysis(user_id: str, analysis: ResumeAnalysis, source: str, started_at: float):
+    """Persist one `resume_analyses` row for admin statistics; never raises.
+    A generated resume is attributed to the model that served the user's
+    latest successful generation."""
+    try:
+        storage = DBStorage()
+        generation_model = storage.get_latest_generation_model(user_id) if source == "generated" else None
+        scores = analysis.review.scores if analysis.review else None
+        storage.record_resume_analysis(
+            user_id=user_id,
+            source=source,
+            generation_model=generation_model,
+            review_model=analysis.model,
+            ats_score=analysis.ats.score,
+            keyword_coverage=analysis.ats.keyword_coverage,
+            review_overall=scores.overall if scores else None,
+            review_relevance=scores.relevance if scores else None,
+            review_quality=scores.quality if scores else None,
+            review_coherence=scores.coherence if scores else None,
+            review_error=analysis.review_error,
+            duration_ms=int((time.time() - started_at) * 1000),
+        )
+    except Exception:
+        logger.warning("Failed to record resume analysis for user_id=%s", user_id, exc_info=True)
 
 
 def _prepare_request(user_id: str, req: ResumeRequest, csv_path: str, profile_path):
@@ -171,7 +202,7 @@ async def generate_resume(user_id: str, req: ResumeRequest):
     bot = Bot(user_id=user_id, vector_store=store, jobs_csv=csv_path)
     gen_start = time.time()
     try:
-        result = await bot.generate_resume(req.job_description)
+        result = await bot.generate_resume(req.job_description, improvements=req.improvements)
     except Exception as exc:
         _record_generation(
             user_id, bot.last_generation_model or bot.generation_model, fmt, None, gen_start, "error", str(exc),
@@ -312,7 +343,7 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
         gen_start = time.time()
         try:
             yield sse_event(csv_info)
-            async for event in bot.generate_resume_progress(req.job_description):
+            async for event in bot.generate_resume_progress(req.job_description, improvements=req.improvements):
                 if event.get("stage") == "done":
                     # Write files here, based on final result
                     output_name = os.path.join(out_dir, f"resume{writer.file_ending}")
@@ -347,6 +378,86 @@ async def generate_resume_stream(user_id: str, req: ResumeRequest):
             yield sse_event({"stage": "error", "message": str(e)})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.post("/analyze-resume/{user_id}")
+async def analyze_resume_endpoint(user_id: str, req: ResumeAnalysisRequest):
+    """ATS score plus LLM review of a generated resume against its job
+    description. Stateless: the client sends back the `result` it received
+    from generation, so nothing has to be looked up in the render cache."""
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    if not req.job_description or not req.job_description.strip():
+        raise HTTPException(status_code=400, detail="A job description is required to analyze the resume")
+    try:
+        resume = ResumeOutputFormat.model_validate(req.resume)
+    except ValidationError as exc:
+        logger.info("Rejected resume payload for analysis: %s", exc.errors()[:3])
+        raise HTTPException(status_code=422, detail="Invalid resume payload")
+    started = time.time()
+    analysis = await analyze_resume(resume, req.job_description, language=req.language)
+    _log_analysis(analysis, started)
+    _record_analysis(user_id, analysis, "generated", started)
+    return JSONResponse(content=analysis.model_dump())
+
+
+def _log_analysis(analysis: ResumeAnalysis, started: float) -> None:
+    logger.info(
+        "Resume analysis complete; ats=%d review=%s model=%s duration_ms=%d",
+        analysis.ats.score, "ok" if analysis.review else f"failed ({analysis.review_error})",
+        analysis.model, int((time.time() - started) * 1000),
+    )
+
+
+@router.post("/analyze-resume-pdf/{user_id}")
+async def analyze_resume_pdf_endpoint(
+    user_id: str,
+    file: UploadFile = File(...),
+    job_description: str = Form(...),
+    language: Optional[str] = Form(None),
+):
+    """ATS score plus LLM review of an existing resume PDF (any resume, including
+    a LinkedIn export) against a job description, without generating one.
+    The PDF goes through the same parser as the import flow; nothing is saved
+    to the user's profile. The response is the analysis plus the parsed
+    `resume` it was computed on and the parser's `warnings`."""
+    _validate_user_id(user_id)
+    set_user_context(user_id)
+    if not job_description or not job_description.strip():
+        raise HTTPException(status_code=400, detail="A job description is required to analyze the resume")
+    content_type = (file.content_type or "").lower()
+    if content_type != "application/pdf" and not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Upload your resume as a PDF file.")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="File is empty")
+    if len(content) > IMPORT_PDF_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="PDF too large (max 10 MB)")
+
+    started = time.time()
+    try:
+        parsed = await parse_resume_pdf(content)
+    except ResumePdfEmptyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="No readable text found in this PDF. Upload a text-based PDF (not a scan).",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Resume PDF parsing failed for analysis user=%s", user_id)
+        raise HTTPException(status_code=502, detail="Could not read this PDF right now. Please try again.") from exc
+    try:
+        resume = imported_to_resume(parsed, language=language or "en")
+    except NoExperienceError as exc:
+        raise HTTPException(status_code=422, detail="No work experience was found in this PDF, so there is nothing to score.") from exc
+
+    analysis = await analyze_resume(resume, job_description, language=language)
+    _log_analysis(analysis, started)
+    _record_analysis(user_id, analysis, "imported", started)
+    return JSONResponse(content={
+        **analysis.model_dump(),
+        "resume": resume.model_dump(),
+        "warnings": list(parsed.warnings or []),
+    })
 
 
 @router.get("/download/{user_id}/{filename}")

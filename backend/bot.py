@@ -202,8 +202,12 @@ class Bot:
     # Generation pipeline
     # ------------------------------------------------------------------
 
-    async def _pipeline(self, jd: str, merge_education: bool) -> AsyncIterator[dict]:
-        """Single generation pipeline; both public entry points consume this."""
+    async def _pipeline(
+        self, jd: str, merge_education: bool, improvements: Optional[list] = None,
+    ) -> AsyncIterator[dict]:
+        """Single generation pipeline; both public entry points consume this.
+        `improvements` are a review's change requests to apply (see
+        `agent.improvements_block`); None for a plain generation."""
         if self._auto_ingest_task:
             await self._auto_ingest_task
         set_user_context(self.user_id)
@@ -220,6 +224,7 @@ class Bot:
             fallback_model=self._generation_fallback,
             require_tool_call=True,
             extra_context=extra_context,
+            improvements=improvements,
             on_model_used=self._record_generation_model_used,
             on_usage=self._record_usage,
         )
@@ -238,16 +243,16 @@ class Bot:
 
         yield {"stage": "done", "message": "Resume generation complete", "result": resume}
 
-    async def generate_resume(self, jd: str) -> ResumeOutputFormat:
+    async def generate_resume(self, jd: str, improvements: Optional[list] = None) -> ResumeOutputFormat:
         resume = None
-        async for event in self._pipeline(jd, merge_education=False):
+        async for event in self._pipeline(jd, merge_education=False, improvements=improvements):
             if event["stage"] == "done":
                 resume = event["result"]
         return resume
 
-    async def generate_resume_progress(self, jd: str) -> AsyncIterator[dict]:
+    async def generate_resume_progress(self, jd: str, improvements: Optional[list] = None) -> AsyncIterator[dict]:
         """Async generator yielding progress events; leaves file creation to API layer."""
-        async for event in self._pipeline(jd, merge_education=True):
+        async for event in self._pipeline(jd, merge_education=True, improvements=improvements):
             yield event
 
     async def translate_resume(self, r: ResumeOutputFormat, original_jd: str) -> ResumeOutputFormat:

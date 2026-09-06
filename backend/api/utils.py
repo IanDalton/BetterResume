@@ -202,6 +202,12 @@ def _build_result_signature(req, csv_hash: Optional[str], job_hash: str) -> str:
         "model": agent.get_effective_model("generation"),
         "csv_hash": csv_hash,
     }
+    # Only present when a review's change requests are being applied, so the
+    # signature of a plain request (and every cache entry written before this
+    # field existed) is unchanged.
+    improvements = [i.strip() for i in (getattr(req, "improvements", None) or []) if i and i.strip()]
+    if improvements:
+        payload["improvements_hash"] = _hash_text("\n".join(improvements))
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 

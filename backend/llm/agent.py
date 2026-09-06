@@ -19,7 +19,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
@@ -53,6 +53,11 @@ MAX_SEARCH_QUERIES = 12
 # an expensive way to find that out. Observed on `qwen/qwen3.7-flash`, which
 # without a forced tool choice will search one concept at a time forever.
 REQUEST_LIMIT = 20
+# Caps on the review change requests a client may attach to a generation
+# (`ResumeRequest.improvements`): the text is client-supplied, so bound what
+# reaches the prompt.
+MAX_IMPROVEMENTS = 20
+MAX_IMPROVEMENT_CHARS = 600
 
 JOB_PROMPT = load_prompt("job_prompt")
 TRANSLATION_PROMPT = load_prompt("translation_prompt")
@@ -481,6 +486,30 @@ def _report_usage(on_usage: Optional[Callable[[int, int], None]], result) -> Non
         logger.debug("on_usage callback skipped; usage unavailable")
 
 
+def improvements_block(improvements: Optional[Sequence[str]]) -> str:
+    """Prompt block for a regeneration that applies a review's change requests
+    (`llm/reviewer.py` recommendations the user chose to apply). Empty when
+    there are none, so a plain generation's prompt is untouched."""
+    items = []
+    for item in improvements or []:
+        text = " ".join(str(item or "").split())
+        if text:
+            items.append(text[:MAX_IMPROVEMENT_CHARS])
+        if len(items) >= MAX_IMPROVEMENTS:
+            break
+    if not items:
+        return ""
+    lines = "\n".join(f"- {item}" for item in items)
+    return (
+        "IMPROVEMENT REQUESTS\n"
+        "A reviewer graded a previous draft of this resume for this same job and asked for the "
+        "changes below. Apply each one wherever the retrieved experience supports it, and keep "
+        "everything that already worked. Never invent employers, dates, metrics, skills or "
+        "responsibilities to satisfy a request; if the user's data does not support one, skip it.\n"
+        f"{lines}"
+    )
+
+
 async def generate(
     jd: str,
     *,
@@ -491,6 +520,7 @@ async def generate(
     fallback_model: Union[str, Model, None] = None,
     require_tool_call: bool = True,
     extra_context: Optional[str] = None,
+    improvements: Optional[Sequence[str]] = None,
     on_model_used: Optional[Callable[[str, bool], None]] = None,
     on_usage: Optional[Callable[[int, int], None]] = None,
 ) -> ResumeOutputFormat:
@@ -503,6 +533,8 @@ async def generate(
         extra_context: Authoritative facts (current date, computed years of
             experience, spoken languages) appended to the prompt so the model
             stays consistent with the user's stored data.
+        improvements: change requests from a review of a previous draft,
+            appended to the prompt (see `improvements_block`).
         on_model_used: called with (model_string, fallback_used) once the run
             succeeds, so callers can record what actually served the request.
         on_usage: called with (input_tokens, output_tokens) once the run
@@ -520,6 +552,10 @@ async def generate(
     logger.info("Generation start user=%s model=%s fallback=%s jd_chars=%d",
                 user_id, primary, fallback, len(jd or ""))
     prompt = jd if not extra_context else f"{jd}\n\n{extra_context}"
+    block = improvements_block(improvements)
+    if block:
+        prompt = f"{prompt}\n\n{block}"
+        logger.info("Generation carries %d improvement request(s) user=%s", block.count("\n- "), user_id)
     result = await _run_with_fallback(
         generation_agent, prompt,
         primary=primary, fallback=fallback, on_model_used=on_model_used, deps=deps,

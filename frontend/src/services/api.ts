@@ -45,6 +45,9 @@ interface ResumeRequestPayload {
   job_description: string;
   format: string;
   include_profile_picture?: boolean;
+  /** Change requests from a review (see `ResumeAnalysis.review.recommendations`)
+   * to apply on a regeneration. Bypasses the result cache when non-empty. */
+  improvements?: string[];
 }
 
 export async function uploadJobsJson(userId: string, jobs: Array<{ type: string; company: string; description: string; role?: string; location?: string; start_date?: string; end_date?: string }>) {
@@ -84,6 +87,91 @@ export async function generateResume(userId: string, payload: ResumeRequestPaylo
     data.files = { pdf: fix(data.files.pdf), source: fix(data.files.source) };
   }
   return data;
+}
+
+export type AnalysisIssueKind = 'no_action_verbs' | 'vague_language' | 'few_bullets';
+export type AnalysisSection = 'summary' | 'experience' | 'skills' | 'education' | 'languages' | 'keywords' | 'formatting' | 'general';
+export type AnalysisSeverity = 'high' | 'medium' | 'low';
+
+export interface AnalysisIssue {
+  experience_index: number;
+  kind: AnalysisIssueKind;
+  detail: string;
+}
+
+export interface ATSAnalysis {
+  /** 0-100 */
+  score: number;
+  /** Percent of job-description keywords found in the resume, 0-100 */
+  keyword_coverage: number;
+  matched_keywords: string[];
+  missing_keywords: string[];
+  issues: AnalysisIssue[];
+}
+
+export interface AnalysisRecommendation {
+  section: AnalysisSection;
+  severity: AnalysisSeverity;
+  issue: string;
+  suggestion: string;
+  experience_index: number | null;
+}
+
+export interface ReviewAnalysis {
+  summary: string;
+  strengths: string[];
+  recommendations: AnalysisRecommendation[];
+  keywords_to_add: string[];
+  /** All 0-100 */
+  scores: { overall: number; relevance: number; quality: number; coherence: number };
+}
+
+/** Response of `POST /resume/analyze-resume/{user_id}`. `ats` is always
+ * present (offline keyword scan); `review` is null when the LLM reviewer
+ * failed, with `review_error` saying why. */
+export interface ResumeAnalysis {
+  ats: ATSAnalysis;
+  review: ReviewAnalysis | null;
+  review_error: string | null;
+  model: string | null;
+}
+
+export interface ResumeAnalysisPayload {
+  job_description: string;
+  /** The `result` object returned by generation (a ResumeOutputFormat). */
+  resume: any;
+  /** UI language code the recommendations should be written in. */
+  language?: string;
+}
+
+export async function analyzeResume(userId: string, payload: ResumeAnalysisPayload): Promise<ResumeAnalysis> {
+  const res = await fetch(`${API_BASE}/analyze-resume/${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return _jsonOrThrow(res, 'Analysis failed');
+}
+
+/** Analysis of an existing resume PDF: the same scores as `analyzeResume`,
+ * plus the parsed resume they were computed on and the parser's warnings. */
+export interface PdfResumeAnalysis extends ResumeAnalysis {
+  resume: any;
+  warnings: string[];
+}
+
+export async function analyzeResumePdf(
+  userId: string, file: File, jobDescription: string, language?: string
+): Promise<PdfResumeAnalysis> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('job_description', jobDescription);
+  if (language) form.append('language', language);
+  const res = await fetch(`${API_BASE}/analyze-resume-pdf/${encodeURIComponent(userId)}`, {
+    method: 'POST',
+    body: form,
+  });
+  return _jsonOrThrow(res, 'Analysis failed');
 }
 
 /** One Server-Sent Events frame: the optional `event:` line's value, and the
@@ -203,6 +291,16 @@ export interface AdminStats {
   recent_requests: Array<{ user_id: string; job_posting_preview: string; created_at: string }>;
   recent_errors: Array<{ created_at: string; user_id: string; model: string; format: string; status: string; error: string }>;
   donations: { by_currency: Array<{ currency: string; count: number; total_amount: number }> };
+  /** ATS / reviewer score aggregates over the window (see backend
+   * `DBStorage._analysis_stats`). Optional: older backends don't send it. */
+  analyses?: {
+    count: number;
+    avg_ats: number | null;
+    avg_review: number | null;
+    reviewed: number;
+    imported: number;
+    by_generation_model: Array<{ model: string; count: number; avg_ats: number | null; avg_review: number | null }>;
+  };
 }
 
 export async function fetchAdminStats(idToken: string, days = 30): Promise<AdminStats> {

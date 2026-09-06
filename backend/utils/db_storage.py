@@ -222,6 +222,11 @@ async def close_async_db_pool():
 def get_async_pool() -> Optional[AsyncConnectionPool]:
     return _async_pool
 
+_EMPTY_ANALYSES_STATS: Dict[str, Any] = {
+    "count": 0, "avg_ats": None, "avg_review": None, "reviewed": 0, "imported": 0, "by_generation_model": [],
+}
+
+
 class DBStorage:
     """
     Utility class to manage file and cache storage in Postgres.
@@ -358,6 +363,25 @@ class DBStorage:
                     """)
                     cur.execute("ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS requested_model TEXT;")
                     cur.execute("ALTER TABLE generation_events ADD COLUMN IF NOT EXISTS fallback_used BOOLEAN NOT NULL DEFAULT FALSE;")
+
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS resume_analyses (
+                            id BIGSERIAL PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            source TEXT NOT NULL DEFAULT 'generated',
+                            generation_model TEXT,
+                            review_model TEXT,
+                            ats_score INTEGER,
+                            keyword_coverage INTEGER,
+                            review_overall INTEGER,
+                            review_relevance INTEGER,
+                            review_quality INTEGER,
+                            review_coherence INTEGER,
+                            review_error TEXT,
+                            duration_ms INTEGER,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                    """)
 
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS app_settings (
@@ -866,6 +890,58 @@ class DBStorage:
             self.logger.exception("Failed to insert resume request: %s", e)
             raise
 
+    def get_latest_generation_model(self, user_id: str) -> Optional[str]:
+        """Model that served the user's most recent successful generation --
+        what a resume analysis is attributed to (see `record_resume_analysis`)."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT model FROM generation_events
+                    WHERE user_id = %s AND status = 'success'
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (user_id,),
+                )
+                row = cur.fetchone()
+        return (row[0] or None) if row else None
+
+    def record_resume_analysis(
+        self,
+        user_id: str,
+        source: str = "generated",
+        generation_model: Optional[str] = None,
+        review_model: Optional[str] = None,
+        ats_score: Optional[int] = None,
+        keyword_coverage: Optional[int] = None,
+        review_overall: Optional[int] = None,
+        review_relevance: Optional[int] = None,
+        review_quality: Optional[int] = None,
+        review_coherence: Optional[int] = None,
+        review_error: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+    ):
+        """Insert one row per ATS/review analysis (admin dashboard: average
+        scores overall and per generation model). `source` is 'generated' for
+        a resume this app produced, 'imported' for an uploaded PDF."""
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO resume_analyses
+                        (user_id, source, generation_model, review_model, ats_score, keyword_coverage,
+                         review_overall, review_relevance, review_quality, review_coherence,
+                         review_error, duration_ms)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (user_id, source, generation_model, review_model, ats_score, keyword_coverage,
+                     review_overall, review_relevance, review_quality, review_coherence,
+                     (review_error or None) and str(review_error)[:2000], duration_ms),
+                )
+        self.logger.info(
+            "Recorded resume analysis user=%s source=%s ats=%s review=%s", user_id, source, ats_score, review_overall
+        )
+
     def record_generation_event(
         self,
         user_id: str,
@@ -1114,6 +1190,51 @@ class DBStorage:
             for r in rows
         ]
 
+    @staticmethod
+    def _analysis_stats(cur, days: int) -> Dict[str, Any]:
+        """ATS / reviewer score aggregates from `resume_analyses` for the last
+        `days` days: totals plus a breakdown by the generation model the
+        analysed resume came from ('(imported)' for uploaded PDFs)."""
+        def _pct(value) -> Optional[int]:
+            return None if value is None else int(round(float(value)))
+
+        cur.execute(
+            """
+            SELECT COUNT(*),
+                   AVG(ats_score),
+                   AVG(review_overall),
+                   COUNT(review_overall),
+                   COUNT(*) FILTER (WHERE source = 'imported')
+            FROM resume_analyses
+            WHERE created_at >= CURRENT_DATE - %s::int
+            """,
+            (days,),
+        )
+        row = tuple(cur.fetchone() or ())
+        row = row + (None,) * (5 - len(row))
+        result: Dict[str, Any] = {
+            "count": int(row[0] or 0),
+            "avg_ats": _pct(row[1]),
+            "avg_review": _pct(row[2]),
+            "reviewed": int(row[3] or 0),
+            "imported": int(row[4] or 0),
+            "by_generation_model": [],
+        }
+        cur.execute(
+            """
+            SELECT COALESCE(generation_model, '(imported)'), COUNT(*), AVG(ats_score), AVG(review_overall)
+            FROM resume_analyses
+            WHERE created_at >= CURRENT_DATE - %s::int
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 20
+            """,
+            (days,),
+        )
+        result["by_generation_model"] = [
+            {"model": r[0], "count": int(r[1] or 0), "avg_ats": _pct(r[2]), "avg_review": _pct(r[3])}
+            for r in cur.fetchall()
+        ]
+        return result
+
     def get_admin_stats(self, days: int = 30) -> Dict[str, Any]:
         """Aggregate statistics about stored resumes for the admin dashboard."""
         stats: Dict[str, Any] = {
@@ -1133,6 +1254,7 @@ class DBStorage:
             "recent_requests": [],
             "recent_errors": [],
             "donations": {},
+            "analyses": _EMPTY_ANALYSES_STATS.copy(),
         }
         with self._get_conn() as conn:
             with conn.cursor() as cur:
@@ -1375,6 +1497,12 @@ class DBStorage:
                 except Exception:
                     self.logger.exception("Failed to compute top_keywords")
                     stats["top_keywords"] = []
+
+                try:
+                    stats["analyses"] = self._analysis_stats(cur, days)
+                except Exception:
+                    self.logger.exception("Failed to compute resume analysis stats")
+                    stats["analyses"] = _EMPTY_ANALYSES_STATS.copy()
 
                 try:
                     cur.execute(

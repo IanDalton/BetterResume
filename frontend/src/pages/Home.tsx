@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages } from '../services';
+import { analyzeResume, type ResumeAnalysis } from '../services/api';
+import { ResumeAnalysisPanel, type PreviousScores } from '../components/ResumeAnalysisPanel';
+import { ExistingResumeAnalyzer } from '../components/ExistingResumeAnalyzer';
 import { EXPERIENCE_TYPES, LanguageEntry, ResumeEntry, UserProfile, emptyProfile } from '../types';
 import { ProfileEditor } from '../components/entries';
 import { SaveStatus } from '../components/entries/SaveStatusIndicator';
@@ -46,6 +49,15 @@ export function Home() {
   const userId = user?.uid || guestId;
   const [loading, setLoading] = useState(false);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
+  // The generated resume JSON (ResumeOutputFormat) behind `downloadLinks`; the
+  // ATS analysis endpoint takes it back rather than re-reading the render cache.
+  const [lastResult, setLastResult] = useState<any>(null);
+  const [analysis, setAnalysis] = useState<ResumeAnalysis | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  // Scores of the analysis whose recommendations were just applied, shown as
+  // a delta on the next analysis; cleared by a plain regeneration.
+  const [previousScores, setPreviousScores] = useState<PreviousScores | null>(null);
+  const [applyingImprovements, setApplyingImprovements] = useState(false);
   const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
   const [jobDescription, setJobDescription] = useState(() => {
     try { return localStorage.getItem('br.jobDescription') || ''; } catch { return ''; }
@@ -288,7 +300,7 @@ export function Home() {
     genAbortRef.current?.abort();
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (improvements?: string[]) => {
     const abortController = new AbortController();
     genAbortRef.current = abortController;
     try {
@@ -302,13 +314,17 @@ export function Home() {
       setProgress([]);
   // Clear previous outputs so UI doesn't show outdated preview while regenerating
   setDownloadLinks(null);
+  setLastResult(null);
+  setAnalysis(null);
+  setApplyingImprovements(!!improvements?.length);
   setShowGenModal(true);
       // First upload latest entries as jobs.csv (silent: no alert)
       await performUpload();
       const res = await generateResumeStream(userId, {
         job_description: jobDescription,
         format,
-        include_profile_picture: includeProfilePicture && !!profilePictureUrl
+        include_profile_picture: includeProfilePicture && !!profilePictureUrl,
+        ...(improvements?.length ? { improvements } : {}),
       }, evt => {
         if (!firstEventAt) {
           setFirstEventAt(Date.now());
@@ -323,6 +339,7 @@ export function Home() {
         }
       }, abortController.signal);
       if (res.files) setDownloadLinks(res.files);
+      setLastResult(res.result ?? null);
       try {
         const dur = genStartAt ? (Date.now() - genStartAt) : undefined;
         const first = genStartAt && firstEventAt ? (firstEventAt - genStartAt) : undefined;
@@ -341,7 +358,31 @@ export function Home() {
     } finally {
       genAbortRef.current = null;
       setLoading(false);
+      setApplyingImprovements(false);
   setTimeout(()=> setShowGenModal(false), 600); // slight delay for UX
+    }
+  };
+
+  const handleApplyImprovements = async (improvements: string[]) => {
+    if (!improvements.length) return;
+    setPreviousScores(analysis ? { ats: analysis.ats.score, review: analysis.review?.scores.overall ?? null } : null);
+    try { trackEvent('resume_apply_improvements', { count: improvements.length }); } catch {}
+    await handleGenerate(improvements);
+  };
+
+  const handleAnalyze = async () => {
+    if (!lastResult || !jobDescription) return;
+    setAnalyzing(true);
+    try { trackEvent('resume_analyze_start', {}); } catch {}
+    try {
+      const result = await analyzeResume(userId, { job_description: jobDescription, resume: lastResult, language: lang });
+      setAnalysis(result);
+      try { trackEvent('resume_analyze_success', { ats: result.ats.score, review: !!result.review }); } catch {}
+    } catch (e: any) {
+      try { trackEvent('resume_analyze_error', { message: e?.message || 'error' }); } catch {}
+      toast({ title: e?.message || t('analysis.error'), variant: 'error' });
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -536,8 +577,9 @@ export function Home() {
         <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
   <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
         <div className="flex flex-wrap items-center gap-3">
-          <Button size="sm" loading={loading} disabled={!jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</Button>
+          <Button size="sm" loading={loading} disabled={!jobDescription || !hasPersonalBasics || !hasExperience} onClick={() => { setPreviousScores(null); handleGenerate(); }}>{t('generate.resume')}</Button>
         </div>
+        <ExistingResumeAnalyzer userId={userId} jobDescription={jobDescription} />
         {!loading && (!hasPersonalBasics || !hasExperience || !jobDescription) && (
           <p className="text-xs text-red-500">
             {!hasPersonalBasics ? t('validation.personal') : !hasExperience ? t('validation.experience') : t('validation.jobDescription')}
@@ -572,6 +614,35 @@ export function Home() {
             <Button variant="secondary" loading={downloading==='source'} onClick={()=>handleDownload('source')}>{downloading==='source' ? t('download.preparing') : t('download.source')}</Button>
           )}
         </div>
+        {lastResult && (
+          <div className="pt-4 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">{t('analysis.title')}</h3>
+                <p className="text-sm text-neutral-600 dark:text-neutral-400">{t('analysis.intro')}</p>
+              </div>
+              <Button
+                variant={analysis ? 'secondary' : 'primary'}
+                size="sm"
+                loading={analyzing}
+                disabled={analyzing || !jobDescription}
+                onClick={handleAnalyze}
+              >
+                {analyzing ? t('analysis.running') : analysis ? t('analysis.rerun') : t('analysis.cta')}
+              </Button>
+            </div>
+            {applyingImprovements && <p className="text-xs text-neutral-500">{t('analysis.apply.running')}</p>}
+            {analysis && (
+              <ResumeAnalysisPanel
+                analysis={analysis}
+                resume={lastResult}
+                onApplyImprovements={handleApplyImprovements}
+                applying={loading}
+                previousScores={previousScores}
+              />
+            )}
+          </div>
+        )}
       </section>
     )}
     <Dialog

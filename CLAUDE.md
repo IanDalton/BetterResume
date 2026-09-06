@@ -56,6 +56,9 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 - `llm/model_routing.py` — the OpenRouter routing demands we send (`require_parameters`, reasoning disabled, forced `tool_choice`) disqualify many capable models; a rejected request is retried with one demand dropped and the concession remembered, so those models work instead of failing every request
 - `llm/model_probe.py` — one minimal request against a model in the production shape, run before the dashboard stores it. The OpenRouter catalog advertises capabilities individual endpoints don't honour, so this is the only reliable way to know whether a model works, works with a routing concession, or not at all.
 - `llm/agent.py` — module-level pydantic-ai Agents (`generation_agent` with tools, `translation_agent` without) plus `generate()`/`translate()` entry functions; retrieval forcing via output validator (`ModelRetry`)
+- `llm/reviewer.py` — `review_agent` + `review()`: user-facing LLM review of a generated resume against its job description (1-10 relevance/quality/coherence, strengths, concrete recommendations per section, keywords worth adding), written in the UI language. Runs on the `judge` task model so a resume is never graded by the model that wrote it; prompt in `prompts/review_prompt.txt`
+- `llm/resume_analysis.py` — `analyze_resume()`: the offline `ATSEvaluator` score (0-100, keyword coverage, structured formatting issues) plus the review above, combined into one `ResumeAnalysis`. A failed review still returns the ATS part with `review_error` set. Served by `POST /resume/analyze-resume/{user_id}` (takes the generation `result` back from the client, stateless) and `POST /resume/analyze-resume-pdf/{user_id}` (an uploaded resume PDF, parsed by the import pipeline and mapped through `utils/imported_resume.py`). Every analysis is persisted to `resume_analyses` (attributed to the user's latest generation model, or `imported`) for the admin Stats tab
+- "Apply improvements": `ResumeRequest.improvements` carries the review recommendations the user ticked into a regeneration; `llm/agent.py::improvements_block` appends them to the generation prompt and `api/utils.py::_build_result_signature` folds them into the result-cache key so the regeneration is never served from cache
 - `llm/vector_store.py` — `PGVectorStore`: pgvector-backed semantic store
 - `llm/embeddings.py` — `EmbeddingClient`: httpx client for the OpenAI-compatible TEI embedding service
 - `llm/openrouter_catalog.py` — OpenRouter model catalog client (tool-capable models with pricing)
@@ -89,7 +92,7 @@ BetterResume generates ATS-optimized resumes tailored to job descriptions using 
 **Auth:** Firebase authentication via `AuthGate` component wrapping all protected routes. Firebase config lives in `src/services/firebase.ts`.
 
 **Key pages/components:**
-- `Home` — main UI triggering resume generation
+- `Home` — main UI triggering resume generation; after a generation, an "ATS analysis" card under the preview calls `analyzeResume` and renders `components/ResumeAnalysisPanel` (ATS + reviewer scores, keyword chips, formatting checks, recommendations with checkboxes and an "Apply N and regenerate" button that re-runs generation with `improvements`, showing score deltas on the next analysis). `components/ExistingResumeAnalyzer` under the job-description box scores an uploaded PDF via `analyzeResumePdf` without generating
 - `ProfileEditor` / Entry sections (`PersonalInfoSection`, `ExperienceSection`, `EducationSection`, `LanguagesSection`) — unified data-entry flow
 - `ResumeImportDialog` — resume parsing and LinkedIn PDF import
 - `Donate` — Stripe payment flow (embedded checkout)
