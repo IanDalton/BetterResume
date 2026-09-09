@@ -1,168 +1,30 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { resolveProfilePictureUrl, uploadProfilePicture } from '../services';
-import { Button } from './ui';
+import { Button, Dialog } from './ui';
+import {
+  EDITOR_SIZE, MAX_ZOOM, MIN_ZOOM, calculatePlacement, clamp, createEditorState, exportEditedImage,
+  zoomAroundAnchor, type EditorState, type ProfileShape,
+} from './profilePicture/cropMath';
 
 interface ProfilePictureUploaderProps {
   userId: string;
-  include: boolean;
-  onIncludeChange: (value: boolean) => void;
   imageUrl: string | null;
   onUploaded: (url: string | null) => void;
 }
 
-type ProfileShape = 'square' | 'circle';
+const THUMBNAIL_SIZE = 112;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
-interface EditorState {
-  dataUrl: string;
-  width: number;
-  height: number;
-}
-
-interface Placement {
-  drawWidth: number;
-  drawHeight: number;
-  dx: number;
-  dy: number;
-  maxShiftX: number;
-  maxShiftY: number;
-  offsetX: number;
-  offsetY: number;
-}
-
-const THUMBNAIL_SIZE = 128;
-const EDITOR_SIZE = 320;
-const EXPORT_SIZE = 512;
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function calculatePlacement(
-  imageWidth: number,
-  imageHeight: number,
-  targetSize: number,
-  zoom: number,
-  offsetX: number,
-  offsetY: number
-): Placement {
-  const baseScale = Math.max(targetSize / imageWidth, targetSize / imageHeight);
-  const scale = baseScale * zoom;
-  const drawWidth = imageWidth * scale;
-  const drawHeight = imageHeight * scale;
-  const maxShiftX = Math.max(0, (drawWidth - targetSize) / 2);
-  const maxShiftY = Math.max(0, (drawHeight - targetSize) / 2);
-  const clampedOffsetX = clamp(offsetX, -maxShiftX, maxShiftX);
-  const clampedOffsetY = clamp(offsetY, -maxShiftY, maxShiftY);
-  const dx = (targetSize - drawWidth) / 2 + clampedOffsetX;
-  const dy = (targetSize - drawHeight) / 2 + clampedOffsetY;
-  return {
-    drawWidth,
-    drawHeight,
-    dx,
-    dy,
-    maxShiftX,
-    maxShiftY,
-    offsetX: clampedOffsetX,
-    offsetY: clampedOffsetY,
-  };
-}
-
-async function loadImageFromDataUrl(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Failed to load image'));
-    img.src = src;
-  });
-}
-
-async function createEditorState(file: File): Promise<EditorState> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-        const img = await loadImageFromDataUrl(dataUrl);
-        resolve({ dataUrl, width: img.width, height: img.height });
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = () => reject(new Error('Failed to read image file'));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function exportEditedImage(
-  editor: EditorState,
-  shape: ProfileShape,
-  zoom: number,
-  offsetX: number,
-  offsetY: number
-): Promise<File> {
-  const img = await loadImageFromDataUrl(editor.dataUrl);
-  const canvas = document.createElement('canvas');
-  canvas.width = EXPORT_SIZE;
-  canvas.height = EXPORT_SIZE;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas not supported');
-
-  ctx.clearRect(0, 0, EXPORT_SIZE, EXPORT_SIZE);
-  if (shape === 'circle') {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(EXPORT_SIZE / 2, EXPORT_SIZE / 2, EXPORT_SIZE / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, EXPORT_SIZE, EXPORT_SIZE);
-  } else {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, EXPORT_SIZE, EXPORT_SIZE);
-  }
-
-  const offsetScale = EXPORT_SIZE / EDITOR_SIZE;
-  const placement = calculatePlacement(
-    img.width,
-    img.height,
-    EXPORT_SIZE,
-    zoom,
-    offsetX * offsetScale,
-    offsetY * offsetScale
-  );
-  ctx.drawImage(img, placement.dx, placement.dy, placement.drawWidth, placement.drawHeight);
-  if (shape === 'circle') {
-    ctx.restore();
-  }
-
-  return new Promise<File>((resolve, reject) => {
-    canvas.toBlob(blob => {
-      if (!blob) {
-        reject(new Error('Failed to prepare image'));
-        return;
-      }
-      const outputFile = new File([blob], 'profile.png', { type: 'image/png' });
-      resolve(outputFile);
-    }, 'image/png');
-  });
-}
-
-export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
-  userId,
-  include,
-  onIncludeChange,
-  imageUrl,
-  onUploaded,
-}) => {
+/** Profile photo card (one more card in the profile block) plus the crop dialog. */
+export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({ userId, imageUrl, onUploaded }) => {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const cropAreaRef = useRef<HTMLDivElement | null>(null);
   const pointerPositions = useRef<Map<number, { x: number; y: number }>>(new Map());
   const placementRef = useRef({ offsetX: 0, offsetY: 0, zoom: 1 });
 
   const [uploading, setUploading] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [zoom, setZoom] = useState(1);
   const [offsetX, setOffsetX] = useState(0);
@@ -203,8 +65,8 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setStatus(t('profile.error.size'));
+    if (file.size > MAX_FILE_BYTES) {
+      setStatus({ tone: 'error', text: t('profile.error.size') });
       event.target.value = '';
       return;
     }
@@ -214,9 +76,8 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
       setEditor(prepared);
       resetPlacement();
       setShape('square');
-    } catch (error: any) {
-      const message = error instanceof Error && error.message ? error.message : t('profile.upload.error');
-      setStatus(message);
+    } catch {
+      setStatus({ tone: 'error', text: t('profile.upload.error') });
       setEditor(null);
     } finally {
       event.target.value = '';
@@ -226,57 +87,12 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
   const applyZoom = useCallback(
     (targetZoom: number, anchor?: { x: number; y: number }) => {
       if (!editor) return;
-      const nextZoom = clamp(targetZoom, 1, 3);
-      const prev = placementRef.current;
-      if (prev.zoom === nextZoom) {
-        return;
-      }
-
-      const anchorX = clamp(anchor?.x ?? EDITOR_SIZE / 2, 0, EDITOR_SIZE);
-      const anchorY = clamp(anchor?.y ?? EDITOR_SIZE / 2, 0, EDITOR_SIZE);
-
-      const prevPlacement = calculatePlacement(
-        editor.width,
-        editor.height,
-        EDITOR_SIZE,
-        prev.zoom,
-        prev.offsetX,
-        prev.offsetY
-      );
-
-      const originX = prevPlacement.drawWidth
-        ? clamp((anchorX - prevPlacement.dx) / prevPlacement.drawWidth, 0, 1)
-        : 0.5;
-      const originY = prevPlacement.drawHeight
-        ? clamp((anchorY - prevPlacement.dy) / prevPlacement.drawHeight, 0, 1)
-        : 0.5;
-
-      const baseScale = Math.max(EDITOR_SIZE / editor.width, EDITOR_SIZE / editor.height);
-      const nextDrawWidth = editor.width * baseScale * nextZoom;
-      const nextDrawHeight = editor.height * baseScale * nextZoom;
-
-      const desiredOffsetX =
-        anchorX - (EDITOR_SIZE - nextDrawWidth) / 2 - originX * nextDrawWidth;
-      const desiredOffsetY =
-        anchorY - (EDITOR_SIZE - nextDrawHeight) / 2 - originY * nextDrawHeight;
-
-      const nextPlacement = calculatePlacement(
-        editor.width,
-        editor.height,
-        EDITOR_SIZE,
-        nextZoom,
-        desiredOffsetX,
-        desiredOffsetY
-      );
-
-      placementRef.current = {
-        offsetX: nextPlacement.offsetX,
-        offsetY: nextPlacement.offsetY,
-        zoom: nextZoom,
-      };
-      setOffsetX(nextPlacement.offsetX);
-      setOffsetY(nextPlacement.offsetY);
-      setZoom(nextZoom);
+      const next = zoomAroundAnchor(editor, placementRef.current, targetZoom, anchor);
+      if (next === placementRef.current) return;
+      placementRef.current = next;
+      setOffsetX(next.offsetX);
+      setOffsetY(next.offsetY);
+      setZoom(next.zoom);
     },
     [editor]
   );
@@ -359,16 +175,8 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
     event.preventDefault();
     const deltaX = event.clientX - dragState.startX;
     const deltaY = event.clientY - dragState.startY;
-    const nextOffsetX = clamp(
-      dragState.baseOffsetX + deltaX,
-      -editorPlacement.maxShiftX,
-      editorPlacement.maxShiftX
-    );
-    const nextOffsetY = clamp(
-      dragState.baseOffsetY + deltaY,
-      -editorPlacement.maxShiftY,
-      editorPlacement.maxShiftY
-    );
+    const nextOffsetX = clamp(dragState.baseOffsetX + deltaX, -editorPlacement.maxShiftX, editorPlacement.maxShiftX);
+    const nextOffsetY = clamp(dragState.baseOffsetY + deltaY, -editorPlacement.maxShiftY, editorPlacement.maxShiftY);
     placementRef.current = { ...placementRef.current, offsetX: nextOffsetX, offsetY: nextOffsetY };
     setOffsetX(nextOffsetX);
     setOffsetY(nextOffsetY);
@@ -423,55 +231,36 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
       const processedFile = await exportEditedImage(editor, shape, zoom, offsetX, offsetY);
       await uploadProfilePicture(userId, processedFile);
       const refreshedUrl = await resolveProfilePictureUrl(userId);
-      if (!refreshedUrl) {
-        throw new Error(t('profile.upload.refreshError'));
-      }
-      setStatus(t('profile.upload.success'));
+      if (!refreshedUrl) throw new Error('refresh failed');
+      setStatus({ tone: 'success', text: t('profile.upload.success') });
       setEditor(null);
       resetPlacement();
       onUploaded(refreshedUrl);
-    } catch (error: any) {
-      const message = error instanceof Error && error.message ? error.message : t('profile.upload.error');
-      setStatus(message);
+    } catch {
+      setStatus({ tone: 'error', text: t('profile.upload.error') });
     } finally {
       setUploading(false);
     }
   };
 
   const handleCancel = useCallback(() => {
+    if (uploading) return;
     setEditor(null);
     resetPlacement();
-  }, [resetPlacement]);
+  }, [resetPlacement, uploading]);
 
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        handleCancel();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [editor, handleCancel]);
-
-  const successMessage = t('profile.upload.success');
-  const statusTone = status ? (status === successMessage ? 'success' : 'error') : null;
+  const cropRadius = shape === 'circle' ? 'rounded-full' : 'rounded-xl';
 
   return (
-    <section className="mb-10">
-      <h2 className="text-xl font-semibold mb-4">{t('profile.section.title')}</h2>
+    <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="mb-3">
+        <h3 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">{t('profile.section.title')}</h3>
+        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{t('profile.section.hint')}</p>
+      </div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <div className="flex flex-col items-center gap-3">
           <div
-            className="relative flex items-center justify-center overflow-hidden rounded-lg border border-neutral-300 bg-neutral-100 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400"
+            className="relative flex items-center justify-center overflow-hidden rounded-lg border border-neutral-300 bg-neutral-100 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-400"
             style={{ width: THUMBNAIL_SIZE, height: THUMBNAIL_SIZE }}
           >
             {imageUrl ? (
@@ -486,31 +275,13 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         </div>
         <div className="flex-1 space-y-2 text-sm text-neutral-600 dark:text-neutral-300">
           <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.upload.hint')}</p>
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={include && !!imageUrl}
-              onChange={e => onIncludeChange(e.target.checked)}
-              disabled={!imageUrl}
-            />
-            <span className={!imageUrl ? 'text-neutral-400 dark:text-neutral-600' : ''}>{t('profile.toggle')}</span>
-          </label>
-          <p className="text-[10px] text-amber-600 dark:text-amber-500 italic max-w-xs leading-tight">
-            {t('profile.warning')}
-          </p>
-          {!imageUrl && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-500">{t('profile.toggle.disabled')}</p>
-          )}
+          <p className="max-w-md text-xs text-amber-700 dark:text-amber-400">{t('profile.warning')}</p>
           {status && !editor && (
             <p
-              className={`text-xs ${
-                statusTone === 'success'
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-red-500 dark:text-red-400'
-              }`}
+              role={status.tone === 'error' ? 'alert' : undefined}
+              className={`text-xs ${status.tone === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}
             >
-              {status}
+              {status.text}
             </p>
           )}
         </div>
@@ -523,183 +294,118 @@ export const ProfilePictureUploader: React.FC<ProfilePictureUploaderProps> = ({
         onChange={handleFileChange}
       />
 
-      {editor && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8"
-          onClick={handleCancel}
-        >
-          <div
-            className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
-            onClick={event => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-neutral-200 px-6 py-4 dark:border-neutral-800">
-              <div>
-                <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-                  {t('profile.editing.modalTitle')}
-                </h3>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.subtitle')}</p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCancel}
-                className="rounded-full p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 focus:outline-none focus:ring-2 focus:ring-red-500 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
-                aria-label={t('profile.editing.cancel')}
-              >
-                <span className="block h-4 w-4">×</span>
-              </button>
-            </div>
-            <div className="flex flex-col gap-6 px-6 py-6">
-              <div className="flex flex-col items-center gap-4">
-                <div className="relative" style={{ width: EDITOR_SIZE, height: EDITOR_SIZE }}>
-                  <div
-                    ref={cropAreaRef}
-                    className={`relative h-full w-full overflow-hidden bg-neutral-900/80 ${
-                      shape === 'circle' ? 'rounded-full' : 'rounded-[28px]'
-                    }`}
-                    style={{
-                      cursor: isDragging ? 'grabbing' : 'grab',
-                      touchAction: 'none',
-                    }}
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={endPointerInteraction}
-                    onPointerCancel={endPointerInteraction}
-                    onPointerLeave={endPointerInteraction}
-                    onWheel={handleWheel}
-                  >
-                    {editorPlacement && (
-                      <img
-                        src={editor.dataUrl}
-                        alt={t('profile.section.title')}
-                        className="pointer-events-none select-none"
-                        style={{
-                          position: 'absolute',
-                          width: editorPlacement.drawWidth,
-                          height: editorPlacement.drawHeight,
-                          left: editorPlacement.dx,
-                          top: editorPlacement.dy,
-                        }}
-                      />
-                    )}
-                  </div>
-                  <div
-                    className={`pointer-events-none absolute inset-0 ${
-                      shape === 'circle' ? 'rounded-full' : 'rounded-[28px]'
-                    }`}
-                    style={{ boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)' }}
-                  />
-                  <div
-                    className={`pointer-events-none absolute inset-0 border border-white/80 ${
-                      shape === 'circle' ? 'rounded-full' : 'rounded-[28px]'
-                    }`}
-                  />
-                </div>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.gestureHint')}</p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center gap-3 text-xs text-neutral-600 dark:text-neutral-300">
-                    <span className="font-medium uppercase tracking-wide text-[11px]">
-                      {t('profile.editing.zoom')}
-                    </span>
-                    <button
-                      type="button"
-                      className="rounded-full border border-neutral-200 px-2 py-1 text-sm font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
-                      onClick={() => applyZoom(placementRef.current.zoom - 0.05, {
-                        x: EDITOR_SIZE / 2,
-                        y: EDITOR_SIZE / 2,
-                      })}
-                      disabled={placementRef.current.zoom <= 1}
-                      aria-label={t('profile.editing.zoomOut')}
-                    >
-                      −
-                    </button>
-                    <input
-                      type="range"
-                      min={100}
-                      max={300}
-                      step={1}
-                      value={Math.round(zoom * 100)}
-                      onChange={event => applyZoom(Number(event.target.value) / 100, {
-                        x: EDITOR_SIZE / 2,
-                        y: EDITOR_SIZE / 2,
-                      })}
-                      className="flex-1 accent-red-500"
+      <Dialog
+        open={!!editor}
+        onOpenChange={(open) => { if (!open) handleCancel(); }}
+        size="lg"
+        title={t('profile.editing.modalTitle')}
+        description={t('profile.editing.subtitle')}
+        footer={
+          <>
+            <Button type="button" variant="secondary" onClick={handleCancel} disabled={uploading}>
+              {t('profile.editing.cancel')}
+            </Button>
+            <Button type="button" loading={uploading} onClick={handleUpload}>
+              {uploading ? t('profile.uploading') : t('profile.editing.save')}
+            </Button>
+          </>
+        }
+      >
+        {editor && (
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative max-w-full" style={{ width: EDITOR_SIZE, height: EDITOR_SIZE }}>
+                <div
+                  className={`relative h-full w-full overflow-hidden bg-neutral-900/80 ${cropRadius}`}
+                  style={{
+                    cursor: isDragging ? 'grabbing' : 'grab',
+                    touchAction: 'none',
+                  }}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={endPointerInteraction}
+                  onPointerCancel={endPointerInteraction}
+                  onPointerLeave={endPointerInteraction}
+                  onWheel={handleWheel}
+                >
+                  {editorPlacement && (
+                    <img
+                      src={editor.dataUrl}
+                      alt={t('profile.section.title')}
+                      className="pointer-events-none select-none max-w-none"
+                      style={{
+                        position: 'absolute',
+                        width: editorPlacement.drawWidth,
+                        height: editorPlacement.drawHeight,
+                        left: editorPlacement.dx,
+                        top: editorPlacement.dy,
+                      }}
                     />
-                    <button
-                      type="button"
-                      className="rounded-full border border-neutral-200 px-2 py-1 text-sm font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
-                      onClick={() => applyZoom(placementRef.current.zoom + 0.05, {
-                        x: EDITOR_SIZE / 2,
-                        y: EDITOR_SIZE / 2,
-                      })}
-                      disabled={placementRef.current.zoom >= 3}
-                      aria-label={t('profile.editing.zoomIn')}
-                    >
-                      +
-                    </button>
-                    <span className="w-12 text-right text-[11px] text-neutral-500 dark:text-neutral-400">
-                      {Math.round(zoom * 100)}%
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
-                    <span className="font-medium uppercase tracking-wide text-[11px]">
-                      {t('profile.editing.shapeLabel')}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      size="xs"
-                      className={shape === 'square' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''}
-                      onClick={() => setShape('square')}
-                    >
-                      {t('profile.shape.square')}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="tertiary"
-                      size="xs"
-                      className={shape === 'circle' ? 'border border-red-500 text-red-600 dark:border-red-400 dark:text-red-300' : ''}
-                      onClick={() => setShape('circle')}
-                    >
-                      {t('profile.shape.circle')}
-                    </Button>
-                    <div className="ml-auto">
-                      <Button type="button" variant="tertiary" size="xs" onClick={resetPlacement}>
-                        {t('profile.editing.reset')}
-                      </Button>
-                    </div>
-                  </div>
+                  )}
                 </div>
-                {status && statusTone === 'error' && (
-                  <p className="text-xs text-red-500 dark:text-red-400">{status}</p>
-                )}
+                <div className={`pointer-events-none absolute inset-0 border border-white/80 ${cropRadius}`} />
               </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.editing.gestureHint')}</p>
+            </div>
 
-              <div className="flex flex-col-reverse gap-3 border-t border-neutral-200 pt-4 text-sm sm:flex-row sm:justify-end dark:border-neutral-800">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3 text-sm text-neutral-700 dark:text-neutral-300">
+                <span className="font-medium">{t('profile.editing.zoom')}</span>
                 <Button
                   type="button"
                   variant="tertiary"
-                  size="sm"
-                  onClick={handleCancel}
-                  disabled={uploading}
+                  size="xs"
+                  onClick={() => applyZoom(placementRef.current.zoom - 0.05)}
+                  disabled={zoom <= MIN_ZOOM}
+                  aria-label={t('profile.editing.zoomOut')}
                 >
-                  {t('profile.editing.cancel')}
+                  −
                 </Button>
+                <input
+                  type="range"
+                  min={MIN_ZOOM * 100}
+                  max={MAX_ZOOM * 100}
+                  step={1}
+                  value={Math.round(zoom * 100)}
+                  onChange={event => applyZoom(Number(event.target.value) / 100)}
+                  className="min-w-[120px] flex-1 accent-red-600"
+                  aria-label={t('profile.editing.zoom')}
+                />
                 <Button
                   type="button"
-                  size="sm"
-                  loading={uploading}
-                  onClick={handleUpload}
+                  variant="tertiary"
+                  size="xs"
+                  onClick={() => applyZoom(placementRef.current.zoom + 0.05)}
+                  disabled={zoom >= MAX_ZOOM}
+                  aria-label={t('profile.editing.zoomIn')}
                 >
-                  {uploading ? t('profile.uploading') : t('profile.editing.save')}
+                  +
                 </Button>
+                <span className="w-12 text-right text-xs text-neutral-500 dark:text-neutral-400">
+                  {Math.round(zoom * 100)}%
+                </span>
               </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+                <span className="font-medium">{t('profile.editing.shapeLabel')}</span>
+                <Button type="button" variant="option" size="xs" selected={shape === 'square'} onClick={() => setShape('square')}>
+                  {t('profile.shape.square')}
+                </Button>
+                <Button type="button" variant="option" size="xs" selected={shape === 'circle'} onClick={() => setShape('circle')}>
+                  {t('profile.shape.circle')}
+                </Button>
+                <div className="ml-auto">
+                  <Button type="button" variant="tertiary" size="xs" onClick={resetPlacement}>
+                    {t('profile.editing.reset')}
+                  </Button>
+                </div>
+              </div>
+              {status && status.tone === 'error' && (
+                <p className="text-xs text-red-600 dark:text-red-400" role="alert">{status.text}</p>
+              )}
             </div>
           </div>
-        </div>
-      )}
-    </section>
+        )}
+      </Dialog>
+    </div>
   );
 };

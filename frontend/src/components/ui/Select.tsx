@@ -31,7 +31,7 @@ export const Select: React.FC<SelectProps> = ({
   <RadixSelect.Root value={value} onValueChange={onValueChange} disabled={disabled}>
     <RadixSelect.Trigger
       className={cn(
-        'inline-flex items-center justify-between gap-2 bg-white dark:bg-neutral-800 border rounded px-2 py-2 text-sm focus:outline-none focus:ring focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed',
+        'inline-flex items-center justify-between gap-2 bg-white dark:bg-neutral-800 border rounded-lg px-3 py-2.5 min-h-[44px] text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed data-[placeholder]:text-neutral-500',
         invalid ? 'border-red-500 dark:border-red-500' : 'border-neutral-300 dark:border-neutral-700',
         className
       )}
@@ -39,11 +39,11 @@ export const Select: React.FC<SelectProps> = ({
       {...aria}
     >
       <RadixSelect.Value placeholder={placeholder} />
-      <RadixSelect.Icon>▾</RadixSelect.Icon>
+      <RadixSelect.Icon aria-hidden>▾</RadixSelect.Icon>
     </RadixSelect.Trigger>
     <RadixSelect.Portal>
       <RadixSelect.Content
-        className="z-50 overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-800 animate-in fade-in-0 zoom-in-95"
+        className="z-50 max-h-[var(--radix-select-content-available-height)] overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-xl dark:border-neutral-700 dark:bg-neutral-800 animate-in fade-in-0 zoom-in-95"
         position="popper"
         sideOffset={4}
       >
@@ -52,7 +52,7 @@ export const Select: React.FC<SelectProps> = ({
             <RadixSelect.Item
               key={opt.value}
               value={opt.value}
-              className="relative flex cursor-pointer select-none items-center rounded px-3 py-2 text-sm outline-none data-[highlighted]:bg-red-50 data-[highlighted]:text-red-900 dark:data-[highlighted]:bg-red-900/30 dark:data-[highlighted]:text-red-100"
+              className="relative flex cursor-pointer select-none items-center rounded-md px-3 py-2 text-sm outline-none data-[highlighted]:bg-red-50 data-[highlighted]:text-red-900 dark:data-[highlighted]:bg-red-900/30 dark:data-[highlighted]:text-red-100"
             >
               <RadixSelect.ItemText>{opt.label}</RadixSelect.ItemText>
             </RadixSelect.Item>

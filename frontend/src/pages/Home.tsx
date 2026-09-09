@@ -1,24 +1,42 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages } from '../services';
+import { uploadJobsJson, generateResumeStream, buildJobsFromEntries, resolveProfilePictureUrl, saveProfile, saveLanguages, MERCADOPAGO_URL } from '../services';
 import { EXPERIENCE_TYPES, LanguageEntry, ResumeEntry, UserProfile, emptyProfile } from '../types';
 import { ProfileEditor } from '../components/entries';
 import { SaveStatus } from '../components/entries/SaveStatusIndicator';
 import { Footer } from '../components/Footer';
-import { AuthGate, UserBar } from '../components/AuthGate';
-import { FirstLoadGuide } from '../components/FirstLoadGuide';
-import { DonateToast } from '../components/DonateToast';
+import { AuthGate, UserBar, getOrCreateGuestId } from '../components/AuthGate';
 import { AdBanner } from '../components/AdBanner';
 import { ProfilePictureUploader } from '../components/ProfilePictureUploader';
-import { logout, loadUserData, saveUserDataIfChanged } from '../services/firebase';
+import { logout, saveUserDataIfChanged } from '../services/firebase';
 import { splitLegacyEntries, hasLegacyEntries, loadLocalDataWithMigration } from '../services/legacyMigration';
 import { useI18n, availableLanguages } from '../i18n';
 import { initAnalytics, pageView, setupErrorTracking, trackConsole, trackEvent } from '../services/analytics';
 import { detectCountry } from '../services/geolocation';
 import { useDonationNudges } from '../hooks/useDonationNudges';
-import { Dialog, Button, Select, Spinner } from '../components/ui';
+import { Dialog, Button, Select, Spinner, ConfirmDialog, FormField, Textarea } from '../components/ui';
 import { useToast } from '../components/ui/use-toast';
-import { ThemeToggle } from '../components/ThemeToggle';
+
+
+/** Backend stream stages -> the phrase the user sees. Anything unmapped keeps the
+ * previous phrase, so internals never leak into the progress dialog. */
+const STAGE_PHRASES: Record<string, string> = {
+  csv_info: 'progress.stage.reading',
+  invoking_graph: 'progress.stage.choosing',
+  graph_complete: 'progress.stage.organizing',
+  parsed: 'progress.stage.organizing',
+  translating: 'progress.stage.translating',
+  translated: 'progress.stage.translating',
+  writing_file: 'progress.stage.writing',
+  done: 'progress.stage.done',
+};
+
+const StepHeading: React.FC<{ id: string; title: string; hint: string }> = ({ id, title, hint }) => (
+  <div className="mb-4">
+    <h2 id={id} className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">{title}</h2>
+    <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">{hint}</p>
+  </div>
+);
 
 export function Home() {
   const { t, lang, setLang } = useI18n();
@@ -30,19 +48,9 @@ export function Home() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [user, setUser] = useState<{mode:'auth'|'guest'; uid:string; email?:string} | null>(null);
   const [authGateOpenSignal, setAuthGateOpenSignal] = useState(0);
-  // Always generate a fresh guest UUID on each reload to avoid cross-session mixing
-  const [guestId] = useState(()=>{
-    try {
-      const gen: string = (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
-        ? (crypto as any).randomUUID()
-        : 'guest-' + Date.now().toString(36);
-      try { localStorage.setItem('br.guestId', gen); } catch {}
-      return gen;
-    } catch (error) {
-      console.error('Error generating guest ID:', error);
-      return 'guest-' + Date.now().toString(36);
-    }
-  });
+  // Reuse the stored guest id (it keys the profile photo on the backend); only mint a
+  // new one when none exists. AuthGate applies the same rule once auth state resolves.
+  const [guestId] = useState(() => getOrCreateGuestId());
   const userId = user?.uid || guestId;
   const [loading, setLoading] = useState(false);
   const [downloadLinks, setDownloadLinks] = useState<{pdf:string; source:string}|null>(null);
@@ -54,25 +62,19 @@ export function Home() {
     try { const f = localStorage.getItem('br.format'); if (f === 'word' || f === 'latex') return f; } catch {}
     return 'word';
   });
-  const [progress, setProgress] = useState<{stage:string; message?:string}[]>([]);
+  const [stage, setStage] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<null | 'pdf' | 'source'>(null);
   const [showGenModal, setShowGenModal] = useState(false);
+  const [generateAttempted, setGenerateAttempted] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [genStartAt, setGenStartAt] = useState<number | null>(null);
   const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
   const [resumeCount, setResumeCount] = useState<number>(()=>{
     try { const v = localStorage.getItem('br.resumeCount'); return v? parseInt(v)||0 : 0; } catch { return 0; }
   });
-  // Manual open (e.g. the Footer's "Donate" link); the nudge hook's showModal can also
-  // drive this same dialog, see the Dialog wiring below.
-  const [showDonate, setShowDonate] = useState(false);
-  const [showGuide, setShowGuide] = useState<boolean>(() => {
-    try { return localStorage.getItem('br.guideSeen') !== '1'; } catch { return true; }
-  });
   const [geoLocation, setGeoLocation] = useState<{isOutsideUS: boolean; isArgentina: boolean; country: string} | null>(null);
   const pdfSectionRef = React.useRef<HTMLDivElement | null>(null);
-  const [onboardingComplete, setOnboardingComplete] = useState<boolean>(() => {
-    try { return localStorage.getItem('br.onboardingComplete') === '1'; } catch { return false; }
-  });
+  const profileSectionRef = React.useRef<HTMLDivElement | null>(null);
   const [includeProfilePicture, setIncludeProfilePicture] = useState<boolean>(() => {
     try { return localStorage.getItem('br.includeProfilePicture') === '1'; } catch { return false; }
   });
@@ -83,7 +85,6 @@ export function Home() {
     }
   }, [includeProfilePicture]);
   const ADS_CLIENT = import.meta.env.VITE_ADSENSE_CLIENT;
-  const ADS_SLOT = import.meta.env.VITE_ADSENSE_SLOT_GENERATE;
   const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
 
   useEffect(()=>{
@@ -170,10 +171,10 @@ export function Home() {
 
   // Background autosave: profile/languages are cheap upserts (no pgvector
   // re-ingest), so sync them to the backend shortly after any edit instead of
-  // only on explicit Upload/Generate -- closes the "navigate away mid-edit"
-  // data-loss gap. Work-experience entries still sync only via performUpload
-  // (that pipeline re-ingests pgvector documents and is too expensive to run
-  // on every keystroke).
+  // only on Generate -- closes the "navigate away mid-edit" data-loss gap.
+  // Work-experience entries still sync only via performUpload (that pipeline
+  // re-ingests pgvector documents and is too expensive to run on every
+  // keystroke), which is why the indicator says "Profile saved", not "Saved".
   const autosaveTimer = useRef<number | null>(null);
   const lastSynced = useRef<{ userId: string; profile: string; languages: string } | null>(null);
   useEffect(() => {
@@ -208,12 +209,8 @@ export function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, languages, userId]);
 
-  // Removed continuous auto-save; persistence now triggered only on explicit upload.
-  // no longer store userId directly; guests stored inside AuthGate logic
   useEffect(() => { try { localStorage.setItem('br.jobDescription', jobDescription); } catch {} }, [jobDescription]);
   useEffect(() => { try { localStorage.setItem('br.format', format); } catch {} }, [format]);
-  useEffect(() => { try { localStorage.setItem('br.onboardingComplete', onboardingComplete? '1':'0'); } catch {} }, [onboardingComplete]);
-  useEffect(() => { if (!showGuide) { try { localStorage.setItem('br.guideSeen','1'); } catch {} } }, [showGuide]);
   useEffect(() => { try { localStorage.setItem('br.includeProfilePicture', includeProfilePicture && !!profilePictureUrl ? '1' : '0'); } catch {} }, [includeProfilePicture, profilePictureUrl]);
 
   useEffect(() => {
@@ -232,15 +229,35 @@ export function Home() {
       setIncludeProfilePicture(false);
     }
   }, [profilePictureUrl, includeProfilePicture]);
+
   // Single source of truth for donation nudges (see useDonationNudges for why this
   // replaces what used to be three independent toast triggers plus a modal trigger).
-  const donationNudges = useDonationNudges({ resumeCount, busy: showGenModal || showGuide });
+  const donationNudges = useDonationNudges({ resumeCount, busy: showGenModal });
+  const isArgentina = !!geoLocation?.isArgentina;
+  const goDonate = useCallback(() => {
+    if (isArgentina) window.open(MERCADOPAGO_URL, '_blank', 'noopener');
+    else navigate('/donate');
+  }, [isArgentina, navigate]);
+
+  // The donation nudge is a regular toast (one toast system, one corner) with a
+  // "Donate" action; closing it in any way records the cooldown.
+  useEffect(() => {
+    if (!donationNudges.showToast) return;
+    toast({
+      title: t('donate.toast.title'),
+      description: t('donate.toast.body'),
+      durationMs: 15000,
+      action: { label: t('donate.toast.cta'), onClick: goDonate },
+      onDismiss: donationNudges.dismissToast,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donationNudges.showToast]);
 
   const addEntry = (entry: ResumeEntry) => setEntries(p => [...p, entry]);
   const updateEntry = (index: number, entry: ResumeEntry) => setEntries(p => p.map((e,i)=> i===index? entry : e));
   const removeEntry = (index: number) => setEntries(p => p.filter((_,i)=> i!==index));
 
-  // Internal upload helper used by both explicit upload and generation. Does not manage loading state.
+  // Internal upload helper used by generation. Does not manage loading state.
   const [uploading, setUploading] = useState(false);
   const performUpload = async () => {
     if (uploading) return; // guard
@@ -264,45 +281,40 @@ export function Home() {
     }
   };
 
-  const handleUpload = async () => {
-    try {
-      setLoading(true);
-      const res: any = await performUpload();
-      if (res?.status === 'unchanged') {
-        toast({ title: t('upload.unchanged') });
-      } else if (res?.rows_ingested != null) {
-        toast({ title: `${t('upload.success.rows')} (${res.rows_ingested})`, variant: 'success' });
-      } else {
-        toast({ title: t('upload.success'), variant: 'success' });
-      }
-    } catch (e: any) {
-      toast({ title: e.message || t('upload.failed'), variant: 'error' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const genAbortRef = useRef<AbortController | null>(null);
 
   const handleCancelGenerate = () => {
     genAbortRef.current?.abort();
   };
 
+  // Require basic personal info (name + email) and at least one experience entry.
+  const hasPersonalBasics = !!(profile.fullName && profile.email);
+  const hasExperience = entries.some(e => EXPERIENCE_TYPES.includes(e.type));
+  const hasJobDescription = jobDescription.trim().length > 0;
+  const missingHint = !hasPersonalBasics ? t('validation.personal')
+    : !hasExperience ? t('validation.experience')
+    : !hasJobDescription ? t('validation.jobDescription')
+    : null;
+
   const handleGenerate = async () => {
+    if (missingHint) {
+      // The hint under the button turns into an error and the page scrolls to where
+      // the missing piece lives, instead of a silently disabled button.
+      setGenerateAttempted(true);
+      if (!hasPersonalBasics || !hasExperience) profileSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     const abortController = new AbortController();
     genAbortRef.current = abortController;
     try {
-      // Frontend guard: block calls if requirements not met
-      if (!hasPersonalBasics) { toast({ title: t('generate.error.personal'), variant: 'error' }); return; }
-      if (!hasExperience) { toast({ title: t('generate.error.experience'), variant: 'error' }); return; }
       setLoading(true);
       setGenStartAt(Date.now());
       setFirstEventAt(null);
       try { trackEvent('resume_generate_start', { format, entries: entries.length, has_job: !!jobDescription, auth: user?.mode==='auth' }); } catch {}
-      setProgress([]);
-  // Clear previous outputs so UI doesn't show outdated preview while regenerating
-  setDownloadLinks(null);
-  setShowGenModal(true);
+      setStage(null);
+      // Clear previous outputs so UI doesn't show outdated preview while regenerating
+      setDownloadLinks(null);
+      setShowGenModal(true);
       // First upload latest entries as jobs.csv (silent: no alert)
       await performUpload();
       const res = await generateResumeStream(userId, {
@@ -316,8 +328,7 @@ export function Home() {
             try { trackEvent('resume_stream_first_event', { ms: Date.now() - genStartAt, stage: evt.stage }); } catch {}
           }
         }
-        const msg = evt.stage === 'csv_info' && (evt.rows != null) ? `rows: ${evt.rows}` : evt.message;
-        setProgress(p => [...p, {stage: evt.stage, message: msg}]);
+        if (STAGE_PHRASES[evt.stage]) setStage(evt.stage);
         if (evt.stage === 'error') {
           try { trackEvent('resume_generate_error', { message: evt.message||'error' }); } catch {}
         }
@@ -336,12 +347,19 @@ export function Home() {
       });
     } catch (e: any) {
       if (e?.name !== 'AbortError') {
-        toast({ title: e.message || t('generate.error.failed'), variant: 'error' });
+        // Never surface the backend's message: the app's own copy says what to do,
+        // and the toast offers a retry.
+        toast({
+          title: t('generate.error.failed'),
+          variant: 'error',
+          durationMs: 10000,
+          action: { label: t('generate.error.retry'), onClick: () => { void handleGenerate(); } },
+        });
       }
     } finally {
       genAbortRef.current = null;
       setLoading(false);
-  setTimeout(()=> setShowGenModal(false), 600); // slight delay for UX
+      setTimeout(()=> setShowGenModal(false), 600); // slight delay for UX
     }
   };
 
@@ -353,7 +371,7 @@ export function Home() {
       // Attempt fetch to ensure file exists and to avoid popup blockers / blocked navigation
       const res = await fetch(url, { method: 'GET' });
       if (!res.ok) {
-        throw new Error(`${t('download.error.notReady')} (${res.status})`);
+        throw new Error(`Download failed (${res.status})`);
       }
       const blob = await res.blob();
       // Prefer filename from Content-Disposition when available
@@ -383,22 +401,12 @@ export function Home() {
       link.click();
       link.remove();
       setTimeout(()=> URL.revokeObjectURL(link.href), 5000);
-    } catch (e:any) {
-      toast({ title: e.message || t('download.error.failed'), variant: 'error' });
+    } catch {
+      toast({ title: t('download.error.failed'), variant: 'error' });
     } finally {
       setDownloading(null);
     }
   };
-
-  // Require basic personal info (name + email) and at least one experience entry.
-  const hasPersonalBasics = !!(profile.fullName && profile.email);
-  const hasExperience = entries.some(e => EXPERIENCE_TYPES.includes(e.type));
-
-  // Compute progress percent from stages
-  const stageOrder = ['csv_info','invoking_graph','graph_complete','parsed','translating','translated','writing_file','done'];
-  const latestStage = progress.length ? progress[progress.length-1].stage : null;
-  const idx = latestStage ? stageOrder.indexOf(latestStage) : -1;
-  const percent = idx >= 0 ? Math.min(100, Math.round(((idx + 1) / stageOrder.length) * 100)) : (showGenModal ? 5 : 0);
 
   const [pdfUrl, setPdfUrl] = useState<string|null>(null);
   // Tracks a blob URL *we* created via createObjectURL, so we can revoke it
@@ -451,232 +459,263 @@ export function Home() {
     };
   }, [downloadLinks?.pdf]);
 
-  // pb-28 on mobile: the fixed Footer's content can wrap to 2 lines at narrow widths
-  // (brand line + link + Donate button), so a single-line-height reserve would let it
-  // cover page content. sm:pb-16 matches the footer's actual single-line height there.
-  return (
-  <div className="max-w-5xl mx-auto p-4 pb-28 sm:pb-16 font-sans relative">
-      <header className="mb-8">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <img src="/logo2.png" alt={t('app.title')} className="h-16 sm:h-20 w-auto select-none" draggable={false} />
-            <div className="flex flex-col justify-center">
-              <p className="sr-only">{t('app.title')}</p>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-snug max-w-xs">{t('app.tagline')}</p>
-            </div>
+  const handleLogoutConfirmed = async () => {
+    await logout();
+    // The signed-out account's profile/languages/entries must never ride along
+    // into the guest identity: userId flips from the auth uid to `guestId` on
+    // the very next render, and the autosave effect below persists whatever
+    // `profile`/`languages` currently hold under whatever `userId` currently
+    // is. Blank the in-memory state back to a fresh guest first...
+    setProfile(emptyProfile);
+    setLanguages([]);
+    setEntries([]);
+    setJobDescription('');
+    // ...and mark that blank state as already-synced for the guest id, so the
+    // userId transition reads as a fresh hydration (like the initial-mount
+    // case) instead of an edit the autosave effect needs to push.
+    lastSynced.current = { userId: guestId, profile: JSON.stringify(emptyProfile), languages: JSON.stringify([]) };
+    setUser(null);
+  };
+
+  const stagePhrase = stage ? t(STAGE_PHRASES[stage]) : t('progress.starting');
+
+  // Returning users with an already-generate-ready profile shouldn't have to
+  // scroll past five profile cards on every visit just to paste a new job
+  // description -- promote "El puesto" above the profile section once the
+  // profile already satisfies Generate's own requirements.
+  const profileReadyForJob = hasPersonalBasics && hasExperience;
+
+  const profileSection = (
+    <section ref={profileSectionRef} aria-labelledby="step-profile" className="scroll-mt-4">
+      <StepHeading id="step-profile" title={t('home.step.profile.title')} hint={t('home.step.profile.hint')} />
+      <ProfileEditor
+        userId={userId}
+        profile={profile}
+        onProfileChange={setProfile}
+        languages={languages}
+        onLanguagesChange={setLanguages}
+        entries={entries}
+        onAddEntry={addEntry}
+        onUpdateEntry={updateEntry}
+        onRemoveEntry={removeEntry}
+        saveStatus={saveStatus}
+      >
+        <ProfilePictureUploader userId={userId} imageUrl={profilePictureUrl} onUploaded={handleProfileUploaded} />
+      </ProfileEditor>
+    </section>
+  );
+
+  const jobSection = (
+    <section aria-labelledby="step-job">
+      <StepHeading id="step-job" title={t('home.step.job.title')} hint={t('home.step.job.hint')} />
+      <div className="space-y-5 rounded-xl border border-neutral-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <FormField label={t('job.description.label')} htmlFor="job-description" required>
+          <Textarea
+            id="job-description"
+            className="w-full min-h-[200px]"
+            value={jobDescription}
+            onChange={e => setJobDescription(e.target.value)}
+            placeholder={t('job.description.placeholder')}
+            invalid={generateAttempted && !hasJobDescription}
+          />
+        </FormField>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField label={t('format')} hint={t('format.hint')}>
+            <Select
+              value={format}
+              aria-label={t('format')}
+              onValueChange={(v) => setFormat(v as any)}
+              options={[
+                { value: 'word', label: t('format.word') },
+                { value: 'latex', label: t('format.latex') },
+              ]}
+            />
+          </FormField>
+          <div className="flex flex-col gap-1">
+            <label className="flex min-h-[44px] items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-red-600"
+                checked={includeProfilePicture && !!profilePictureUrl}
+                onChange={e => setIncludeProfilePicture(e.target.checked)}
+                disabled={!profilePictureUrl}
+              />
+              <span className={!profilePictureUrl ? 'text-neutral-400 dark:text-neutral-500' : ''}>{t('profile.toggle')}</span>
+            </label>
+            {!profilePictureUrl && (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('profile.toggle.disabled')}</p>
+            )}
           </div>
-          <div className="flex gap-3 items-center flex-wrap justify-end">
-          <Button type="button" variant="secondary" size="sm" onClick={()=>setShowGuide(true)}>
-            <span aria-hidden className="mr-1">❓</span>{t('guide.button.title')}
+        </div>
+        <div className="space-y-2">
+          <Button size="md" className="w-full sm:w-auto sm:min-w-[16rem]" loading={loading} onClick={handleGenerate}>
+            {t('generate.resume')}
           </Button>
-          {user && <UserBar user={user} onLogout={async ()=>{
-  await logout();
-  setUser(null);
-  setEntries([]);
-  setProfile({ ...emptyProfile });
-  setLanguages([]);
-  setJobDescription('');
-  setFormat('latex');
-}} onSignInRequest={() => {
-  // Guest wants to upgrade to account: keep cache, remove guest id and open auth modal
-  if (user.mode === 'guest') {
-    try { localStorage.removeItem('br.guestId'); } catch {}
-    setAuthGateOpenSignal(s=>s+1);
-  }
-}} />}
-          <label className="text-sm flex flex-col">{t('format')}
-            <span className="mt-1">
-              <Select
-                value={format}
-                onValueChange={(v) => setFormat(v as any)}
-                options={[
-                  { value: 'latex', label: t('format.latex') },
-                  { value: 'word', label: t('format.word') },
-                ]}
-              />
-            </span>
-          </label>
-          <label className="text-sm flex flex-col">{t('app.language')}
-            <span className="mt-1">
-              <Select
-                value={lang}
-                onValueChange={(v) => setLang(v as any)}
-                options={availableLanguages.map(l => ({ value: l.code, label: t(l.labelKey) }))}
-              />
-            </span>
-          </label>
-          <ThemeToggle />
-          </div>
+          {loading ? (
+            <p className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
+              <Spinner size="sm" /> {t('validation.generating')}
+            </p>
+          ) : missingHint ? (
+            <p
+              className={generateAttempted ? 'text-sm text-red-600 dark:text-red-400' : 'text-sm text-neutral-500 dark:text-neutral-400'}
+              role={generateAttempted ? 'alert' : undefined}
+            >
+              {missingHint}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+
+  return (
+  <div className="max-w-5xl mx-auto p-4 font-sans">
+      <header className="mb-8 flex flex-wrap items-center gap-x-4 gap-y-3">
+        <img src="/logo2.png" alt={t('app.title')} className="h-12 w-auto select-none sm:h-14" draggable={false} />
+        <p className="hidden min-w-0 flex-1 text-sm leading-snug text-neutral-600 dark:text-neutral-400 md:block">{t('app.tagline')}</p>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Select
+            value={lang}
+            aria-label={t('app.language')}
+            onValueChange={(v) => setLang(v as any)}
+            options={availableLanguages.map(l => ({ value: l.code, label: t(l.labelKey) }))}
+          />
+          {user && <UserBar user={user} onLogout={() => setConfirmLogout(true)} onSignInRequest={() => setAuthGateOpenSignal(s=>s+1)} />}
         </div>
       </header>
-  <ProfileEditor
-    userId={userId}
-    profile={profile}
-    onProfileChange={setProfile}
-    languages={languages}
-    onLanguagesChange={setLanguages}
-    entries={entries}
-    onAddEntry={addEntry}
-    onUpdateEntry={updateEntry}
-    onRemoveEntry={removeEntry}
-    onboardingComplete={onboardingComplete}
-    onOnboardingComplete={() => setOnboardingComplete(true)}
-    saveStatus={saveStatus}
-  />
 
-  <ProfilePictureUploader
-    userId={userId}
-    include={includeProfilePicture}
-    onIncludeChange={setIncludeProfilePicture}
-    imageUrl={profilePictureUrl}
-    onUploaded={handleProfileUploaded}
-  />
+      <main className="space-y-12">
+        {profileReadyForJob ? (
+          <>
+            {jobSection}
+            {profileSection}
+          </>
+        ) : (
+          <>
+            {profileSection}
+            {jobSection}
+          </>
+        )}
 
-  <section className="space-y-4 mb-12">
-        <h2 className="text-xl font-semibold">{t('job.description.section')}</h2>
-  <textarea className="w-full min-h-[200px] bg-white dark:bg-neutral-900 border border-neutral-300 dark:border-neutral-800 rounded p-3 text-sm resize-y focus:outline-none focus:ring focus:ring-red-500" value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder={t('job.description.placeholder')} />
-        <div className="flex flex-wrap items-center gap-3">
-          <Button size="sm" loading={loading} disabled={!jobDescription || !hasPersonalBasics || !hasExperience} onClick={handleGenerate}>{t('generate.resume')}</Button>
-        </div>
-        {!loading && (!hasPersonalBasics || !hasExperience || !jobDescription) && (
-          <p className="text-xs text-red-500">
-            {!hasPersonalBasics ? t('validation.personal') : !hasExperience ? t('validation.experience') : t('validation.jobDescription')}
-          </p>
+        {downloadLinks && (
+          <section ref={pdfSectionRef} aria-labelledby="step-resume" className="scroll-mt-4">
+            <StepHeading id="step-resume" title={t('home.step.resume.title')} hint={t('home.step.resume.hint')} />
+            <div className="space-y-4">
+              <p className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800 dark:border-violet-800 dark:bg-violet-900/30 dark:text-violet-200">
+                {t('preview.ai.notice')}
+              </p>
+              <div className="relative aspect-[8.5/11] w-full overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+                {pdfUrl ? (
+                  <iframe title={t('preview.title')} src={pdfUrl} className="h-full w-full" />
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-neutral-500">{t('preview.pdf.fetchFailed')}</div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {downloadLinks.pdf && (
+                  <Button variant="primary" className="w-full sm:w-auto" loading={downloading==='pdf'} onClick={()=>handleDownload('pdf')}>
+                    {downloading==='pdf' ? t('download.downloading') : t('download.pdf')}
+                  </Button>
+                )}
+                {downloadLinks.source && (
+                  <Button variant="secondary" className="w-full sm:w-auto" loading={downloading==='source'} onClick={()=>handleDownload('source')}>
+                    {downloading==='source' ? t('download.preparing') : (format === 'latex' ? t('download.source.latex') : t('download.source.word'))}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </section>
         )}
-  {loading && (
-    <p className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
-      <Spinner size="sm" /> {t('validation.generating')}
-    </p>
-  )}
-        {progress.length>0 && (
-          <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded p-2 max-h-48 overflow-auto">
-            {progress.map((p,i)=>(<li key={i}><span className="font-mono text-neutral-500">{i+1}.</span> {p.stage}{p.message?`: ${p.message}`:''}</li>))}
-          </ul>
-        )}
-    </section>
-    {downloadLinks && (
-      <section ref={pdfSectionRef} className="mb-24 space-y-4">
-        <h2 className="text-xl font-semibold">{t('preview.title')}</h2>
-  <div className="w-full border border-neutral-200 dark:border-neutral-800 rounded bg-white dark:bg-neutral-900 aspect-[8.5/11] relative overflow-hidden">
-          {pdfUrl ? (
-            <iframe title="Resume PDF" src={pdfUrl} className="w-full h-full" />
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500">{t('preview.pdf.unavailable')}</div>
-          )}
-        </div>
-        <div className="flex gap-4 flex-wrap">
-          {downloadLinks.pdf && (
-            <Button variant="primary" loading={downloading==='pdf'} onClick={()=>handleDownload('pdf')}>{downloading==='pdf' ? t('download.downloading') : t('download.pdf')}</Button>
-          )}
-          {downloadLinks.source && (
-            <Button variant="secondary" loading={downloading==='source'} onClick={()=>handleDownload('source')}>{downloading==='source' ? t('download.preparing') : t('download.source')}</Button>
-          )}
-        </div>
-      </section>
-    )}
-    <Dialog
-      open={showGenModal}
-      onOpenChange={() => {}}
-      hideClose
-      title={
-        <span className="flex items-center gap-3">
-          <span className="relative w-10 h-10 shrink-0">
-            <span className="absolute inset-0 rounded-md bg-red-600 animate-pulse" />
-            <span className="absolute inset-1 rounded-sm bg-white dark:bg-neutral-900 flex items-center justify-center text-[10px] font-semibold tracking-wide">CV</span>
-          </span>
-          {t('modal.building.title')}
-        </span>
-      }
-      description={t('modal.building.subtitle')}
-      footer={<Button variant="secondary" size="sm" onClick={handleCancelGenerate}>{t('button.cancelGeneration')}</Button>}
-    >
-      <div className="space-y-6">
-        <div>
-          <div className="h-2 w-full rounded bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-            <div
-              className="h-full bg-[length:200%_100%] bg-gradient-to-r from-red-500 via-rose-500 to-red-500 animate-progressMove"
-              style={{ width: percent + '%' }}
-            />
+      </main>
+
+      <Dialog
+        open={showGenModal}
+        onOpenChange={() => {}}
+        hideClose
+        title={t('modal.building.title')}
+        description={t('modal.building.subtitle')}
+        footer={<Button variant="secondary" size="sm" onClick={handleCancelGenerate}>{t('button.cancelGeneration')}</Button>}
+      >
+        <div className="space-y-3" aria-live="polite">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800">
+            <div className="h-full w-full bg-[length:200%_100%] bg-gradient-to-r from-red-500 via-rose-300 to-red-500 animate-progressMove" />
           </div>
-          <div className="flex justify-between mt-1 text-[11px] text-neutral-600 dark:text-neutral-500"><span>{percent}%</span><span>{latestStage || t('progress.starting')}</span></div>
+          <p className="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-300">
+            <Spinner size="sm" /> {stagePhrase}
+          </p>
         </div>
-        <div className="flex gap-2 flex-wrap text-[10px] text-neutral-500 dark:text-neutral-400 max-h-24 overflow-auto">
-          {progress.slice(-4).map((p,i)=>(<span key={i} className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded">{p.stage}</span>))}
-        </div>
-      </div>
-    </Dialog>
-  <FirstLoadGuide open={showGuide} onClose={()=>setShowGuide(false)} />
-  <DonateToast
-    open={donationNudges.showToast}
-    onClose={donationNudges.dismissToast}
-    onDonateClick={!geoLocation || !geoLocation.isArgentina ? () => { navigate('/donate'); donationNudges.dismissToast(); } : undefined}
-  />
-    <Dialog
-      open={showDonate || donationNudges.showModal}
-      onOpenChange={(open) => { if (!open) { setShowDonate(false); donationNudges.dismissModal(); } }}
-      title={t('donate.title')}
-      description={t('donate.body')}
-      footer={
-        <>
-          {!geoLocation || !geoLocation.isArgentina ? (
-            <Button variant="primary" onClick={() => { navigate('/donate'); setShowDonate(false); donationNudges.dismissModal(); }}>{t('donate.cta')}</Button>
-          ) : (
-            <Button asChild variant="primary">
-              <a href="https://link.mercadopago.com.ar/betterresume" target="_blank" rel="noreferrer" onClick={() => { setShowDonate(false); donationNudges.dismissModal(); }}>{t('donate.cta')}</a>
-            </Button>
-          )}
-          <Button variant="secondary" onClick={() => { setShowDonate(false); donationNudges.dismissModal(); }}>{t('donate.later')}</Button>
-        </>
-      }
-    >
-      <p className="text-[11px] text-neutral-500">{t('donate.footer')}</p>
-    </Dialog>
-  <AuthGate forceOpenSignal={authGateOpenSignal} onResolved={useCallback((u, data) => {
-      setUser(u);
-      if (data) {
-        let nextProfile: UserProfile = emptyProfile;
-        if (Array.isArray(data.entries) && hasLegacyEntries(data.entries)) {
-          // Pre-migration Firestore doc: split the mixed entries array once,
-          // then immediately push the cleaned shape back so this device
-          // stops re-splitting on every future load.
-          const split = splitLegacyEntries(data.entries);
-          nextProfile = { ...emptyProfile, ...(data.profile || {}), ...split.profile };
-          const nextLanguages = data.languages && data.languages.length ? data.languages : split.languages;
-          setProfile(nextProfile);
-          setLanguages(nextLanguages);
-          setEntries(split.entries);
-          saveUserDataIfChanged(u.uid, {
-            entries: split.entries, profile: nextProfile, languages: nextLanguages,
-            jobDescription: data.jobDescription, format: data.format,
-          }).catch(() => {});
-        } else {
-          if (Array.isArray(data.entries)) setEntries(data.entries as ResumeEntry[]);
-          if (data.profile) {
-            nextProfile = { ...emptyProfile, ...data.profile };
-            setProfile(nextProfile);
-          }
-          if (data.languages) setLanguages(data.languages);
+      </Dialog>
+
+      <Dialog
+        open={donationNudges.showModal}
+        onOpenChange={(open) => { if (!open) donationNudges.dismissModal(); }}
+        title={t('donate.title')}
+        description={t('donate.body')}
+        footer={
+          <>
+            <Button variant="secondary" onClick={donationNudges.dismissModal}>{t('donate.later')}</Button>
+            <Button variant="primary" onClick={() => { donationNudges.dismissModal(); goDonate(); }}>{t('donate.cta')}</Button>
+          </>
         }
-        if (nextProfile.fullName && nextProfile.email) setOnboardingComplete(true);
-        if (data.jobDescription) setJobDescription(data.jobDescription);
-        if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
-      }
-    }, [])} />
-    {
-      geoLocation?.isArgentina && (
-      <div className="max-w-5xl mx-auto pointer-events-auto">
-        <AdBanner
-          lightSrc="/Lannis banner - light.png"
-          darkSrc="/Lannis banner - dark.png"
-          alt="Lannis"
-          href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume"
-          className="shadow-lg"
-        />
-      </div>
-      )
-    }
-      
-  <Footer geoLocation={geoLocation} onDonateClick={setShowDonate} />
+      >
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">{t('donate.footer')}</p>
+      </Dialog>
+
+      <ConfirmDialog
+        open={confirmLogout}
+        onOpenChange={setConfirmLogout}
+        title={t('confirm.logout.title')}
+        description={t('confirm.logout.body')}
+        confirmLabel={t('confirm.logout.confirm')}
+        cancelLabel={t('button.cancel')}
+        destructive={false}
+        onConfirm={() => { void handleLogoutConfirmed(); }}
+      />
+
+      <AuthGate forceOpenSignal={authGateOpenSignal} onResolved={useCallback((u, data) => {
+        setUser(u);
+        if (data) {
+          let nextProfile: UserProfile = emptyProfile;
+          if (Array.isArray(data.entries) && hasLegacyEntries(data.entries)) {
+            // Pre-migration Firestore doc: split the mixed entries array once,
+            // then immediately push the cleaned shape back so this device
+            // stops re-splitting on every future load.
+            const split = splitLegacyEntries(data.entries);
+            nextProfile = { ...emptyProfile, ...(data.profile || {}), ...split.profile };
+            const nextLanguages = data.languages && data.languages.length ? data.languages : split.languages;
+            setProfile(nextProfile);
+            setLanguages(nextLanguages);
+            setEntries(split.entries);
+            saveUserDataIfChanged(u.uid, {
+              entries: split.entries, profile: nextProfile, languages: nextLanguages,
+              jobDescription: data.jobDescription, format: data.format,
+            }).catch(() => {});
+          } else {
+            if (Array.isArray(data.entries)) setEntries(data.entries as ResumeEntry[]);
+            if (data.profile) {
+              nextProfile = { ...emptyProfile, ...data.profile };
+              setProfile(nextProfile);
+            }
+            if (data.languages) setLanguages(data.languages);
+          }
+          if (data.jobDescription) setJobDescription(data.jobDescription);
+          if (data.format === 'latex' || data.format === 'word') setFormat(data.format);
+        }
+      }, [])} />
+
+      {geoLocation?.isArgentina && (
+        <div className="mt-12">
+          <AdBanner
+            lightSrc="/Lannis banner - light.png"
+            darkSrc="/Lannis banner - dark.png"
+            alt="Lannis"
+            href="https://lannis.app?utm_source=web&utm_medium=banner&utm_campaign=august12&utm_id=better-resume"
+            className="shadow-lg"
+          />
+        </div>
+      )}
+
+      <Footer geoLocation={geoLocation} />
   </div>
   );
 }

@@ -24,7 +24,7 @@ function ModelSlot({ label, value, onChange, onClear, onTest, disabled }: {
 }) {
   return (
     <div className="mt-3">
-      <p className="text-[11px] uppercase tracking-wide text-neutral-500">{label}</p>
+      <p className="text-xs uppercase tracking-wide text-neutral-500">{label}</p>
       <p className="font-mono text-xs break-all mt-1">{value ?? 'None'}</p>
       <div className="flex gap-2 mt-1">
         <button
@@ -184,7 +184,7 @@ export function ModelsTab({ user }: { user: User }) {
               <div key={meta.id} className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium">{meta.label}</h3>
-                  {pending && <span className="text-[11px] text-neutral-400">Saving…</span>}
+                  {pending && <span className="text-xs text-neutral-400">Saving…</span>}
                 </div>
                 <p className="text-xs text-neutral-500 mt-0.5">{meta.blurb}</p>
 
@@ -227,7 +227,7 @@ export function ModelsTab({ user }: { user: User }) {
                   </div>
                 )}
 
-                <p className="text-[11px] text-neutral-500 mt-3 pt-3 border-t border-neutral-100 dark:border-neutral-800">
+                <p className="text-xs text-neutral-500 mt-3 pt-3 border-t border-neutral-100 dark:border-neutral-800">
                   {formatUpdated(t)}
                 </p>
               </div>

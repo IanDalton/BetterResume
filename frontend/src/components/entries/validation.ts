@@ -1,20 +1,24 @@
 import { z } from 'zod';
 import { EDUCATION_TYPES, EXPERIENCE_TYPES } from '../../types';
 import type { EntryType } from '../../types';
+import { MONTH_YEAR_RE } from './monthYear';
 
-export const personalInfoSchema = z.object({
-  fullName: z.string().trim().min(1, 'Full name is required'),
-  email: z.string().trim().min(1, 'Email is required').email('Enter a valid email address'),
+/** Translation function shape, so every validation message is localized at build time
+ * instead of leaking English zod defaults into the Spanish UI. */
+export type Translate = (key: string) => string;
+
+export const personalInfoSchema = (t: Translate) => z.object({
+  fullName: z.string().trim().min(1, t('validation.fullName.required')),
+  email: z.string().trim().min(1, t('validation.email.required')).email(t('validation.email.invalid')),
   phone: z.string().optional(),
   address: z.string().optional(),
 });
 
-const MONTH_YEAR = /^(0[1-9]|1[0-2])\/\d{4}$/;
-const monthYearOrPresent = z
+const monthYearOrPresent = (t: Translate) => z
   .string()
   .optional()
-  .refine((v) => !v || v.toLowerCase() === 'present' || MONTH_YEAR.test(v), {
-    message: 'Use the date picker or leave blank',
+  .refine((v) => !v || v.toLowerCase() === 'present' || MONTH_YEAR_RE.test(v), {
+    message: t('validation.date.invalid'),
   });
 
 /** MM/YYYY -> a comparable number (YYYY * 12 + month). */
@@ -30,32 +34,54 @@ const dateOrderCheck = (data: { start?: string; end?: string }) => {
   const { start, end } = data;
   if (!start || !end) return true;
   if (start.toLowerCase() === 'present' || end.toLowerCase() === 'present') return true;
-  if (!MONTH_YEAR.test(start) || !MONTH_YEAR.test(end)) return true;
+  if (!MONTH_YEAR_RE.test(start) || !MONTH_YEAR_RE.test(end)) return true;
   return monthYearSortKey(end) >= monthYearSortKey(start);
 };
-const dateOrderCheckOptions = { message: 'End date must be after the start date', path: ['end'] };
+const dateOrderCheckOptions = (t: Translate) => ({ message: t('validation.date.order'), path: ['end'] });
 
-export const educationEntrySchema = z.object({
+export const educationEntrySchema = (t: Translate) => z.object({
   type: z.enum(EDUCATION_TYPES as [EntryType, ...EntryType[]]),
-  company: z.string().trim().min(1, 'Institution is required'),
-  role: z.string().trim().min(1, 'Degree is required'),
+  company: z.string().trim().min(1, t('validation.institution.required')),
+  role: z.string().trim().min(1, t('validation.degree.required')),
   location: z.string().optional(),
-  start: monthYearOrPresent,
-  end: monthYearOrPresent,
+  start: monthYearOrPresent(t),
+  end: monthYearOrPresent(t),
   description: z.string().optional(),
-}).refine(dateOrderCheck, dateOrderCheckOptions);
+}).refine(dateOrderCheck, dateOrderCheckOptions(t));
 
-export const experienceEntrySchema = z.object({
+export const experienceEntrySchema = (t: Translate) => z.object({
   type: z.enum(EXPERIENCE_TYPES as [EntryType, ...EntryType[]]),
-  company: z.string().trim().min(1, 'Company is required'),
-  role: z.string().trim().min(1, 'Role is required'),
+  company: z.string().trim().min(1, t('validation.company.required')),
+  role: z.string().trim().min(1, t('validation.role.required')),
   location: z.string().optional(),
-  start: monthYearOrPresent,
-  end: monthYearOrPresent,
+  start: monthYearOrPresent(t),
+  end: monthYearOrPresent(t),
   description: z.string().optional(),
-}).refine(dateOrderCheck, dateOrderCheckOptions);
+}).refine(dateOrderCheck, dateOrderCheckOptions(t));
 
-export const languageEntrySchema = z.object({
-  name: z.string().trim().min(1, 'Language name is required'),
-  proficiency: z.string().trim().min(1, 'Select a proficiency level'),
+export const languageEntrySchema = (t: Translate) => z.object({
+  name: z.string().trim().min(1, t('validation.language.required')),
+  proficiency: z.string().trim().min(1, t('validation.proficiency.required')),
 });
+
+/** Collects the first zod issue per top-level field into `{ field: message }`. */
+export function issuesToFieldErrors(issues: { path: PropertyKey[]; message: string }[]): Record<string, string> {
+  const fieldErrors: Record<string, string> = {};
+  for (const issue of issues) {
+    const key = issue.path[0];
+    if (typeof key === 'string' && !fieldErrors[key]) fieldErrors[key] = issue.message;
+  }
+  return fieldErrors;
+}
+
+/** After a failed validation, bring the first invalid control into view (the entry
+ * dialog scrolls, so on a phone the error can otherwise sit below the fold). */
+export function scrollToFirstInvalid(root: HTMLElement | null) {
+  if (!root) return;
+  requestAnimationFrame(() => {
+    const el = root.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    try { el.focus({ preventScroll: true }); } catch { /* ignore */ }
+  });
+}

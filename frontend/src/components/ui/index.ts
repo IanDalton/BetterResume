@@ -8,6 +8,6 @@ export * from './ConfirmDialog';
 export * from './Card';
 export * from './FormField';
 export * from './Spinner';
-export * from './Stepper';
+export * from './Tabs';
 export * from './Toast';
 export * from './use-toast';

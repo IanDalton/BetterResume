@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useI18n } from '../i18n';
-import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, logout, loadUserData, UserDataDoc, googleSignIn, resetPassword } from '../services/firebase';
+import { authStateListener, emailPasswordSignIn, emailPasswordSignUp, loadUserData, UserDataDoc, googleSignIn, resetPassword } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 import { Dialog, FormField, Input, Button } from './ui';
 import { useToast } from './ui/use-toast';
@@ -32,12 +32,25 @@ function authErrorMessage(err: any, t: (key: string) => string, fallbackKey: str
   }
 }
 
+/** The guest id is the key the backend stores the profile photo under, so it must survive
+ * reloads: reuse the stored one and only mint a new id when there is none. Home.tsx
+ * seeds its initial state with the same rule. */
+export function getOrCreateGuestId(): string {
+  let gid: string | null = null;
+  try { gid = localStorage.getItem('br.guestId'); } catch { gid = null; }
+  if (gid) return gid;
+  try { gid = uuidv4(); } catch { gid = 'guest-' + Date.now().toString(36); }
+  try { localStorage.setItem('br.guestId', gid); } catch { /* ignore */ }
+  return gid;
+}
+
 interface AuthGateProps {
   onResolved: (user: { mode: 'auth' | 'guest'; uid: string; email?: string }, data?: UserDataDoc | null) => void;
   forceOpenSignal?: number; // changing value forces modal to open (guest -> sign in upgrade)
 }
 
-// Simple auth + guest selection UI shown on first visit or until resolved.
+// Sign-in dialog. Nobody is forced through it: without an account the app simply runs
+// as a guest, and the dialog only opens when the user asks to sign in.
 export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal }) => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -60,19 +73,13 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
           onResolved({ mode: 'auth', uid: user.uid, email: user.email || undefined });
         });
       } else {
-        // No authenticated user: ensure we have (or create) a guest and do NOT show modal automatically.
-        let gid = localStorage.getItem('br.guestId');
-        if (!gid) {
-          try { gid = uuidv4(); } catch { gid = 'guest-' + Date.now().toString(36); }
-          try { localStorage.setItem('br.guestId', gid); } catch {}
-        }
-        onResolved({ mode: 'guest', uid: gid! });
+        onResolved({ mode: 'guest', uid: getOrCreateGuestId() });
       }
     });
     return () => unsub();
   }, []);
 
-  // Force open when requested (e.g., guest wants to sign in). Remove guest id beforehand externally.
+  // Force open when requested (e.g., guest wants to sign in).
   useEffect(() => {
     if (forceOpenSignal) {
       // Only open if not already authenticated (modal would auto-close on auth anyway)
@@ -114,21 +121,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
     } finally { setResetting(false); }
   };
 
-  const continueGuest = () => {
-    try {
-      // Generate ID with uuid; fallback to crypto.randomUUID or timestamp
-      let id: string;
-  try { id = uuidv4(); }
-  catch { id = (typeof crypto !== 'undefined' && (crypto as any).randomUUID ? (crypto as any).randomUUID() : 'guest-' + Date.now().toString(36)); }
-  console.log('[AuthGate] continueGuest clicked, generated id', id);
-  try { localStorage.setItem('br.guestId', id); } catch (e) { console.warn('[AuthGate] Failed to write guestId', e); }
-  setShow(false); // hide modal immediately for UX
-  onResolved({ mode: 'guest', uid: id });
-    } catch (e:any) {
-      setError(t('auth.error.guest'));
-    }
-  };
-
   return (
     <Dialog
       open={show}
@@ -138,18 +130,20 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
     >
       <form onSubmit={submit} className="space-y-4">
         <FormField label={t('auth.email')} required>
-          <Input type="email" required value={email} onChange={e => setEmail(e.target.value)} />
+          <Input type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
         </FormField>
         <FormField label={t('auth.password')} required>
-          <Input type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+          <Input type="password" required autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} />
         </FormField>
-        {error && <p className="text-sm text-red-500">{error}</p>}
-        <div className="flex items-center justify-between text-xs text-neutral-400">
-          <button type="button" onClick={()=>{ setError(null); setMode(mode==='signin'?'signup':'signin'); }} className="btn-link-primary">{mode==='signin'? t('auth.needAccount'): t('auth.haveAccount')}</button>
+        {error && <p className="text-sm text-red-600 dark:text-red-400" role="alert">{error}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <Button type="button" variant="link" size="sm" onClick={()=>{ setError(null); setMode(mode==='signin'?'signup':'signin'); }}>
+            {mode==='signin'? t('auth.needAccount'): t('auth.haveAccount')}
+          </Button>
           {mode === 'signin' && (
-            <button type="button" onClick={handleForgotPassword} disabled={resetting} className="btn-link-primary disabled:opacity-50">
+            <Button type="button" variant="link" size="sm" onClick={handleForgotPassword} disabled={resetting}>
               {resetting ? t('auth.working') : t('auth.forgotPassword')}
-            </button>
+            </Button>
           )}
         </div>
         <Button type="submit" variant="primary" loading={loading} className="w-full mt-2">
@@ -158,16 +152,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
         <div className="relative my-2">
           <div className="flex items-center">
             <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
-            <span className="mx-2 text-[10px] uppercase tracking-wide text-neutral-500">{t('auth.or')}</span>
+            <span className="mx-2 text-xs text-neutral-500">{t('auth.or')}</span>
             <div className="flex-grow h-px bg-neutral-200 dark:bg-neutral-700" />
           </div>
         </div>
-        <button type="button" onClick={handleGoogle} disabled={loading} className="w-full bg-neutral-100 text-neutral-900 hover:bg-white disabled:opacity-50 rounded py-2 text-sm font-medium flex items-center justify-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512" className="w-4 h-4" fill="currentColor"><path d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/></svg>
+        <Button type="button" variant="secondary" onClick={handleGoogle} disabled={loading} className="w-full">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512" className="w-4 h-4 mr-2" fill="currentColor" aria-hidden><path d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/></svg>
           <span>{loading ? t('auth.working') : t('auth.continueGoogle')}</span>
-        </button>
+        </Button>
       </form>
-      <p className="mt-4 text-[11px] text-neutral-600 dark:text-neutral-500 leading-relaxed">{t('auth.guest.notice')}</p>
+      <p className="mt-4 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">{t('auth.guest.notice')}</p>
     </Dialog>
   );
 };
@@ -175,17 +169,18 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onResolved, forceOpenSignal 
 export const UserBar: React.FC<{user: {mode:'auth'|'guest'; uid:string; email?:string}; onLogout: ()=>void; onSignInRequest?: ()=>void}> = ({ user, onLogout, onSignInRequest }) => {
   const { t } = useI18n();
   return (
-  <div className="flex items-center gap-3 text-xs bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded px-3 py-1">
+    <div className="flex min-h-[40px] items-center gap-2 rounded-lg border border-neutral-300 bg-neutral-100 px-3 text-sm dark:border-neutral-700 dark:bg-neutral-800">
       {user.mode === 'auth' ? (
         <>
-      <span className="text-neutral-700 dark:text-neutral-300">{user.email}</span>
-          <button onClick={onLogout} className="text-red-400 hover:text-red-300">{t('auth.logout')}</button>
+          <span className="max-w-[12rem] truncate text-neutral-700 dark:text-neutral-300" title={user.email}>{user.email}</span>
+          <span aria-hidden className="text-neutral-400">·</span>
+          <Button type="button" variant="link" size="sm" onClick={onLogout}>{t('auth.logout')}</Button>
         </>
       ) : (
         <>
-      <span className="text-neutral-600 dark:text-neutral-400">{t('auth.guest')}</span>
-      <span className="font-mono text-[10px] text-neutral-500 truncate max-w-[120px]" title={user.uid}>{user.uid}</span>
-          <button onClick={onSignInRequest || onLogout} className="btn-link-primary">{t('auth.signIn')}</button>
+          <span className="text-neutral-600 dark:text-neutral-400">{t('auth.guest')}</span>
+          <span aria-hidden className="text-neutral-400">·</span>
+          <Button type="button" variant="link" size="sm" onClick={onSignInRequest || onLogout}>{t('auth.signIn')}</Button>
         </>
       )}
     </div>
