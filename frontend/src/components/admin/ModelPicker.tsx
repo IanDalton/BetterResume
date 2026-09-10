@@ -131,7 +131,7 @@ export function ModelPicker({ open, getToken, initialValue, onSelect, onClose }:
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-xs break-all">{m.id}</span>
                   {!m.supports_tools && (
-                    <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                    <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
                       no tool support
                     </span>
                   )}
@@ -141,7 +141,7 @@ export function ModelPicker({ open, getToken, initialValue, onSelect, onClose }:
                   {formatContext(m.context_length)} context · {formatPrice(m.prompt_price)} / {formatPrice(m.completion_price)} per Mtok
                 </p>
                 {!m.supports_tools && (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
                     Resume generation needs tool calling — this model will fail unless it is only used for import.
                   </p>
                 )}
@@ -151,7 +151,7 @@ export function ModelPicker({ open, getToken, initialValue, onSelect, onClose }:
         )}
 
         <div className="pt-2 border-t border-neutral-200 dark:border-neutral-700">
-          <p className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1">Or enter a model string manually</p>
+          <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1">Or enter a model string manually</p>
           <div className="flex gap-2">
             <Input
               placeholder="e.g. openrouter:openai/gpt-4o"

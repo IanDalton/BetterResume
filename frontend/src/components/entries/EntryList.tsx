@@ -24,11 +24,11 @@ export const EntryList: React.FC<EntryListProps> = ({ entries, onEdit, onRemove,
           <div className="flex items-start justify-between gap-2">
             <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
               {e.role}
-              {e.company ? ` @ ${e.company}` : ''}
+              {e.company ? ` · ${e.company}` : ''}
             </p>
-            <div className="flex shrink-0 gap-2">
+            <div className="flex shrink-0 gap-1">
               <Button variant="link" size="xs" onClick={() => onEdit(i)}>{t('entry.edit')}</Button>
-              <Button variant="danger" size="xs" onClick={() => setPendingDelete(i)}>{t('entry.delete')}</Button>
+              <Button variant="tertiary" size="xs" onClick={() => setPendingDelete(i)}>{t('entry.delete')}</Button>
             </div>
           </div>
           {e.location && <p className="text-xs text-neutral-600 dark:text-neutral-400">{e.location}</p>}

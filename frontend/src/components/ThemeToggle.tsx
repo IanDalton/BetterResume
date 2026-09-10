@@ -4,41 +4,46 @@ import { useI18n } from '../i18n';
 
 type Theme = 'light' | 'dark' | 'system';
 
-export function ThemeToggle({ onThemeChange }: { onThemeChange?: (theme: Theme) => void }) {
+function prefersDark(): boolean {
+  try { return !!window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches; } catch { return false; }
+}
+
+function resolve(theme: Theme): 'light' | 'dark' {
+  return theme === 'system' ? (prefersDark() ? 'dark' : 'light') : theme;
+}
+
+/**
+ * One labeled button that flips between light and dark. The app follows the system
+ * until the user picks one; the choice is stored under `theme` (same key index.html
+ * reads before first paint, so there is no flash on reload).
+ */
+export function ThemeToggle() {
   const { t } = useI18n();
   const [theme, setTheme] = React.useState<Theme>(() => {
     try {
       const saved = localStorage.getItem('theme') as Theme | null;
-      return saved || 'system';
+      return saved === 'light' || saved === 'dark' ? saved : 'system';
     } catch { return 'system'; }
   });
-
-  const applyTheme = React.useCallback((next: Theme) => {
-    const root = document.documentElement;
-    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const enableDark = next === 'dark' || (next === 'system' && prefersDark);
-    root.classList.toggle('dark', enableDark);
-    onThemeChange?.(next);
-  }, [onThemeChange]);
+  const effective = resolve(theme);
 
   React.useEffect(() => {
-    applyTheme(theme);
+    document.documentElement.classList.toggle('dark', effective === 'dark');
     try { localStorage.setItem('theme', theme); } catch {}
-  }, [theme, applyTheme]);
+  }, [theme, effective]);
 
   React.useEffect(() => {
     if (theme !== 'system') return;
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => applyTheme('system');
+    const handler = () => document.documentElement.classList.toggle('dark', mql.matches);
     mql.addEventListener?.('change', handler);
     return () => mql.removeEventListener?.('change', handler);
-  }, [theme, applyTheme]);
+  }, [theme]);
 
+  const next = effective === 'dark' ? 'light' : 'dark';
   return (
-    <div className="flex items-center gap-1">
-      <Button type="button" variant="secondary" size="sm" title={t('theme.light')} aria-label={t('theme.light')} onClick={() => setTheme('light')} className={`px-2 ${theme==='light' ? 'ring-2 ring-red-500' : ''}`}>☀️</Button>
-      <Button type="button" variant="secondary" size="sm" title={t('theme.dark')} aria-label={t('theme.dark')} onClick={() => setTheme('dark')} className={`px-2 ${theme==='dark' ? 'ring-2 ring-red-500' : ''}`}>🌙</Button>
-      <Button type="button" variant="secondary" size="sm" title={t('theme.system')} aria-label={t('theme.system')} onClick={() => setTheme('system')} className={`px-2 ${theme==='system' ? 'ring-2 ring-red-500' : ''}`}>🖥️</Button>
-    </div>
+    <Button type="button" variant="tertiary" size="sm" onClick={() => setTheme(next)} aria-pressed={effective === 'dark'}>
+      {next === 'dark' ? t('theme.toDark') : t('theme.toLight')}
+    </Button>
   );
 }

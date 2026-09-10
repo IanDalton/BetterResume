@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { EDUCATION_TYPES, ResumeEntry } from '../../types';
 import { FormField, Input, Textarea, Select } from '../ui';
 import { EntrySectionCard } from './EntrySectionCard';
@@ -16,10 +16,8 @@ interface Props {
 export const EducationSection: React.FC<Props> = ({ entries, onAdd, onUpdate, onRemove }) => {
   const { t } = useI18n();
   const hasAny = entries.some((e) => EDUCATION_TYPES.includes(e.type));
-  const typeOptions = [
-    { value: 'education', label: t('type.education') },
-    { value: 'certification', label: t('field.certification') },
-  ];
+  const typeOptions = EDUCATION_TYPES.map((v) => ({ value: v, label: t(`type.${v}`) }));
+  const schema = useMemo(() => educationEntrySchema(t), [t]);
 
   return (
     <EntrySectionCard
@@ -33,20 +31,20 @@ export const EducationSection: React.FC<Props> = ({ entries, onAdd, onUpdate, on
       onAdd={onAdd}
       onUpdate={onUpdate}
       onRemove={onRemove}
-      schema={educationEntrySchema}
+      schema={schema}
       isComplete={hasAny}
       renderFields={({ value, setField, errors }) => (
         <>
-          <FormField label={t('field.type')}>
+          <FormField label={t('field.type')} hint={t('field.type.hint')}>
             <Select options={typeOptions} value={value.type} onValueChange={(v) => setField('type', v)} />
           </FormField>
-          <FormField label={t('education.degree.placeholder')} required error={errors.role}>
+          <FormField label={t('education.degree')} required error={errors.role}>
             <Input value={value.role} onChange={(e) => setField('role', e.target.value)} invalid={!!errors.role} />
           </FormField>
-          <FormField label={t('education.institution.placeholder')} required error={errors.company}>
+          <FormField label={t('education.institution')} required error={errors.company}>
             <Input value={value.company || ''} onChange={(e) => setField('company', e.target.value)} invalid={!!errors.company} />
           </FormField>
-          <FormField label={t('education.location.placeholder')}>
+          <FormField label={t('education.location')}>
             <Input value={value.location || ''} onChange={(e) => setField('location', e.target.value)} />
           </FormField>
           <FormField label={t('field.start')} error={errors.start}>
@@ -61,8 +59,12 @@ export const EducationSection: React.FC<Props> = ({ entries, onAdd, onUpdate, on
               invalid={!!errors.end}
             />
           </FormField>
-          <FormField label={t('education.description.placeholder')} className="sm:col-span-2">
-            <Textarea value={value.description || ''} onChange={(e) => setField('description', e.target.value)} />
+          <FormField label={t('education.description')} className="sm:col-span-2">
+            <Textarea
+              value={value.description || ''}
+              placeholder={t('education.description.placeholder')}
+              onChange={(e) => setField('description', e.target.value)}
+            />
           </FormField>
         </>
       )}

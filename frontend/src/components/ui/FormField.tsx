@@ -24,16 +24,16 @@ export const FormField: React.FC<FormFieldProps> = ({
   <div className={cn('flex flex-col gap-1', className)}>
     <Label.Root
       htmlFor={htmlFor}
-      className="text-xs uppercase tracking-wide text-neutral-600 dark:text-neutral-400"
+      className="text-sm font-medium text-neutral-700 dark:text-neutral-300"
     >
       {label}
-      {required && <span className="ml-0.5 text-red-500">*</span>}
+      {required && <span className="ml-0.5 text-red-600 dark:text-red-400" aria-hidden>*</span>}
     </Label.Root>
     {children}
     {error ? (
-      <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+      <p className="text-xs text-red-600 dark:text-red-400" role="alert">{error}</p>
     ) : hint ? (
-      <p className="text-xs text-neutral-500 dark:text-neutral-500">{hint}</p>
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">{hint}</p>
     ) : null}
   </div>
 );

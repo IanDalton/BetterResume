@@ -7,27 +7,27 @@ body { @apply bg-white text-neutral-900 min-h-screen; }
 /* Dark mode via .dark on <html> */
 .dark body { @apply bg-neutral-950 text-neutral-100; }
 
+/*
+ * Button system. Radii follow the Soft-Square scale (8px buttons/inputs, 12px cards,
+ * 16px dialogs). Every size keeps a touch-friendly minimum height of 44px, the
+ * spec's mobile tap-target minimum ("44px mínimo en móvil") -- `sm` and `xs` only
+ * differ in padding/font-size, never in tap height.
+ *
+ * Red carries one meaning per surface: the primary action is filled brand red;
+ * destructive confirmation (`btn-danger`) is outlined, never filled; errors are
+ * red text/icons only.
+ */
 @layer components {
-	.btn-primary { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium text-white bg-gradient-to-br from-red-600 via-red-600 to-red-500 hover:from-red-500 hover:via-red-500 hover:to-red-400 shadow-sm shadow-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors; }
-        .btn-secondary { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-100 dark:border-neutral-700/60 dark:focus-visible:ring-offset-neutral-900; }
-        .btn-tertiary { @apply inline-flex items-center justify-center rounded px-3 py-1.5 text-xs font-medium text-neutral-700 border border-neutral-300 bg-transparent hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors dark:text-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-800 dark:focus-visible:ring-offset-neutral-900; }
-        .btn-link-primary { @apply text-red-400 hover:text-red-300 underline-offset-2 hover:underline font-medium; }
-        .btn-danger { @apply inline-flex items-center justify-center rounded px-4 py-2 text-sm font-medium bg-red-700 hover:bg-red-600 text-white shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900 disabled:opacity-50; }
-        .btn-sm { @apply px-3 py-2 text-xs; }
-        .btn-xs { @apply px-2 py-1 text-xs; }
+	.btn-base { @apply inline-flex items-center justify-center gap-1 rounded-lg px-4 py-2 min-h-[44px] text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed; }
+	.btn-primary { @apply btn-base text-white bg-gradient-to-br from-red-600 via-red-600 to-red-500 hover:from-red-500 hover:via-red-500 hover:to-red-400 shadow-sm shadow-red-900/30; }
+	.btn-secondary { @apply btn-base bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 shadow-sm dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-100 dark:border-neutral-700/60; }
+	.btn-tertiary { @apply btn-base bg-transparent text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800; }
+	.btn-link-primary { @apply inline-flex items-center rounded-lg text-red-600 hover:text-red-700 underline-offset-2 hover:underline font-medium dark:text-red-400 dark:hover:text-red-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed; }
+	.btn-danger { @apply btn-base bg-transparent text-red-700 border border-red-600 hover:bg-red-50 dark:text-red-300 dark:border-red-400 dark:hover:bg-red-900/20; }
+	.btn-option { @apply btn-base bg-white text-neutral-700 border border-neutral-300 hover:border-neutral-400 dark:bg-neutral-800 dark:text-neutral-200 dark:border-neutral-700 dark:hover:border-neutral-500; }
+	.btn-option[data-selected="true"] { @apply border-red-500 bg-red-50 text-red-700 dark:border-red-400 dark:bg-red-900/30 dark:text-red-200; }
+	.btn-sm { @apply px-3 py-1.5 min-h-[44px] text-sm; }
+	.btn-xs { @apply px-2.5 py-1 min-h-[44px] text-xs; }
+	.btn-link-primary.btn-sm, .btn-link-primary.btn-xs { @apply px-1; }
 	.focus-ring { @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900; }
-}
-
-/* Optional subtle background accent */
-@layer base {
-
-	body::before {
-		content: "";
-		position: fixed; inset: 0; pointer-events: none;
-		background: radial-gradient(circle at 30% 20%, rgba(185,28,28,0.04), transparent 60%), radial-gradient(circle at 80% 70%, rgba(127,29,29,0.03), transparent 65%);
-		z-index: 0;
-	}
-  .dark body::before {
-		background: radial-gradient(circle at 30% 20%, rgba(185,28,28,0.08), transparent 60%), radial-gradient(circle at 80% 70%, rgba(127,29,29,0.06), transparent 65%);
-  }
 }

@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import type { ZodSchema } from 'zod';
 import { EntryType, ResumeEntry } from '../../types';
-import { Dialog, Button, cn } from '../ui';
+import { Dialog, Button } from '../ui';
 import { EntryList } from './EntryList';
+import { SectionStatusBadge } from './SectionStatusBadge';
+import { issuesToFieldErrors, scrollToFirstInvalid } from './validation';
 import { useI18n } from '../../i18n';
 
 export interface EntrySectionCardProps {
@@ -22,7 +24,10 @@ export interface EntrySectionCardProps {
     setField: (k: keyof ResumeEntry, v: string) => void;
     errors: Record<string, string>;
   }) => React.ReactNode;
-  isComplete?: boolean;
+  /** Whether the section has content. */
+  isComplete: boolean;
+  /** Whether generation is blocked while the section is empty (shows the "missing" badge). */
+  required?: boolean;
 }
 
 const emptyEntryFor = (type: EntryType): ResumeEntry => ({
@@ -31,13 +36,14 @@ const emptyEntryFor = (type: EntryType): ResumeEntry => ({
 
 export const EntrySectionCard: React.FC<EntrySectionCardProps> = ({
   title, hint, addLabel, emptyLabel, types, defaultType, entries, onAdd, onUpdate, onRemove,
-  schema, renderFields, isComplete,
+  schema, renderFields, isComplete, required,
 }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<ResumeEntry>(emptyEntryFor(defaultType));
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const formRef = useRef<HTMLDivElement | null>(null);
 
   const indexed = entries.map((e, i) => ({ e, i })).filter(({ e }) => types.includes(e.type));
 
@@ -58,12 +64,8 @@ export const EntrySectionCard: React.FC<EntrySectionCardProps> = ({
   const submit = () => {
     const result = schema.safeParse(draft);
     if (!result.success) {
-      const fieldErrors: Record<string, string> = {};
-      for (const issue of result.error.issues) {
-        const key = issue.path[0];
-        if (typeof key === 'string' && !fieldErrors[key]) fieldErrors[key] = issue.message;
-      }
-      setErrors(fieldErrors);
+      setErrors(issuesToFieldErrors(result.error.issues));
+      scrollToFirstInvalid(formRef.current);
       return;
     }
     if (editingIndex == null) onAdd(draft);
@@ -73,22 +75,11 @@ export const EntrySectionCard: React.FC<EntrySectionCardProps> = ({
 
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="mb-3 flex items-start justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 text-base font-semibold text-neutral-900 dark:text-neutral-100">
             {title}
-            {isComplete !== undefined && (
-              <span
-                className={cn(
-                  'rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-                  isComplete
-                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                )}
-              >
-                {isComplete ? t('section.complete') : t('section.required')}
-              </span>
-            )}
+            <SectionStatusBadge complete={isComplete} required={required} />
           </h3>
           {hint && <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">{hint}</p>}
         </div>
@@ -114,7 +105,7 @@ export const EntrySectionCard: React.FC<EntrySectionCardProps> = ({
           </>
         }
       >
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div ref={formRef} className="grid gap-4 sm:grid-cols-2">
           {renderFields({ value: draft, setField, errors })}
         </div>
       </Dialog>

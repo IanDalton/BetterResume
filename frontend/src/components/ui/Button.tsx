@@ -3,7 +3,15 @@ import { Slot } from '@radix-ui/react-slot';
 import { cn } from './cn';
 import { Spinner } from './Spinner';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'tertiary' | 'link' | 'danger';
+/**
+ * - `primary`: the one main action on a surface (filled brand red).
+ * - `secondary` / `tertiary`: supporting actions.
+ * - `link`: inline text action (edit, sign in, ...).
+ * - `danger`: destructive confirmation only (outlined red, never filled) — meant for
+ *   ConfirmDialog, not for per-row delete buttons.
+ * - `option`: a selectable choice (use `selected` to mark the current one).
+ */
+export type ButtonVariant = 'primary' | 'secondary' | 'tertiary' | 'link' | 'danger' | 'option';
 export type ButtonSize = 'xs' | 'sm' | 'md';
 
 const variantClass: Record<ButtonVariant, string> = {
@@ -12,6 +20,7 @@ const variantClass: Record<ButtonVariant, string> = {
   tertiary: 'btn-tertiary',
   link: 'btn-link-primary',
   danger: 'btn-danger',
+  option: 'btn-option',
 };
 
 const sizeClass: Record<ButtonSize, string> = {
@@ -25,17 +34,22 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   size?: ButtonSize;
   loading?: boolean;
   asChild?: boolean;
+  /** For `variant="option"`: marks this choice as the selected one. */
+  selected?: boolean;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ variant = 'primary', size = 'md', loading, asChild, className, disabled, children, ...props }, ref) => {
+  ({ variant = 'primary', size = 'md', loading, asChild, selected, className, disabled, children, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
+    const selectable = variant === 'option';
     return (
       <Comp
         ref={ref}
         className={cn(variantClass[variant], sizeClass[size], className)}
         disabled={disabled || loading}
         aria-busy={loading || undefined}
+        aria-pressed={selectable ? !!selected : undefined}
+        data-selected={selectable ? String(!!selected) : undefined}
         {...props}
       >
         {asChild ? (

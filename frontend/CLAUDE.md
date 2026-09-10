@@ -25,12 +25,12 @@ React Router v7 with these routes:
 `AuthGate` component (`src/components/AuthGate.tsx`) wraps all protected routes using Firebase authentication (`src/services/firebase.ts`).
 
 ### Key Components (`src/components/`)
-- `ProfileEditor` (`components/entries/`) — unified data-entry flow: `PersonalInfoSection`, `ExperienceSection`, `EducationSection`, `LanguagesSection`, `ResumeImportDialog` (resume/LinkedIn-PDF import), `SaveStatusIndicator`
-- `ProfilePictureUploader` — profile photo upload with preview
-- `FirstLoadGuide` — initial help overlay
-- `ThemeToggle` — light/dark mode switch
-- `Footer`, `AdBanner`, `DonateToast`, `ErrorBoundary` — supporting chrome
-- `components/ui/` — design-system primitives: `Button`, `Input`, `Textarea`, `Select`, `Dialog`, `Card`, `FormField`, `Spinner`, `Stepper`, `Toast`
+- `ProfileEditor` (`components/entries/`) — the "1. Tu perfil" block: import action plus one card per section (`PersonalInfoSection`, `ExperienceSection`, `EducationSection`, `LanguagesSection`), `ResumeImportDialog` (resume/LinkedIn-PDF import), `SaveStatusIndicator`, `SectionStatusBadge`, `MonthYearInput` (month/year selects over `monthYear.ts` helpers), localized zod schema factories in `validation.ts` (`personalInfoSchema(t)` etc.)
+- `ProfilePictureUploader` — profile photo card + crop dialog; pure crop math lives in `components/profilePicture/cropMath.ts`
+- `ThemeToggle` — single light/dark button (follows the system until the user picks), rendered in the `Footer`
+- `Footer`, `AdBanner`, `ErrorBoundary` — supporting chrome
+- `hooks/useDonationNudges` — the only donation-nudge logic (`decideDonationNudge` is the pure, tested decision: never before the first generated resume); the nudge itself is a regular toast with an action
+- `components/ui/` — design-system primitives: `Button` (variants `primary`/`secondary`/`tertiary`/`link`/`danger` (outlined)/`option` (selectable)), `Input`, `Textarea`, `Select`, `Dialog`, `ConfirmDialog`, `Card`, `FormField`, `Spinner`, `Tabs`, `Toast` (`toast({ action, onDismiss })` supported). Copy rules: Spanish is voseo + sentence case; every `en` key must exist in `es` and be used somewhere in `src` (enforced by `src/__tests__/i18n.test.ts`)
 - `components/admin/` — admin dashboard presentational pieces: `StatCard`, `BarChart`, `CountTable`, `ModelPicker`, `EvalResults.tsx` (exports `ResultsTable`, `RunHistory`, `ModelComparison`); consumed by `pages/AdminDashboard.tsx` and `pages/admin/{StatsTab,ModelsTab,EvalsTab}.tsx` — see Admin Dashboard below
 
 ### Admin Dashboard (`src/pages/AdminDashboard.tsx`, `/admin`)

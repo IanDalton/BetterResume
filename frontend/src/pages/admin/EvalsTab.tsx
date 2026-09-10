@@ -11,7 +11,7 @@ import {
 } from '../../services/api';
 import { ModelPicker } from '../../components/admin/ModelPicker';
 import { ResultsTable, RunHistory, ModelComparison } from '../../components/admin';
-import { Button, Card, CardContent, CardHeader, CardTitle, Spinner, Textarea, useToast } from '../../components/ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, Spinner, Tabs, Textarea, useToast } from '../../components/ui';
 
 const MAX_MODELS = 5;
 const MAX_CELLS = 20;
@@ -74,13 +74,13 @@ function EvalCell({ result }: { result: EvalResult | undefined }) {
       </div>
       <div className="text-xs text-neutral-500">{formatDuration(result.duration_ms)}</div>
       {result.fallback_used && (
-        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+        <span className="inline-block mt-0.5 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
           fallback
         </span>
       )}
       {result.judge_error && (
         <span
-          className="inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+          className="inline-block mt-0.5 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
           title={`Judge failed: ${result.judge_error}. Composite is schema/ATS only.`}
         >
           no judge
@@ -104,7 +104,7 @@ function CheckBadge({ check }: { check: ModelCheckResult | undefined }) {
       ? [concessions.join(', '), 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300']
       : ['ready', 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'];
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tone}`} title={check.message}>
+    <span className={`text-xs px-1.5 py-0.5 rounded-full ${tone}`} title={check.message}>
       {text}
     </span>
   );
@@ -306,19 +306,7 @@ export function EvalsTab({ user, onNavigateToModels }: { user: User; onNavigateT
 
   return (
     <div className="space-y-6">
-      <nav className="flex gap-1 border-b border-neutral-200 dark:border-neutral-800">
-        {SUB_TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setSubTab(t.id)}
-            className={`px-3 py-2 text-sm border-b-2 -mb-px focus-ring rounded-t ${subTab === t.id
-              ? 'border-primary-500 text-primary-500'
-              : 'border-transparent text-neutral-500 hover:text-neutral-300'}`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <Tabs tabs={SUB_TABS} value={subTab} onChange={setSubTab} aria-label="Eval views" />
 
       {subTab === 'new' && (
         <div className="space-y-6">

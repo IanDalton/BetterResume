@@ -7,10 +7,10 @@ import { Button } from '../components/ui';
 export function ThankYou() {
   const { t } = useI18n();
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100">
+    <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
       <Confetti width={window.innerWidth} height={window.innerHeight} />
       <div className="text-center p-8 max-w-md">
-        <div className="mb-6 text-6xl">🎉</div>
+        <div className="mb-6 text-6xl" aria-hidden>🎉</div>
         <h1 className="text-3xl font-bold mb-4">{t('thankyou.title')}</h1>
         <p className="text-lg text-neutral-600 dark:text-neutral-400 mb-8">
           {t('thankyou.message')}
