@@ -177,6 +177,45 @@ export function StatsTab({ user }: { user: User }) {
             events recorded since instrumentation was added; request metrics reflect full history.
           </p>
 
+          {stats.analyses && (
+            <>
+              {/* Resume quality: ATS / reviewer scores from the analysis feature */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <StatCard label="Resumes analyzed" value={stats.analyses.count} hint={`${stats.analyses.imported} uploaded PDF${stats.analyses.imported === 1 ? '' : 's'} (last ${days}d)`} />
+                <StatCard label="Avg ATS score" value={stats.analyses.avg_ats ?? '—'} hint="0-100, offline keyword + formatting scan" />
+                <StatCard label="Avg reviewer score" value={stats.analyses.avg_review ?? '—'} hint={`${stats.analyses.reviewed} with an LLM review`} />
+                <StatCard label="Review coverage" value={stats.analyses.count ? `${Math.round((stats.analyses.reviewed / stats.analyses.count) * 100)}%` : '—'} hint="analyses where the judge answered" />
+              </div>
+              <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl p-4 shadow-sm">
+                <h3 className="text-sm font-medium mb-3">Scores by generation model</h3>
+                {stats.analyses.by_generation_model.length === 0 ? (
+                  <p className="text-xs text-neutral-500">No analyses yet.</p>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-neutral-500">
+                        <th className="pb-1 font-normal">Model</th>
+                        <th className="pb-1 font-normal text-right">Analyses</th>
+                        <th className="pb-1 font-normal text-right">Avg ATS</th>
+                        <th className="pb-1 font-normal text-right">Avg reviewer</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.analyses.by_generation_model.map(r => (
+                        <tr key={r.model} className="border-t border-neutral-100 dark:border-neutral-800">
+                          <td className="py-1 truncate max-w-[280px]" title={r.model}>{r.model}</td>
+                          <td className="py-1 text-right font-mono">{r.count}</td>
+                          <td className="py-1 text-right font-mono">{r.avg_ats ?? '—'}</td>
+                          <td className="py-1 text-right font-mono">{r.avg_review ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+
           <div className="grid md:grid-cols-4 gap-4">
             <CountTable title="By model" keyLabel="Model" rows={stats.by_model.map(m => ({ label: m.model, count: m.count }))} />
             <CountTable title="By format" keyLabel="Format" rows={stats.by_format.map(f => ({ label: f.format, count: f.count }))} />

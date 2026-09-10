@@ -1,10 +1,25 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 class ResumeRequest(BaseModel):
     job_description: str
     format: str = "latex"  # or "word"
     include_profile_picture: bool = False
+    # Change requests from a review of a previous draft (see `llm/reviewer.py`),
+    # one plain-text instruction each. They go into the generation prompt and
+    # into the result cache key, so "apply improvements" always regenerates.
+    improvements: List[str] = []
+
+
+class ResumeAnalysisRequest(BaseModel):
+    """Body of `POST /analyze-resume/{user_id}`: the job description the resume
+    was generated for, the generated resume itself (the `result` payload the
+    generation endpoints return, i.e. a `ResumeOutputFormat`), and the
+    language the recommendations should be written in (UI language code;
+    defaults to the resume's language)."""
+    job_description: str
+    resume: Dict[str, Any]
+    language: Optional[str] = None
 
 
 # Work-like entry types accepted by /upload-jobs. Personal info and languages
