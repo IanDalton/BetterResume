@@ -56,6 +56,19 @@ def to_resume_date(value: Optional[str]) -> str:
     return ""
 
 
+def _normalize_bullets(description: str) -> str:
+    """The import prompt extracts each bullet as its own line but is not told
+    to add a leading marker (`resume_import_prompt.txt`), while the ATS
+    evaluator's bullet-count check (`ats_evaluator.py::_check_formatting`)
+    only recognizes lines starting with "-", "•" or "*" -- the same shape a
+    generated resume always has. Without this, every imported PDF fails the
+    "at least 2 bullets" check regardless of how many real bullets it has.
+    Prefix each non-empty line that isn't already marked, so imported and
+    generated resumes are scored on the same footing."""
+    lines = [l.strip() for l in description.split("\n") if l.strip()]
+    return "\n".join(l if l.startswith(("-", "•", "*")) else f"- {l}" for l in lines)
+
+
 def _experience(entry: ImportedEntry) -> JobExperience:
     return JobExperience(
         position=(entry.role or "").strip(),
@@ -63,7 +76,7 @@ def _experience(entry: ImportedEntry) -> JobExperience:
         location=(entry.location or "").strip(),
         start_date=to_resume_date(entry.start_date),
         end_date=to_resume_date(entry.end_date),
-        description=(entry.description or "").strip(),
+        description=_normalize_bullets((entry.description or "").strip()),
     )
 
 

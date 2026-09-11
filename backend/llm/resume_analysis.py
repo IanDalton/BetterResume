@@ -33,6 +33,10 @@ class ATSAnalysis(BaseModel):
     matched_keywords: List[str]
     missing_keywords: List[str]
     issues: List[ATSIssue]
+    jd_looks_malformed: bool = Field(
+        default=False,
+        description="The job description text looks like it lost whitespace when pasted, so keyword coverage may be understated",
+    )
 
 
 class ReviewScores(BaseModel):
@@ -67,6 +71,7 @@ def ats_analysis(resume: ResumeOutputFormat, job_description: str) -> ATSAnalysi
         matched_keywords=result.matched_keywords,
         missing_keywords=result.missing_keywords,
         issues=[ATSIssue(experience_index=i.experience_index, kind=i.kind, detail=i.detail) for i in result.issues],
+        jd_looks_malformed=result.jd_looks_malformed,
     )
 
 
