@@ -57,6 +57,47 @@ def test_ats_flags_insufficient_bullets(sample_resume_output):
     assert any("fewer than 2 bullet" in issue for issue in result.formatting_issues)
 
 
+def test_ats_recovers_camelcase_keywords_from_mashed_jd_text(sample_resume_output):
+    # A job description copy-pasted from a page laid out with CSS flex/grid
+    # can lose the whitespace between adjacent field labels, producing runs
+    # like "FullTimeRemoteFlexible" instead of "Full Time Remote Flexible".
+    jd = "Employment Type: FullTimeRemoteFlexible. Must know Python and SQL."
+    result = ATSEvaluator().evaluate(sample_resume_output, jd)
+    keywords_lower = {k.lower() for k in result.matched_keywords + result.missing_keywords}
+    assert "full" in keywords_lower
+    assert "remote" in keywords_lower
+    assert "flexible" in keywords_lower
+    assert "fulltimeremoteflexible" not in keywords_lower
+
+
+def test_ats_drops_unsplittable_mashed_keyword(sample_resume_output):
+    # Lowercase runs with no CamelCase boundary can't be recovered into real
+    # words; they should be dropped rather than surfaced as one nonsense
+    # "keyword" (see the malformed job-description report in SEL history).
+    jd = "Must have requirementbusinesstypecustommanufacturingfast experience with Python."
+    result = ATSEvaluator().evaluate(sample_resume_output, jd)
+    keywords_lower = {k.lower() for k in result.matched_keywords + result.missing_keywords}
+    assert "requirementbusinesstypecustommanufacturingfast" not in keywords_lower
+    assert "python" in keywords_lower
+
+
+def test_ats_flags_jd_as_malformed_when_several_tokens_are_mashed(sample_resume_output):
+    jd = (
+        "HoursrequirementbusinessTypeFullTimeBuildingSystemProductSTUDIOSaaS "
+        "LocationRemoteGlobalTimezoneFlexiblepartialoverlapsynchronous. Python required."
+    )
+    result = ATSEvaluator().evaluate(sample_resume_output, jd)
+    assert result.jd_looks_malformed is True
+
+
+def test_ats_does_not_flag_a_single_long_word_as_malformed(sample_resume_output):
+    # One unusually long token (a real compound word, an acronym run, a URL
+    # fragment) isn't enough evidence of a pasting artifact on its own.
+    jd = "Experience with characterizationofmicroservicebasedarchitectures and Python required."
+    result = ATSEvaluator().evaluate(sample_resume_output, jd)
+    assert result.jd_looks_malformed is False
+
+
 def test_schema_score_is_high_for_valid_resume(sample_resume_output):
     result = SchemaEvaluator().evaluate(sample_resume_output)
     assert result.score >= 0.9
