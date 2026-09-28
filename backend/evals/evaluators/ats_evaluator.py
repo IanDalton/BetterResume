@@ -33,6 +33,11 @@ class ATSEvaluationResult:
     missing_keywords: List[str] = field(default_factory=list)
     formatting_issues: List[str] = field(default_factory=list)
     issues: List[FormattingIssue] = field(default_factory=list)
+    # True when the job description text itself looks corrupted (several
+    # words mashed together with no whitespace between them -- see
+    # `_extract_keywords`), so the UI can say the coverage score may be
+    # understated instead of silently scoring garbled text at face value.
+    jd_looks_malformed: bool = False
 
 
 ACTION_VERBS = {
@@ -70,13 +75,19 @@ _STOP_WORDS = {
     "well", "how", "own", "help", "make", "like", "using", "use", "both",
 }
 
+# A single real keyword this long is very unlikely; past this, a token is
+# almost certainly several words mashed together with no whitespace (see
+# `_extract_keywords`).
+_MAX_KEYWORD_LEN = 20
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
 
 class ATSEvaluator:
     """Evaluates ATS optimization: keyword coverage and bullet formatting. Offline."""
 
     def evaluate(self, resume: ResumeOutputFormat, job_description: str) -> ATSEvaluationResult:
         resume_text = self._resume_to_text(resume).lower()
-        jd_keywords = self._extract_keywords(job_description)
+        jd_keywords, jd_looks_malformed = self._extract_keywords(job_description)
 
         matched = [kw for kw in jd_keywords if kw.lower() in resume_text]
         missing = [kw for kw in jd_keywords if kw.lower() not in resume_text]
@@ -94,6 +105,7 @@ class ATSEvaluator:
             missing_keywords=missing,
             formatting_issues=formatting_issues,
             issues=issues,
+            jd_looks_malformed=jd_looks_malformed,
         )
 
     def _resume_to_text(self, resume: ResumeOutputFormat) -> str:
@@ -111,22 +123,41 @@ class ATSEvaluator:
             parts.extend([lang.name or "", lang.proficiency or ""])
         return " ".join(parts)
 
-    def _extract_keywords(self, jd: str) -> List[str]:
-        tokens = re.findall(r"[A-Za-z][A-Za-z0-9+#\.]{2,}", jd)
-        seen: Set[str] = set()
-        result = []
-        for t in tokens:
+    def _extract_keywords(self, jd: str) -> tuple[List[str], bool]:
+        raw_tokens = re.findall(r"[A-Za-z][A-Za-z0-9+#\.]{2,}", jd)
+        tokens: List[str] = []
+        anomalies = 0
+        for t in raw_tokens:
             # The token class keeps dots so "Node.js" survives, which also
             # keeps a sentence-final dot ("Terraform.") -- strip that, or the
             # keyword never matches and the stop-word check misses "team.".
             t = t.rstrip(".")
+            if len(t) > _MAX_KEYWORD_LEN:
+                # A job description copy-pasted from a page that lays fields
+                # out with CSS (flex/grid) often loses the whitespace
+                # between adjacent labels on copy, producing one run like
+                # "FullTimeRemoteFlexible". Recover real words at CamelCase
+                # boundaries; anything still too long after that is almost
+                # certainly several lowercase words mashed together rather
+                # than one real keyword, so it's dropped instead of shown.
+                anomalies += 1
+                tokens.extend(p for p in _CAMEL_BOUNDARY.split(t) if p and len(p) <= _MAX_KEYWORD_LEN)
+            else:
+                tokens.append(t)
+
+        seen: Set[str] = set()
+        result = []
+        for t in tokens:
             lower = t.lower()
             if len(lower) < 3:
                 continue
             if lower not in _STOP_WORDS and lower not in seen:
                 seen.add(lower)
                 result.append(t)
-        return result[:40]
+        # A single stray long token can be a genuinely unusual word or a
+        # pasted URL fragment; two or more is the pattern seen from a
+        # whitespace-losing copy-paste, so that's the bar for warning the user.
+        return result[:40], anomalies >= 2
 
     def _check_formatting(self, resume: ResumeOutputFormat) -> List[FormattingIssue]:
         issues: List[FormattingIssue] = []

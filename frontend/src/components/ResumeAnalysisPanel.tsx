@@ -192,6 +192,11 @@ export function ResumeAnalysisPanel({ analysis, resume, onApplyImprovements, app
 
       <Card>
         <CardContent className="space-y-4">
+          {ats.jd_looks_malformed && (
+            <p className="text-xs rounded-md border border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-200 px-3 py-2">
+              {t('analysis.jd.malformed')}
+            </p>
+          )}
           <ScoreBar label={t('analysis.coverage')} score={ats.keyword_coverage} />
           {ats.matched_keywords.length === 0 && ats.missing_keywords.length === 0 ? (
             <p className="text-xs text-neutral-500">{t('analysis.keywords.none')}</p>

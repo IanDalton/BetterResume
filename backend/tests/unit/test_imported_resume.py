@@ -2,6 +2,7 @@
 
 import pytest
 
+from evals.evaluators.ats_evaluator import ATSEvaluator
 from utils.imported_resume import NoExperienceError, imported_to_resume, to_resume_date
 from utils.resume_import import ImportedEntry, ImportedLanguage, ImportedProfileFields, ResumeImportResult
 
@@ -72,3 +73,27 @@ def test_a_resume_without_skills_is_still_scoreable():
 def test_no_experience_is_rejected():
     with pytest.raises(NoExperienceError):
         imported_to_resume(_parsed(experience=[]))
+
+
+def test_marker_less_import_bullets_are_normalized_and_pass_the_bullet_check():
+    # The import prompt extracts each bullet as its own line but is never
+    # told to add a leading "-"/"•"/"*" (resume_import_prompt.txt), matching
+    # the real "Save to PDF" shape (SAMPLE_LINKEDIN_TEXT_FULL). Without
+    # normalization, ATSEvaluator's bullet-count check sees zero bullet
+    # lines and flags every imported job as "fewer than 2 bullet points"
+    # even when it has several.
+    resume = imported_to_resume(_parsed(experience=[
+        ImportedEntry(
+            type="job", company="Acme", role="Engineer", start_date="01/06/2018", end_date="present",
+            description=(
+                "Led migration to containerized infrastructure, reducing deployment time by 60%.\n"
+                "Mentored 3 junior engineers through weekly code reviews."
+            ),
+        ),
+    ]))
+    description = resume.resume_section.experience[0].description
+    assert description.startswith("- Led migration")
+    assert "\n- Mentored 3 junior engineers" in description
+
+    issues = ATSEvaluator()._check_formatting(resume)
+    assert not any(issue.kind == "few_bullets" for issue in issues)

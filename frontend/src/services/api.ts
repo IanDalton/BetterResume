@@ -107,6 +107,10 @@ export interface ATSAnalysis {
   matched_keywords: string[];
   missing_keywords: string[];
   issues: AnalysisIssue[];
+  /** The pasted job-description text looks like it lost whitespace (fields
+   * mashed together with no separator, a common copy-paste artifact from
+   * pages laid out with CSS flex/grid) -- keyword coverage may be understated. */
+  jd_looks_malformed: boolean;
 }
 
 export interface AnalysisRecommendation {
